@@ -1,0 +1,25 @@
+# Entry for github.com/ingelibre/ingetrazo-extensions → extensions/motion.toml
+# Replace the sha256 if the zip was rebuilt
+# (python tools/build_zip.py prints it).
+
+id = "motion"
+version = "0.2.0"
+author = "Nicolas Marc"
+author_url = "https://github.com/nicolasmarc"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/nicolasmarc/ingetrazo-motion"
+download = "https://raw.githubusercontent.com/nicolasmarc/ingetrazo-motion/v0.2.0/dist/motion-0.2.0.zip"
+sha256 = "388ba516474b9d138a7f725e9e38d1a0e37aad4d781adfabf3583e095a756402"
+ingetrazo = "0.5.8"
+tags = ["fabrication", "analysis"]
+screenshot = "motion.png"
+
+[name]
+es = "Motion (mecanismos)"
+en = "Motion (mechanisms)"
+pt = "Motion (mecanismos)"
+
+[summary]
+es = "Valida mecanismos sencillos: piezas, pivotes, correderas y guías sobre el modelo, animación con cursor, colisiones, topes y holgura mínima. Ejemplos: silla plegable, puerta seccional."
+en = "Check simple mechanisms: parts, pivots, slides and rails on your model, playback slider, collisions, stops and minimum clearance. Examples: folding chair, sectional door."
+pt = "Valide mecanismos simples: peças, pivôs, corrediças e trilhos no modelo, animação com cursor, colisões, batentes e folga mínima. Exemplos: cadeira dobrável, porta seccional."
