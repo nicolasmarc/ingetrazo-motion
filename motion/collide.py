@@ -3,7 +3,7 @@ import numpy as np
 
 
 def world_obb(body, q, box):
-    R = body.rot(q)
+    R = body.rot(q) @ box.R
     c = body.world_point(q, box.center)
     return c, R, box.half
 

@@ -45,13 +45,29 @@ def perp_basis(u):
 
 @dataclass
 class Box:
-    """Oriented-in-reference axis-aligned box: centre + half extents."""
+    """Box in the body's reference pose: centre, half extents and an
+    optional orientation ``R`` (columns = the box's own axes; identity =
+    aligned with the world axes, as in V0.1)."""
     center: np.ndarray
     half: np.ndarray
+    R: np.ndarray = None
+    name: str = ""
 
     def __post_init__(self):
         self.center = np.asarray(self.center, float)
         self.half = np.asarray(self.half, float)
+        self.R = np.eye(3) if self.R is None else np.asarray(self.R, float)
+
+
+def bar(p0, p1, width, thickness, side=(0, 1.0, 0), name=""):
+    """Box of a straight member from ``p0`` to ``p1`` (axis to axis):
+    ``thickness`` along ``side``, ``width`` across, in the plane."""
+    p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+    e1 = unit(p1 - p0)
+    e2 = unit(np.asarray(side, float) - e1 * (e1 @ np.asarray(side, float)))
+    e3 = np.cross(e1, e2)
+    half = (np.linalg.norm(p1 - p0) / 2, thickness / 2, width / 2)
+    return Box((p0 + p1) / 2, half, np.column_stack([e1, e2, e3]), name)
 
 
 @dataclass
