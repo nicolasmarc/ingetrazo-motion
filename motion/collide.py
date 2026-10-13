@@ -1,5 +1,22 @@
-"""Interference between bodies: oriented boxes, separating-axis test."""
+"""Interference and clearance between bodies (oriented boxes).
+
+- ``obb_overlap``: separating-axis test (15 axes).
+- ``box_distance``: EXACT distance between two separated boxes, from the
+  closest features (vertex against box, edge against edge); when they
+  overlap, a negative value = the smallest push-out depth found on the
+  separating axes.
+- Joined bodies: the box pairs that already touch in the drawn
+  configuration ARE the joint (hinge knuckle, pin in its slot, drawer in
+  its runners) and are skipped; every other box pair of the two bodies is
+  still checked. ``ignore_joined="body"`` skips the whole pair (V0.1),
+  ``False`` checks everything.
+"""
+import itertools
 import numpy as np
+
+_CORNERS = np.array(list(itertools.product((-1, 1), repeat=3)), float)
+_EDGES = [(i, j) for i in range(8) for j in range(i + 1, 8)
+          if np.count_nonzero(_CORNERS[i] != _CORNERS[j]) == 1]
 
 
 def world_obb(body, q, box):
@@ -11,6 +28,12 @@ def world_obb(body, q, box):
 def obb_overlap(A, B, margin=0.0):
     """True if two OBBs (centre, R, half) overlap by more than ``margin``
     (margin < 0 -> require a clearance of -margin)."""
+    return _sat(A, B) > margin
+
+
+def _sat(A, B):
+    """Smallest overlap over the separating axes (< 0: separated by at
+    least that much along some axis)."""
     ca, Ra, ha = A
     cb, Rb, hb = B
     t = cb - ca
@@ -18,34 +41,145 @@ def obb_overlap(A, B, margin=0.0):
     for i in range(3):
         for k in range(3):
             c = np.cross(Ra[:, i], Rb[:, k])
-            if np.linalg.norm(c) > 1e-9:
-                axes.append(c / np.linalg.norm(c))
+            n = np.linalg.norm(c)
+            if n > 1e-9:
+                axes.append(c / n)
+    best = np.inf
     for ax in axes:
         ra = sum(ha[i] * abs(Ra[:, i] @ ax) for i in range(3))
         rb = sum(hb[i] * abs(Rb[:, i] @ ax) for i in range(3))
-        if abs(t @ ax) > ra + rb - margin:
-            return False
-    return True
+        best = min(best, ra + rb - abs(t @ ax))
+    return best
+
+
+def _corners(obb):
+    c, R, h = obb
+    return c + (_CORNERS * h) @ R.T
+
+
+def _points_to_box(P, obb):
+    """Closest points of box ``obb`` to the points ``P`` (N, 3)."""
+    c, R, h = obb
+    local = (P - c) @ R
+    return c + np.clip(local, -h, h) @ R.T
+
+
+def _seg_seg(p1, q1, p2, q2):
+    """Closest points between segment pairs (arrays (N, 3)), clamped."""
+    d1, d2, r = q1 - p1, q2 - p2, p1 - p2
+    a = np.einsum("ij,ij->i", d1, d1)
+    e = np.einsum("ij,ij->i", d2, d2)
+    f = np.einsum("ij,ij->i", d2, r)
+    c = np.einsum("ij,ij->i", d1, r)
+    b = np.einsum("ij,ij->i", d1, d2)
+    den = a * e - b * b
+    a_ = np.where(a > 1e-300, a, 1.0)
+    e_ = np.where(e > 1e-300, e, 1.0)
+    s = np.where(den > 1e-14 * a_ * e_,
+                 np.clip((b * f - c * e) / np.where(den > 0, den, 1), 0, 1), 0.0)
+    t = (b * s + f) / e_
+    lo, hi = t < 0, t > 1
+    t = np.clip(t, 0, 1)
+    s = np.where(lo, np.clip(-c / a_, 0, 1), s)
+    s = np.where(hi, np.clip((b - c) / a_, 0, 1), s)
+    return p1 + d1 * s[:, None], p2 + d2 * t[:, None]
+
+
+def box_distance(A, B):
+    """(distance, point_on_A, point_on_B). Exact when the boxes are apart;
+    when they overlap: (-depth, centre_A, centre_B)."""
+    depth = _sat(A, B)
+    if depth >= 0:
+        return -float(depth), A[0], B[0]
+    ca, cb = _corners(A), _corners(B)
+    cand = []
+    pb = _points_to_box(ca, B)                      # vertices of A vs B
+    cand.append((ca, pb))
+    pa = _points_to_box(cb, A)                      # vertices of B vs A
+    cand.append((pa, cb))
+    ia = np.array([e[0] for e in _EDGES]); ja = np.array([e[1] for e in _EDGES])
+    I, J = np.meshgrid(np.arange(12), np.arange(12), indexing="ij")
+    I, J = I.ravel(), J.ravel()
+    x1, x2 = _seg_seg(ca[ia[I]], ca[ja[I]], cb[ia[J]], cb[ja[J]])
+    cand.append((x1, x2))
+    best = (np.inf, None, None)
+    for pa_, pb_ in cand:
+        d = np.linalg.norm(pa_ - pb_, axis=1)
+        k = int(np.argmin(d))
+        if d[k] < best[0]:
+            best = (float(d[k]), pa_[k], pb_[k])
+    return best
+
+
+# -- pairs of bodies -------------------------------------------------------
+
+def _joined(mech):
+    out = {}
+    for j in mech.joints:
+        out.setdefault(frozenset((j.a.name, j.b.name)), []).append(j)
+    return out
+
+
+def _skipped_box_pairs(mech, a, b, mode, tol=1e-9):
+    """Box index pairs of bodies a, b that are not checked."""
+    if mode is False:
+        return set()
+    if frozenset((a.name, b.name)) not in _joined(mech):
+        return set()
+    allp = {(i, k) for i in range(len(a.boxes)) for k in range(len(b.boxes))}
+    if mode == "body":
+        return allp
+    z = np.zeros(6)
+    return {(i, k) for i, k in allp
+            if _sat(world_obb(a, z, a.boxes[i]), world_obb(b, z, b.boxes[k])) > -tol}
+
+
+def _pairs(mech, ignore_joined):
+    bodies = [mech.ground] + mech.bodies
+    for i, a in enumerate(bodies):
+        for b in bodies[i + 1:]:
+            if a.boxes and b.boxes:
+                yield a, b, _skipped_box_pairs(mech, a, b, ignore_joined)
 
 
 def interferences(mech, x, margin=1e-6, ignore_joined=True):
     """List of (body_a, body_b) pairs that overlap at configuration ``x``."""
-    joined = set()
-    if ignore_joined:
-        for j in mech.joints:
-            joined.add(frozenset((j.a.name, j.b.name)))
-    bodies = [mech.ground] + mech.bodies
     hits = []
-    for i, a in enumerate(bodies):
-        for b in bodies[i + 1:]:
-            if frozenset((a.name, b.name)) in joined:
-                continue
-            qa, qb = mech.pose(x, a), mech.pose(x, b)
-            if any(obb_overlap(world_obb(a, qa, ba), world_obb(b, qb, bb),
-                               margin)
-                   for ba in a.boxes for bb in b.boxes):
-                hits.append((a.name, b.name))
+    for a, b, skip in _pairs(mech, ignore_joined):
+        qa, qb = mech.pose(x, a), mech.pose(x, b)
+        if any(obb_overlap(world_obb(a, qa, ba), world_obb(b, qb, bb), margin)
+               for i, ba in enumerate(a.boxes) for k, bb in enumerate(b.boxes)
+               if (i, k) not in skip):
+            hits.append((a.name, b.name))
     return hits
+
+
+def clearances(mech, x, ignore_joined=True):
+    """Smallest gap for every pair of bodies at configuration ``x``:
+    list of dicts (a, b, box_a, box_b, distance, pa, pb), smallest first.
+    distance < 0 means the boxes overlap (by about -distance)."""
+    out = []
+    for a, b, skip in _pairs(mech, ignore_joined):
+        qa, qb = mech.pose(x, a), mech.pose(x, b)
+        best = None
+        for i, ba in enumerate(a.boxes):
+            A = world_obb(a, qa, ba)
+            for k, bb in enumerate(b.boxes):
+                if (i, k) in skip:
+                    continue
+                d, pa, pb = box_distance(A, world_obb(b, qb, bb))
+                if best is None or d < best["distance"]:
+                    best = dict(a=a.name, b=b.name, box_a=ba.name or str(i),
+                                box_b=bb.name or str(k), distance=d, pa=pa, pb=pb)
+        if best is not None:
+            out.append(best)
+    return sorted(out, key=lambda r: r["distance"])
+
+
+def clearance_violations(mech, x, jeu_min, ignore_joined=True):
+    """Pairs closer than ``jeu_min`` (overlaps included)."""
+    return [c for c in clearances(mech, x, ignore_joined)
+            if c["distance"] < jeu_min - 1e-12]
 
 
 def limit_violations(mech, x, tol=1e-6):
@@ -54,6 +188,43 @@ def limit_violations(mech, x, tol=1e-6):
         if j.limits is None:
             continue
         v = mech.joint_value(j, x)
-        if v < j.limits[0] - tol or v > j.limits[1] + tol:
+        lo, hi = j.limits
+        if (lo is not None and v < lo - tol) or (hi is not None and v > hi + tol):
             out.append((j.name, v, j.limits))
     return out
+
+
+def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True):
+    """Run the driver 0..100 % and check everything at each step.
+
+    Returns a dict: ``steps`` (per step: t, value, ok, res, hits, limits,
+    clearance = smallest gap record), ``worst`` (smallest gap over the run,
+    with its t), ``ok`` (converged, no interference, no limit, gap >=
+    jeu_min everywhere) and ``problems`` (readable strings)."""
+    from .solver import sweep
+    rows, worst, problems = [], None, []
+    for st in sweep(mech, steps):
+        x = st["x"]
+        cl = clearances(mech, x, ignore_joined)
+        row = dict(t=st["t"], value=st["value"], x=x, ok=st["ok"], res=st["res"],
+                   hits=interferences(mech, x, ignore_joined=ignore_joined),
+                   limits=limit_violations(mech, x),
+                   clearance=cl[0] if cl else None)
+        rows.append(row)
+        pct = round(100 * st["t"])
+        if not st["ok"]:
+            problems.append(f"{pct} % : position non atteinte (résidu {st['res']:.2e})")
+        for a, b in row["hits"]:
+            problems.append(f"{pct} % : collision {a} / {b}")
+        for name, v, lim in row["limits"]:
+            problems.append(f"{pct} % : butée dépassée {name} = {v:.4g}")
+        if cl:
+            c = cl[0]
+            if worst is None or c["distance"] < worst["distance"]:
+                worst = dict(c, t=st["t"])
+            for c in cl:
+                if 0 <= c["distance"] < jeu_min - 1e-12:
+                    problems.append(f"{pct} % : jeu {c['distance'] * 1000:.1f} mm "
+                                    f"< {jeu_min * 1000:.1f} mm entre {c['a']} "
+                                    f"({c['box_a']}) et {c['b']} ({c['box_b']})")
+    return dict(steps=rows, worst=worst, ok=not problems, problems=problems)
