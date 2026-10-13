@@ -10,6 +10,10 @@ def residual(mech, x, driver_value=None):
     r = []
     for j in mech.joints:
         qa, qb = mech.pose(x, j.a), mech.pose(x, j.b)
+        if j.kind == "guide":                 # point on the rail (rank 2)
+            p = j.a.local_point(qa, j.b.world_point(qb, j.point))
+            r.extend(p - j.path.closest(p)[1])
+            continue
         Ra, Rb = j.a.rot(qa), j.b.rot(qb)
         pa = j.a.world_point(qa, j.point)
         pb = j.b.world_point(qb, j.point)

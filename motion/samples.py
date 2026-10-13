@@ -149,3 +149,84 @@ def chaise_reference(info, phi):
     s = b + math.sqrt(max(b * b - d @ d + L * L, 0.0))
     Q = K + s * u
     return dict(S=S, Q=Q, s=s, seat_angle=math.atan2(Q[2] - S[2], Q[0] - S[0]))
+
+
+def rail_porte(hauteur, rayon, longueur_horizontale, y=0.0):
+    """Track of a sectional door (centre line of the rollers): vertical
+    from the floor to ``hauteur``, quarter circle of ``rayon`` turning
+    into the garage (+x), then horizontal."""
+    from .model import Path
+    zt = hauteur
+    return (Path(_p(0, 0, y)).line_to(_p(0, zt, y))
+            .arc(_p(rayon, zt, y), math.pi / 2, (0, 1.0, 0))
+            .line_to(_p(rayon + longueur_horizontale, zt + rayon, y)))
+
+
+def porte_sectionnelle(hauteur=2.0, largeur=2.4, panneaux=4, rayon=0.38,
+                       epaisseur=0.04, jeu_linteau=0.01, retombee=0.10,
+                       longueur_horizontale=None):
+    """Sectional garage door: ``panneaux`` equal panels hinged together,
+    one roller per side at every joint plus the bottom and top edges,
+    all running in two identical tracks (``rail_porte``) at y = ±largeur/2.
+
+    The panel's inner face is on the roller line (x = 0), the outer face at
+    x = -epaisseur; the lintel (fixed) starts ``jeu_linteau`` outside it and
+    comes down ``retombee`` below the top of the opening.
+    Driver = position of the bottom roller along the track: 0 % = closed,
+    100 % = bottom roller at the end of the curve (door horizontal).
+    """
+    n, h = int(panneaux), hauteur / panneaux
+    if longueur_horizontale is None:
+        longueur_horizontale = hauteur + 0.3
+    m = Mechanism()
+    g = m.ground
+    g.name = "bâti"
+    zt = hauteur
+    g.boxes.append(Box(_p(-epaisseur - jeu_linteau - 0.1, zt - retombee + 0.2),
+                       (0.1, largeur / 2 + 0.2, 0.2), name="linteau"))
+    rails = {sgn: rail_porte(hauteur, rayon, longueur_horizontale, sgn * largeur / 2)
+             for sgn in (-1, 1)}
+    panels, hinges, rollers = [], [], []
+    for k in range(n):
+        z0 = k * h
+        c = _p(-epaisseur / 2, z0 + h / 2)
+        panels.append(m.body(f"panneau{k + 1}", center=c,
+                             boxes=[Box(c, (epaisseur / 2, largeur / 2, h / 2),
+                                        name=f"panneau{k + 1}")]))
+    for k in range(1, n):
+        hinges.append(m.pivot(panels[k - 1], panels[k], _p(0, k * h), (0, 1.0, 0),
+                              name=f"charnière{k}"))
+    for lev in range(n + 1):
+        body = panels[min(lev, n - 1)]
+        for sgn in (1, -1):
+            j = m.guide(g, body, _p(0, lev * h, sgn * largeur / 2), rails[sgn],
+                        name=f"galet{lev}{'D' if sgn > 0 else 'G'}")
+            if sgn > 0:
+                rollers.append(j)
+    s_open = hauteur + math.pi / 2 * rayon
+    m.drive(rollers[0], 0.0, s_open)
+    info = dict(rail=rails[1], rollers=rollers, panels=panels, hinges=hinges,
+                h=h, n=n, R=rayon, H=hauteur, s_open=s_open,
+                largeur=largeur, jeu_linteau=jeu_linteau)
+    return m, info
+
+
+def porte_reference(info, s0):
+    """Independent positions of the rollers (one side) for the bottom
+    roller at arc length ``s0``: each next roller is the point further
+    along the track at chord distance h (bisection, convex track)."""
+    rail, h = info["rail"], info["h"]
+    s = [float(s0)]
+    for _ in range(info["n"]):
+        a = s[-1]
+        pa = rail.point(a)
+        lo, hi = a, a + h * math.pi / 2 + 1e-9
+        hi = min(hi, rail.length)
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if np.linalg.norm(rail.point(mid) - pa) < h:
+                lo = mid
+            else:
+                hi = mid
+        s.append((lo + hi) / 2)
+    return s, [rail.point(v) for v in s]
