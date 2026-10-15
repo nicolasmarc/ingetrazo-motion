@@ -220,7 +220,16 @@ class MotionPanel(QWidget):
         lay.addLayout(play)
         self.loop = QCheckBox("Aller-retour")
         self.loop.setChecked(True)
-        lay.addWidget(self.loop)
+        prow = QHBoxLayout()
+        prow.addWidget(self.loop)
+        prow.addStretch(1)
+        self.video_btn = QToolButton()
+        self.video_btn.setText("Exporter la vidéo…")
+        self.video_btn.setToolTip("Vidéo en écran partagé : la vue IngeTrazo à gauche, "
+                                  "l'animation ombrée et les mesures à droite.")
+        self.video_btn.clicked.connect(self._export_dialog)
+        prow.addWidget(self.video_btn)
+        lay.addLayout(prow)
 
         val = QHBoxLayout()
         val.addWidget(QLabel("Jeu mini"))
@@ -713,6 +722,211 @@ class MotionPanel(QWidget):
             for i in range(len(tr) - 1):
                 if ok[i] and ok[i + 1]:
                     painter.drawLine(QPointF(px[i], py[i]), QPointF(px[i + 1], py[i + 1]))
+
+    # ---- video export ------------------------------------------------------------------
+    def _settings(self):
+        from PySide6.QtCore import QSettings
+        return QSettings("IngeTrazo", "motion")
+
+    def _ffmpeg_hint(self):
+        try:
+            v = self._settings().value("ffmpeg", "")
+            return str(v) if v else None
+        except Exception:
+            return None
+
+    def _export_dialog(self):
+        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog,
+                                       QMessageBox, QProgressDialog)
+        from . import video
+        m = self.mechanism()
+        if m.driver is None:
+            self.say("Exporter la vidéo : pas de moteur.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Exporter la vidéo")
+        form = QFormLayout(dlg)
+        dur = QDoubleSpinBox()
+        dur.setRange(2, 120)
+        dur.setValue(8)
+        dur.setSuffix(" s")
+        form.addRow("Durée", dur)
+        res = QComboBox()
+        for text, wh in (("1920 × 1080", (1920, 1080)), ("1280 × 720", (1280, 720))):
+            res.addItem(text, wh)
+        form.addRow("Résolution", res)
+        back = QCheckBox("Aller-retour (0 → 100 → 0 %)")
+        back.setChecked(True)
+        form.addRow(back)
+        enc = QLabel()
+        form.addRow("Format", enc)
+        pick = QToolButton()
+        pick.setText("Indiquer ffmpeg.exe…")
+        form.addRow(pick)
+
+        def refresh():
+            kind, exe = video.mp4_backend(self._ffmpeg_hint())
+            enc.setText({"qt": "MP4 (Qt Multimedia)", "ffmpeg": f"MP4 (ffmpeg : {exe})"}.get(
+                kind, "AVI Motion-JPEG — pour du MP4, indiquer ffmpeg.exe"))
+            pick.setVisible(kind != "qt")
+
+        def choose():
+            f, _ = QFileDialog.getOpenFileName(dlg, "ffmpeg", "", "ffmpeg (ffmpeg*)")
+            if f:
+                self._settings().setValue("ffmpeg", f)
+            refresh()
+
+        pick.clicked.connect(choose)
+        refresh()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        kind, _ = video.mp4_backend(self._ffmpeg_hint())
+        ext, filt = (".mp4", "Vidéo MP4 (*.mp4)") if kind else (".avi", "Vidéo AVI (*.avi)")
+        path, _ = QFileDialog.getSaveFileName(self, "Exporter la vidéo", "motion" + ext, filt)
+        if not path:
+            return
+        prog = QProgressDialog("Rendu de la vidéo…", "Annuler", 0, 100, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+
+        def step(i, n):
+            prog.setMaximum(n)
+            prog.setValue(i)
+            return not prog.wasCanceled()
+
+        try:
+            out, label = self.export_video(path, dur.value(), res.currentData(),
+                                           back.isChecked(), progress=step)
+        except Exception as exc:
+            prog.close()
+            QMessageBox.warning(self, "Exporter la vidéo", str(exc))
+            return
+        prog.close()
+        self.say(f"Vidéo enregistrée : {out} — {label}." if out else "Export annulé.")
+
+    def _viewport_image(self, width):
+        """The IngeTrazo view (model + this overlay) as an image."""
+        vp = self.app.viewport
+        img = None
+        render = getattr(vp, "render_image", None)
+        if callable(render):
+            try:
+                img = render(width)
+            except Exception:
+                img = None
+        lw, lh = max(vp.width(), 1), max(vp.height(), 1)
+        if img is None or img.isNull():                  # no GL here: overlay only
+            from PySide6.QtGui import QImage
+            img = QImage(width, max(1, int(round(width * lh / lw))), QImage.Format_RGB32)
+            img.fill(QColor(244, 244, 242))
+        from PySide6.QtGui import QPainter
+        p = QPainter(img)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.scale(img.width() / lw, img.height() / lh)
+        self._force_paint = True
+        try:
+            self.paint(vp, p)
+        finally:
+            self._force_paint = False
+            p.end()
+        return img
+
+    def _polys(self):
+        """Face polygons of each body's groups (reference pose)."""
+        if self.source != "model":
+            return {}
+        by = groups_by_uid(self._scene())
+        out = {}
+        for b in self.data["bodies"]:
+            faces = []
+            for u in b["groups"]:
+                g = by.get(u)
+                if g is None:
+                    continue
+                for mesh, aff in _placements(g):
+                    for f in mesh.faces:
+                        P = np.array([_xyz(v) for v in f.vertices])
+                        if aff is not None:
+                            P = P @ aff[0].T + aff[1]
+                        faces.append(P)
+            if faces:
+                out[b["name"]] = faces
+        return out
+
+    def export_video(self, path, seconds=8.0, size=(1920, 1080), aller_retour=True,
+                     fps=30, progress=None):
+        """Render the motion to ``path`` (split screen). Returns (file, kind
+        label), or (None, None) when ``progress(i, n)`` returned False."""
+        from . import render, video
+        m = self.mechanism()
+        if m.driver is None:
+            raise ValueError("pas de moteur")
+        sweep_rows = self.frames or solver.sweep(m, max(self.pas.value(), 21))
+        n = max(2, int(round(seconds * fps)))
+        hold = min(int(0.5 * fps), n // 6)
+        ease = lambda u: 0.5 - 0.5 * math.cos(math.pi * u)
+        if aller_retour:
+            run = (n - 3 * hold) // 2
+            tl = ([0.0] * hold + [ease(i / max(run - 1, 1)) for i in range(run)] + [1.0] * hold
+                  + [ease(1 - i / max(run - 1, 1)) for i in range(run)])
+        else:
+            run = n - 2 * hold
+            tl = [0.0] * hold + [ease(i / max(run - 1, 1)) for i in range(run)]
+        tl += [tl[-1]] * (n - len(tl))
+        cam = getattr(self.app.viewport, "camera", None)
+        yaw = float(getattr(cam, "yaw", math.radians(-45)))
+        pitch = float(getattr(cam, "pitch", math.radians(25)))
+        shaded = render.Shaded(m, self._polys())
+        W, H = size
+        u = H / 1080.0
+        pane = ((W - 48 * u) / 2 - 8, H - 180 * u - 8)
+        scale, centre = shaded.fit([r["x"] for r in sweep_rows], yaw, pitch, *pane)
+        traces = self.trace_pts if self.buttons["trajectory"].isChecked() else []
+        j, lo, hi = m.driver
+        unit = (lambda v: f"{math.degrees(v):.1f}°") if j.kind == "pivot" else \
+            (lambda v: f"{1000 * v:.0f} mm")
+        name = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle"}.get(
+            self.source, "Mécanisme")
+        writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
+        saved_x, saved_t = self.x, self.t
+        x = None
+        try:
+            for i, t in enumerate(tl):
+                if progress is not None and not progress(i, len(tl)):
+                    writer.close()
+                    return None, None
+                f = t * (len(sweep_rows) - 1)
+                k = min(int(f), len(sweep_rows) - 2)
+                a = f - k
+                guess = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
+                x, ok, _ = solver.solve(m, lo + t * (hi - lo), guess)
+                self.x, self.t = x, t
+                hits = {nm for pair in collide.interferences(m, x) for nm in pair}
+                cl = collide.clearances(m, x)
+                info = [f"{j.name} : {unit(m.joint_value(j, x))}"]
+                if cl:
+                    info.append(f"jeu mini {1000 * max(cl[0]['distance'], 0):.1f} mm")
+                info.append("collision : " + " / ".join(sorted(hits)) if hits else "aucune collision")
+                if not ok:
+                    info.append("position non atteinte")
+                left = self._viewport_image(int(pane[0] * 1.5))
+                frame = render.compose(
+                    W, H, left,
+                    lambda p, r: shaded.draw(p, r, x, yaw, pitch, scale, centre,
+                                             hits, traces),
+                    f"{name} — IngeTrazo Motion", info, t)
+                writer.add(frame)
+            if progress is not None:
+                progress(len(tl), len(tl))
+            out = writer.close()
+        finally:
+            self.x, self.t = saved_x, saved_t
+            self.app.viewport.update()
+        return out, writer.label
 
     def _draw_segments(self, painter, pts, color, width):
         px, py, ok = self.app.world_to_pixels(pts)

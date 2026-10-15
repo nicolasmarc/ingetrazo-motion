@@ -10,6 +10,7 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 REPO = HERE.parent
 
 
@@ -56,17 +57,16 @@ def _window():
 
 
 def _box_group(name, lo, hi):
+    """A closed box group (6 faces, their edges come with them)."""
     from PySide6.QtGui import QVector3D as V
     from core.group import Group
     from core.mesh import Mesh
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
     m = Mesh()
-    c = [np.where([i & 1, i & 2, i & 4], hi, lo) for i in range(8)]
-    for i in range(8):
-        for b in (1, 2, 4):
-            j = i | b
-            if j != i:
-                m.add_edge(V(*c[i]), V(*c[j]))
+    c = [V(*np.where([i & 1, i & 2, i & 4], hi, lo)) for i in range(8)]
+    for f in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4),
+              (1, 5, 7, 3)):
+        m.add_face([c[i] for i in f])
     return Group(m, name)
 
 
@@ -178,6 +178,53 @@ def test_panel_on_two_curved_rails_built_from_edges():
     # outer top corner sits right under the lintel's corner, 10 mm apart
     assert (w_["box_a"], w_["box_b"], w_["t"]) == ("Linteau", "Panneau", 1.0)
     assert abs(w_["distance"] - 0.01) < 1e-7
+
+
+def test_video_export_split_screen():
+    """Export from the panel, through every writer available here."""
+    if SKIP:
+        print("skip:", SKIP); return
+    import subprocess
+    from motion_probe import probe
+    win = _window()
+    panel = _state["panel"]
+    out_dir = Path(tempfile.mkdtemp())
+    # model source (the drop-leaf of the first test is still in the scene)
+    if not panel.app.document_data():
+        test_drop_leaf_built_from_the_model()
+    panel.set_source("model")
+    assert panel._polys(), "group faces should be used for the shaded view"
+    calls = []
+    out, label = panel.export_video(str(out_dir / "abattant.mp4"), 1.0, (640, 360),
+                                    progress=lambda i, n: calls.append(i) or True)
+    assert Path(out).is_file() and calls[-1] == 30
+    info = probe(out)
+    if info:
+        assert info["frames"] == 30 and (info["w"], info["h"]) == (640, 360)
+    # example, forced to each writer
+    panel.set_source("chaise")
+    import importlib                      # the plugin's own copy of motion.video
+    video = importlib.import_module(type(panel).__module__.rsplit(".", 1)[0] + ".video")
+    for prefer in ("avi", "ffmpeg", "qt"):
+        if prefer == "ffmpeg" and not video.find_ffmpeg():
+            continue
+        if prefer == "qt" and not video.qt_multimedia_available():
+            continue
+        real = video.open_writer
+        video.open_writer = lambda *a, **k: real(*a, prefer=prefer)
+        try:
+            out, label = panel.export_video(str(out_dir / f"chaise_{prefer}.mp4"), 1.0,
+                                            (1280, 720))
+        finally:
+            video.open_writer = real
+        assert out.endswith(".avi" if prefer == "avi" else ".mp4"), out
+        info = probe(out)
+        if info:
+            assert info["frames"] == 30 and info["w"] == 1280, (prefer, info)
+    # cancelling stops early and returns nothing
+    out, label = panel.export_video(str(out_dir / "stop.mp4"), 1.0, (320, 180),
+                                    progress=lambda i, n: i < 5)
+    assert out is None
 
 
 def Qt_MatchExactly():

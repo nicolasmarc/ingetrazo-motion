@@ -34,6 +34,12 @@ tab appears in the side tray, and Extensions ▸ Motion has the examples.
 | Validate | — | 0 → 100 %: convergence, collisions, stops, gaps under *Jeu mini* |
 | Trajectory | edges whose end points to trace (else the joint points) | dashed paths in the view |
 
+**Exporter la vidéo…** (under the playback slider) writes a split-screen
+video: the IngeTrazo view on the left, a shaded animation with the readings
+on the right. MP4 needs an encoder: Qt Multimedia if your IngeTrazo has it,
+else `ffmpeg` (found on the PATH, or point to `ffmpeg.exe` once in the
+dialog); without either, the video is saved as AVI (Motion-JPEG).
+
 The animation is drawn over the model: the groups themselves do not move,
 so playing adds no undo steps. The mechanism is saved in the `.igz`; every
 edit is one undo step. Collision boxes are fitted to each group.
@@ -59,6 +65,7 @@ python tests/test_chair.py       # folding chair vs closed forms
 python tests/test_clearance.py   # exact distances, gaps along a motion
 python tests/test_guide.py       # rail, trammel ellipse, sectional door
 python tests/test_document.py    # what the panel stores
+python tests/test_video.py       # video writers (AVI checked byte by byte)
 python tests/test_panel_ingetrazo.py   # the panel in a real IngeTrazo
                                        # window (needs PySide6 and an
                                        # IngeTrazo checkout: INGETRAZO_SRC)

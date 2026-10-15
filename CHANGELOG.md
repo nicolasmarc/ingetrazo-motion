@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — 2026-10-15
+
+### Added
+- **Export de la vidéo / Video export** (panel button «Exporter la vidéo…»):
+  split screen, the IngeTrazo view on the left (model + motion overlay,
+  through the viewport's own off-screen render), a shaded animation with
+  the readings (driver value, smallest gap, collisions) on the right;
+  duration, 1920 × 1080 or 1280 × 720, there-and-back; cancellable.
+- `motion.video`: MP4 through Qt Multimedia when present, else an
+  `ffmpeg` executable (PATH, or pointed to once in the export dialog),
+  else a pure-Python Motion-JPEG AVI so a video is always produced.
+- `motion.render`: shaded QPainter view of a mechanism (group faces, or
+  boxes) and the split-screen frame.
+
 ## 0.2.0 — 2026-10-13
 
 ### Added
