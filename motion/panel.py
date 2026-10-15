@@ -33,7 +33,11 @@ from . import collide, document as doc, icons, samples, solver
 
 SOURCES = (("model", "Modèle (document)"),
            ("chaise", "Exemple : chaise pliante"),
-           ("porte", "Exemple : porte sectionnelle"))
+           ("porte", "Exemple : porte sectionnelle"),
+           ("oiseau", "Exemple : oiseau à battement d'ailes"))
+
+SAMPLE_NAMES = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle",
+                "oiseau": "Oiseau à battement d'ailes"}
 
 TIPS = {
     "fixed": "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.",
@@ -120,6 +124,7 @@ class MotionPanel(QWidget):
         self.source = "model"
         self.data = doc.empty()
         self.mech = None
+        self.sample_info = None
         self.problems = []
         self.frames = None          # validate() rows, or None
         self.report = None
@@ -311,11 +316,11 @@ class MotionPanel(QWidget):
         """The current mechanism (built once per change)."""
         if self.mech is not None:
             return self.mech
-        if self.source == "chaise":
-            self.mech, info = samples.chaise_pliante()
-            self.problems = []
-        elif self.source == "porte":
-            self.mech, info = samples.porte_sectionnelle()
+        builders = {"chaise": samples.chaise_pliante, "porte": samples.porte_sectionnelle,
+                    "oiseau": samples.oiseau}
+        self.sample_info = None
+        if self.source in builders:
+            self.mech, self.sample_info = builders[self.source]()
             self.problems = []
         else:
             by = groups_by_uid(self._scene())
@@ -593,6 +598,8 @@ class MotionPanel(QWidget):
                     b = doc.nearest_body(p, boxes)
                     if b:
                         self.traces.append((moving[b], p))
+        elif (getattr(self, "sample_info", None) or {}).get("traces"):
+            self.traces = [(b, np.asarray(p, float)) for b, p in self.sample_info["traces"]]
         else:
             for j in m.joints:
                 for body in (j.a, j.b):
@@ -617,6 +624,9 @@ class MotionPanel(QWidget):
         self.buttons["trajectory"].setChecked(False)
         self.out.clear()
         self.reload()
+        jeu = (self.sample_info or {}).get("jeu_min")     # an example's own gap
+        if jeu is not None:
+            self.jeu.setValue(1000 * jeu)
         self.slider.setValue(0)
         self._scrub(0)
 
@@ -660,6 +670,9 @@ class MotionPanel(QWidget):
             self.timer.stop()
 
     def _tick(self):
+        if self.full_turn():                     # a crank keeps turning
+            self.slider.setValue((self.slider.value() + 10) % 1000)
+            return
         v = self.slider.value() + self._dir * 10
         if v > 1000 or v < 0:
             if self.loop.isChecked():
@@ -670,7 +683,7 @@ class MotionPanel(QWidget):
         self.slider.setValue(v)
 
     # ---- drawing over the viewport ----------------------------------------------------
-    def paint(self, viewport, painter):
+    def paint(self, viewport, painter, wire=True):
         m = self.mech
         if m is None or not (self.isVisible() or getattr(self, "_force_paint", False)):
             return
@@ -681,7 +694,7 @@ class MotionPanel(QWidget):
             k = int(round(self.t * (len(self.frames) - 1)))
             for a, b in self.frames[k].get("hits", []):
                 hits.update((a, b))
-        bodies = [m.ground] + m.bodies
+        bodies = [m.ground] + m.bodies if wire else []
         for body in bodies:
             q = m.pose(x, body)
             color = QColor(220, 40, 40) if body.name in hits else (
@@ -808,28 +821,78 @@ class MotionPanel(QWidget):
         prog.close()
         self.say(f"Vidéo enregistrée : {out} — {label}." if out else "Export annulé.")
 
-    def _viewport_image(self, width):
-        """The IngeTrazo view (model + this overlay) as an image."""
+    def _moving_groups(self):
+        """IngeTrazo groups of the moving bodies (model source)."""
+        if self.source != "model":
+            return []
+        by = groups_by_uid(self._scene())
+        return [by[u] for b in self.data["bodies"] if not b["fixed"]
+                for u in b["groups"] if u in by]
+
+    def _refresh_view_cache(self):
+        # Best effort, viewport internals: forget the memoised placement
+        # epoch so a group's ``hidden`` flag is seen without bumping the
+        # document version (no undo step, the document stays saved). If
+        # these names change, moving parts simply stay drawn in place.
+        vp = self.app.viewport
+        for name in ("_epoch_memo", "_epoch_same"):
+            if hasattr(vp, name):
+                try:
+                    setattr(vp, name, None)
+                except Exception:
+                    pass
+
+    def _viewport_image(self, width, shaded=None, x=None, hits=None):
+        """The IngeTrazo view as an image: IngeTrazo renders the model
+        (moving parts taken out for the shot), Motion draws the moving
+        parts at pose ``x`` on top, then the joints and trajectories."""
         vp = self.app.viewport
         img = None
         render = getattr(vp, "render_image", None)
+        hide = [g for g in self._moving_groups() if not g.hidden] if shaded is not None else []
         if callable(render):
             try:
+                for g in hide:
+                    g.hidden = True
+                if hide:
+                    self._refresh_view_cache()
                 img = render(width)
             except Exception:
                 img = None
+            finally:
+                for g in hide:
+                    g.hidden = False
+                if hide:
+                    self._refresh_view_cache()
         lw, lh = max(vp.width(), 1), max(vp.height(), 1)
-        if img is None or img.isNull():                  # no GL here: overlay only
+        rendered = img is not None and not img.isNull()
+        if not rendered:                                 # no GL here
             from PySide6.QtGui import QImage
             img = QImage(width, max(1, int(round(width * lh / lw))), QImage.Format_RGB32)
-            img.fill(QColor(244, 244, 242))
+            img.fill(QColor(236, 236, 234))
         from PySide6.QtGui import QPainter
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.scale(img.width() / lw, img.height() / lh)
         self._force_paint = True
         try:
-            self.paint(vp, p)
+            if shaded is not None and x is not None:
+                from . import render as _render
+                cam = getattr(vp, "camera", None)
+                yaw = float(getattr(cam, "yaw", 0.0))
+                pitch = float(getattr(cam, "pitch", 0.0))
+                fwd = _render.view_axes(yaw, pitch)[2]
+                names = None
+                if self.source == "model" and rendered:
+                    names = {b.name for b in self.mechanism().bodies}
+                if hits is None:
+                    hits = {n for pair in collide.interferences(self.mechanism(), x)
+                            for n in pair}
+                _render.draw_projected(shaded, p, x, self.app.world_to_pixels, fwd,
+                                       names, hits)
+                self.paint(vp, p, wire=False)
+            else:
+                self.paint(vp, p)
         finally:
             self._force_paint = False
             p.end()
@@ -857,19 +920,39 @@ class MotionPanel(QWidget):
                 out[b["name"]] = faces
         return out
 
+    def full_turn(self):
+        """Driver is a pivot doing a whole revolution (a crank)."""
+        m = self.mechanism()
+        if m.driver is None:
+            return False
+        j, lo, hi = m.driver
+        return j.kind == "pivot" and abs(abs(hi - lo) - 2 * math.pi) < 1e-6
+
     def export_video(self, path, seconds=8.0, size=(1920, 1080), aller_retour=True,
-                     fps=30, progress=None):
+                     fps=30, progress=None, cycles=None):
         """Render the motion to ``path`` (split screen). Returns (file, kind
-        label), or (None, None) when ``progress(i, n)`` returned False."""
+        label), or (None, None) when ``progress(i, n)`` returned False.
+        A crank (full-turn driver) runs at constant speed for ``cycles``
+        turns (default: one turn per 2 s); anything else is eased, there
+        and back when ``aller_retour``."""
         from . import render, video
         m = self.mechanism()
         if m.driver is None:
             raise ValueError("pas de moteur")
-        sweep_rows = self.frames or solver.sweep(m, max(self.pas.value(), 21))
+        # checked once, at the validation steps: the readings of a frame
+        # (smallest gap, collisions) are those of its nearest step
+        rows = self.report["steps"] if self.report else None
+        if rows is None or len(rows) < 3:
+            rows = collide.validate(m, max(self.pas.value(), 21),
+                                    self.jeu.value() / 1000)["steps"]
+        sweep_rows = rows
         n = max(2, int(round(seconds * fps)))
         hold = min(int(0.5 * fps), n // 6)
         ease = lambda u: 0.5 - 0.5 * math.cos(math.pi * u)
-        if aller_retour:
+        if self.full_turn():
+            cycles = cycles or max(1, round(seconds / 2.0))
+            tl = [(i * cycles / n) % 1.0 for i in range(n)]
+        elif aller_retour:
             run = (n - 3 * hold) // 2
             tl = ([0.0] * hold + [ease(i / max(run - 1, 1)) for i in range(run)] + [1.0] * hold
                   + [ease(1 - i / max(run - 1, 1)) for i in range(run)])
@@ -880,6 +963,9 @@ class MotionPanel(QWidget):
         cam = getattr(self.app.viewport, "camera", None)
         yaw = float(getattr(cam, "yaw", math.radians(-45)))
         pitch = float(getattr(cam, "pitch", math.radians(25)))
+        vue = (self.sample_info or {}).get("vue")         # a view of its own
+        if vue:
+            yaw, pitch = math.radians(vue[0]), math.radians(vue[1])
         shaded = render.Shaded(m, self._polys())
         W, H = size
         u = H / 1080.0
@@ -889,8 +975,7 @@ class MotionPanel(QWidget):
         j, lo, hi = m.driver
         unit = (lambda v: f"{math.degrees(v):.1f}°") if j.kind == "pivot" else \
             (lambda v: f"{1000 * v:.0f} mm")
-        name = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle"}.get(
-            self.source, "Mécanisme")
+        name = SAMPLE_NAMES.get(self.source, "Mécanisme")
         writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
         saved_x, saved_t = self.x, self.t
         x = None
@@ -905,19 +990,25 @@ class MotionPanel(QWidget):
                 guess = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
                 x, ok, _ = solver.solve(m, lo + t * (hi - lo), guess)
                 self.x, self.t = x, t
-                hits = {nm for pair in collide.interferences(m, x) for nm in pair}
-                cl = collide.clearances(m, x)
-                info = [f"{j.name} : {unit(m.joint_value(j, x))}"]
+                near = rows[int(round(t * (len(rows) - 1)))]
+                hits = {nm for pair in near.get("hits", []) for nm in pair}
+                cl = [near["clearance"]] if near.get("clearance") else []
+                shown = lo + t * (hi - lo)
+                info = [f"{j.name} : {unit(shown)}"]
+                extra = (self.sample_info or {}).get("mesures")
+                if extra:
+                    info += extra(m, x)
                 if cl:
                     info.append(f"jeu mini {1000 * max(cl[0]['distance'], 0):.1f} mm")
                 info.append("collision : " + " / ".join(sorted(hits)) if hits else "aucune collision")
                 if not ok:
                     info.append("position non atteinte")
-                left = self._viewport_image(int(pane[0] * 1.5))
+                left = self._viewport_image(int(pane[0] * 1.5), shaded, x, hits)
                 frame = render.compose(
                     W, H, left,
                     lambda p, r: shaded.draw(p, r, x, yaw, pitch, scale, centre,
-                                             hits, traces),
+                                             hits, traces,
+                                             floor=abs(math.degrees(pitch)) > 12),
                     f"{name} — IngeTrazo Motion", info, t)
                 writer.add(frame)
             if progress is not None:
@@ -969,6 +1060,7 @@ def setup(app):
         sub.addAction("Panneau Motion", lambda: show())
         sub.addAction("Exemple : chaise pliante", lambda: show("chaise"))
         sub.addAction("Exemple : porte sectionnelle", lambda: show("porte"))
+        sub.addAction("Exemple : oiseau à battement d'ailes", lambda: show("oiseau"))
     else:
         app.add_menu_action("Motion", lambda: show(),
                             tip="Mécanismes : pivots, glissières, rails, validation.")

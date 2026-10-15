@@ -251,11 +251,12 @@ def test_examples_validate_in_the_panel():
         print("skip:", SKIP); return
     win = _window()
     panel = _state["panel"]
-    for key in ("chaise", "porte"):
+    for key in ("chaise", "porte", "oiseau"):
         panel.set_source(key)
         m = panel.mechanism()
         unit = math.degrees if m.driver[0].kind == "pivot" else (lambda v: 1000 * v)
         assert abs(panel.drv_hi.value() - round(unit(m.driver[2]), 1)) < 0.051
+        assert panel.full_turn() == (key == "oiseau")      # the bird has a crank
         panel.pas.setValue(21)
         panel._action("validate")
         assert panel.report["ok"], (key, panel.report["problems"])

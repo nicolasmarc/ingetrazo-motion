@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0 — 2026-10-16
+
+### Added
+- **Flapping bird** example (`samples.oiseau`): one crank turning full
+  revolutions drives a vertical slider; two rods beat both wings; each wing
+  has an arm and a hand, the hand held by a tie rod from the body so it
+  folds on the upstroke and spreads on the downstroke (about x1.5).
+  Tested against closed forms over a full turn (slider height, both
+  circle cuts), mirror symmetry, stroke ends at the slider's ends.
+- Cranks: a pivot driver may turn past ±180° (whole revolutions); the
+  panel plays it round and round, the video runs it at constant speed.
+- Video: the IngeTrazo pane now shows the model rendered by IngeTrazo with
+  the moving parts drawn shaded at their pose by Motion (the moving groups
+  are left out of that shot only — no undo step, the document is not
+  touched); example-specific readings (arm, hand, fold angles; slot
+  travel); an example may choose its own view for the right pane; body
+  colours.
+
+### Changed
+- Solver: the Jacobian is built body by body (only the joints a body takes
+  part in), about 6 times faster on 11 bodies.
+- Video: smallest gap and collisions are computed once at the validation
+  steps (each frame shows its nearest step), about 3 times faster.
+
 ## 0.3.0 — 2026-10-15
 
 ### Added

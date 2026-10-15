@@ -77,6 +77,7 @@ class Body:
     boxes: list = field(default_factory=list)
     fixed: bool = False
     index: int = -1            # slot in the pose vector (-1 for ground)
+    color: tuple = None        # (r, g, b) for drawings; None = automatic
 
     def world_point(self, q, p):
         """World position of the body-fixed reference point ``p``."""

@@ -112,6 +112,8 @@ def chaise_pliante(hauteur=0.45, profondeur=0.40, largeur=0.40,
     phi_fold = _angle(S0 - Fa, K - Fd)
     cross.limits = (0.0, phi_fold)
     m.drive(cross, 0.0, phi_fold)
+    g.color, pa.color = (150, 100, 60), (196, 140, 84)
+    seat.color, pin.color = (226, 190, 140), (90, 95, 105)
     info = dict(P=P, K=K, S0=S0, Fd=Fd, Fa=Fa, T=T, u=u, L=L, r=r,
                 phi_fold=phi_fold, recul_dossier=recul_dossier, slot_length=longueur_lumiere,
                 seat_thickness=epaisseur_assise, member_width=w,
@@ -119,6 +121,8 @@ def chaise_pliante(hauteur=0.45, profondeur=0.40, largeur=0.40,
                             axe_arriere=rear, lumiere=slot),
                 bodies=dict(pied_dossier=g, pied_assise=pa, assise=seat,
                             coulisseau=pin))
+    info["mesures"] = lambda mech, x: [
+        f"course dans la lumière {1000 * mech.joint_value(slot, x):.1f} mm"]
     return m, info
 
 
@@ -205,6 +209,9 @@ def porte_sectionnelle(hauteur=2.0, largeur=2.4, panneaux=4, rayon=0.38,
                 rollers.append(j)
     s_open = hauteur + math.pi / 2 * rayon
     m.drive(rollers[0], 0.0, s_open)
+    g.color = (150, 150, 150)
+    for b in panels:
+        b.color = (226, 226, 220)
     info = dict(rail=rails[1], rollers=rollers, panels=panels, hinges=hinges,
                 h=h, n=n, R=rayon, H=hauteur, s_open=s_open,
                 largeur=largeur, jeu_linteau=jeu_linteau)
@@ -230,3 +237,167 @@ def porte_reference(info, s0):
                 hi = mid
         s.append((lo + hi) / 2)
     return s, [rail.point(v) for v in s]
+
+
+# -- flapping bird ------------------------------------------------------------
+
+def _circle_cut(c0, r0, c1, r1, side):
+    """Intersection of circles (xz plane) on ``side`` (+1/-1) of c0->c1."""
+    d = c1 - c0
+    L = math.hypot(d[0], d[2])
+    a = (r0 * r0 - r1 * r1 + L * L) / (2 * L)
+    h = math.sqrt(max(r0 * r0 - a * a, 0.0))
+    u = d / L
+    n = np.array([-u[2], 0.0, u[0]])
+    return c0 + a * u + side * h * n
+
+
+def _side(c0, c1, p):
+    d, v = c1 - c0, p - c0
+    return 1.0 if d[0] * v[2] - d[2] * v[0] >= 0 else -1.0
+
+
+def oiseau(manivelle=0.03, bielle=0.09, ecart_biellettes=0.018,
+           epaule=(0.07, 0.135), levier=0.052, bras=0.20, main=0.24,
+           tirant_sous_epaule=0.02, levier_main=0.04, angle_levier_main=120.0,
+           corde=0.16):
+    """Flapping bird, both wings driven by one crank (metres).
+
+    The crank (axis y, turning a full revolution) drives a vertical slider
+    through a connecting rod; two short rods take the slider to the lever
+    of each wing (``bras``, hinged at the shoulder). Each wing has a second
+    segment (``main``, hinged at the elbow) held by a tie rod (``tirant``)
+    from a point of the body just under the shoulder: the hand folds and
+    spreads as the arm beats, amplifying the stroke (about x1.5).
+
+    x = across (wings), z = up, y = fore-aft (+y = head). Driver = crank
+    angle, 0 -> 360 deg (0 % = as drawn, wings level).
+    """
+    r, Lc, dq = manivelle, bielle, ecart_biellettes
+    zQ = math.sqrt(Lc * Lc - r * r)
+    O = _p(0, 0)
+    P0 = _p(r, 0)                                  # crank pin, angle 0
+    Q0 = _p(0, zQ)                                 # slider pin
+    a_lm = math.radians(angle_levier_main)
+    m = Mechanism()
+    g = m.ground
+    g.name = "corps"
+    T = 0.006                                      # plate thickness (y)
+
+    def slab(p0, p1, w, y, name):
+        return bar(np.asarray(p0, float) + y * Y, np.asarray(p1, float) + y * Y, w, T,
+                   name=name)
+
+    # body: back plate, slider guide, head, tail, tie-rod clevises
+    g.boxes += [Box(_p(0, 0.06, 0.034), (0.085, T / 2, 0.11), name="flasque"),
+                slab(_p(0, 0.035), _p(0, 0.17), 0.012, 0.024, "glissière"),
+                Box(_p(0, 0.17, 0.20), (0.03, 0.05, 0.03), name="tête"),
+                Box(_p(0, 0.20, 0.235), (0.006, 0.02, 0.006), name="bec"),
+                bar(_p(0, 0.13, 0.034), _p(0, 0.17, 0.15), 0.035, 0.035, side=(1, 0, 0),
+                    name="cou"),
+                Box(_p(0, 0.10, -0.16), (0.07, 0.11, 0.004), name="queue")]
+    crank = m.body("manivelle", O, [slab(O, P0 + 0.012 * unit(P0 - O), 0.03, 0.0, "manivelle")])
+    rod = m.body("bielle", (P0 + Q0) / 2, [slab(P0, Q0, 0.012, -0.008, "bielle")])
+    slider = m.body("coulisseau", Q0, [Box(Q0 + 0.012 * Y, (0.03, 0.004, 0.012),
+                                           name="coulisseau")])
+    m.drive(m.pivot(g, crank, O, CCW, name="manivelle"), 0.0, 2 * math.pi)
+    g.color = (200, 46, 46)
+    crank.color = slider.color = (52, 92, 178)
+    rod.color = (60, 60, 66)
+    m.pivot(crank, rod, P0, Y, name="maneton")
+    m.pivot(rod, slider, Q0, Y, name="pied de bielle")
+    m.slider(g, slider, Q0, (0, 0, 1.0), name="coulisse")
+
+    wings = {}
+    for sgn, tag in ((1, "D"), (-1, "G")):
+        S = _p(sgn * epaule[0], epaule[1])
+        A = S + _p(-sgn * levier, 0)                         # lever, inward
+        Qs = Q0 + _p(sgn * dq, 0)
+        E = S + _p(sgn * bras, 0)
+        tip = E + _p(sgn * main, 0)
+        C = E + levier_main * _p(sgn * math.cos(a_lm), math.sin(a_lm))
+        B = S + _p(0, -tirant_sous_epaule)
+        # rod: slider -> arm lever
+        bl = m.body(f"biellette{tag}", (Qs + A) / 2, [slab(Qs, A, 0.01, -0.016, "biellette")])
+        ribs_a = [(k * bras / 4, corde * (0.80 + 0.06 * k)) for k in (1, 2, 3, 4)]
+        ribs_h = [(k * main / 5, corde * (1.10 - 0.17 * k)) for k in (1, 2, 3, 4, 5)]
+        arm = m.body(f"bras{tag}", (S + E) / 2,
+                     [slab(A, S, 0.014, -0.024, "levier"),
+                      bar(S - 0.01 * Y, E - 0.01 * Y, 0.012, 0.012, name="longeron")]
+                     + _lattice(S, sgn, ribs_a, 0.006, "nervure"))
+        hand = m.body(f"main{tag}", (E + tip) / 2,
+                      [slab(E, C, 0.012, -0.040, "levier main"),
+                       bar(E - 0.01 * Y, tip - 0.01 * Y, 0.01, 0.01, name="longeron")]
+                      + _lattice(E, sgn, ribs_h, 0.005, "plume"))
+        arm.color = hand.color = (240, 240, 236)
+        tie = m.body(f"tirant{tag}", (B + C) / 2, [slab(B, C, 0.008, -0.048, "tirant")])
+        bl.color = tie.color = (60, 60, 66)
+        g.boxes.append(Box(B - 0.054 * Y, (0.008, 0.005, 0.008), name=f"chape{tag}"))
+        g.boxes.append(Box(S + 0.02 * Y, (0.012, 0.008, 0.012), name=f"palier{tag}"))
+        m.pivot(slider, bl, Qs, Y, name=f"tête biellette{tag}")
+        m.pivot(bl, arm, A, Y, name=f"levier{tag}")
+        m.pivot(g, arm, S, Y, name=f"épaule{tag}")
+        m.pivot(arm, hand, E, Y, name=f"coude{tag}")
+        m.pivot(hand, tie, C, Y, name=f"poignet{tag}")
+        m.pivot(tie, g, B, Y, name=f"attache tirant{tag}")
+        wings[tag] = dict(S=S, A=A, Qs=Qs, E=E, tip=tip, C=C, B=B, arm=arm, hand=hand,
+                          sgn=sgn, Lr=float(np.linalg.norm(A - Qs)),
+                          Lt=float(np.linalg.norm(C - B)),
+                          sideA=_side(S, Qs, A), sideC=_side(E, B, C))
+    info = dict(r=r, Lc=Lc, dq=dq, Q0=Q0, P0=P0, wings=wings, levier=levier,
+                bras=bras, main=main, levier_main=levier_main, a_lm=a_lm,
+                bodies=dict(manivelle=crank, bielle=rod, coulisseau=slider),
+                traces=[(wings[t]["hand"], wings[t]["tip"]) for t in ("D", "G")])
+
+    def mesures(mech, x):
+        w = wings["D"]
+        E = w["arm"].world_point(mech.pose(x, w["arm"]), w["E"])
+        T_ = w["hand"].world_point(mech.pose(x, w["hand"]), w["tip"])
+        a = math.degrees(math.atan2(E[2] - w["S"][2], E[0] - w["S"][0]))
+        h = math.degrees(math.atan2(T_[2] - E[2], T_[0] - E[0]))
+        return [f"bras {a:+.1f}°", f"main {h:+.1f}°", f"pliage {h - a:+.1f}°"]
+
+    info["mesures"] = mesures
+    info["vue"] = (90.0, 8.0)          # face on: the plane of the beat
+    info["jeu_min"] = 0.0015           # links stacked 2 mm apart (washers)
+    return m, info
+
+
+def _lattice(root, sgn, ribs, t, name):
+    """Wing lattice behind a spar starting at ``root``: ribs (x along the
+    spar, chord) running back along +y, and a trailing edge joining their
+    ends."""
+    out, ends = [], []
+    for k, (d, chord) in enumerate(ribs):
+        p0 = root + _p(sgn * d, 0) + 0.004 * Y
+        p1 = p0 + chord * Y
+        out.append(bar(p0, p1, t, t, side=(1, 0, 0), name=name))
+        ends.append(p1)
+    first = root + _p(sgn * 0.03, 0) + (0.004 + 0.6 * ribs[0][1]) * Y
+    for a, b in zip([first] + ends[:-1], ends):
+        out.append(bar(a, b, t, t, side=(0, 0, 1.0), name="bord de fuite"))
+    return out
+
+
+def oiseau_reference(info, theta):
+    """Closed form for crank angle ``theta``: slider height, then for each
+    wing the arm angle (circle cut at the lever) and the hand (circle cut
+    at the wrist). Angles from +x (right) / -x (left), positive = up."""
+    r, Lc, dq = info["r"], info["Lc"], info["dq"]
+    zq = r * math.sin(theta) + math.sqrt(Lc * Lc - (r * math.cos(theta)) ** 2)
+    out = {"zQ": zq}
+    for tag, w in info["wings"].items():
+        sgn = w["sgn"]
+        Qs = _p(sgn * dq, zq)
+        A = _circle_cut(w["S"], info["levier"], Qs, w["Lr"], w["sideA"])
+        lever_dir = (A - w["S"]) / info["levier"]
+        spar = -lever_dir                                    # lever is opposite the spar
+        E = w["S"] + info["bras"] * spar
+        C = _circle_cut(E, info["levier_main"], w["B"], w["Lt"], w["sideC"])
+        # hand spar: lever direction turned back by the drawn lever angle
+        v = (C - E) / info["levier_main"]
+        ang = math.atan2(v[2], sgn * v[0]) - info["a_lm"]
+        hand = np.array([sgn * math.cos(ang), 0, math.sin(ang)])
+        out[tag] = dict(A=A, E=E, C=C, tip=E + info["main"] * hand,
+                        arm=math.atan2(spar[2], sgn * spar[0]), hand=ang)
+    return out

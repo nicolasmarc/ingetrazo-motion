@@ -55,7 +55,10 @@ class Shaded:
                 V, idx = self._boxes(body)
             if not len(V):
                 continue
-            col = FIXED if body.fixed else MOVING[k % len(MOVING)]
+            if getattr(body, "color", None):
+                col = QColor(*body.color)
+            else:
+                col = FIXED if body.fixed else MOVING[k % len(MOVING)]
             if not body.fixed:
                 k += 1
             self.items.append([body, V, idx, col])
@@ -95,6 +98,7 @@ class Shaded:
         P = np.vstack(pts)
         u, v = P @ right, P @ up
         span_u, span_v = np.ptp(u) or 1.0, np.ptp(v) or 1.0
+        self.floor_z = float(P[:, 2].min())
         scale = (1 - 2 * margin) * min(w / span_u, h / span_v)
         cu, cv = (u.min() + u.max()) / 2, (v.min() + v.max()) / 2
         centre = cu * right + cv * up
@@ -115,7 +119,9 @@ class Shaded:
         p.setClipRect(rect)
         p.setRenderHint(QPainter.Antialiasing, True)
         if floor:
-            zmin = min(self.world(it[0], x)[:, 2].min() for it in self.items)
+            zmin = getattr(self, "floor_z", None)
+            if zmin is None:
+                zmin = min(self.world(it[0], x)[:, 2].min() for it in self.items)
             ext = max(rect.width(), rect.height()) / scale
             g = np.arange(-ext, ext + 1e-9, max(0.1, round(ext / 12, 1)))
             p.setPen(QPen(QColor(205, 205, 200), 1))
@@ -162,6 +168,45 @@ class Shaded:
             X, Yp = to_px(body.world_point(self.m.pose(x, body), j.point))
             p.drawEllipse(QPointF(X, Yp), 4, 4)
         p.restore()
+
+
+def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255):
+    """Draw ``shaded``'s faces through an outside projection (IngeTrazo's
+    ``world_to_pixels``): ``project(P (N,3)) -> (px, py, in_front)``;
+    ``fwd`` = viewing direction (for back-to-front order and shading);
+    ``bodies`` = names to draw (None = all)."""
+    fwd = np.asarray(fwd, float)
+    fwd = fwd / np.linalg.norm(fwd)
+    light = -fwd + np.array([-0.3, -0.4, 0.8])
+    light /= np.linalg.norm(light)
+    polys = []
+    for body, V, idx, col in shaded.items:
+        if bodies is not None and body.name not in bodies:
+            continue
+        W = shaded.world(body, x)
+        px, py, ok = project(W)
+        depth = W @ fwd
+        base = HIT if body.name in hits else col
+        for f in idx:
+            if len(f) < 3 or not np.all(ok[f]):
+                continue
+            Pf = W[f]
+            n = np.cross(Pf[1] - Pf[0], Pf[2] - Pf[0])
+            nn = np.linalg.norm(n)
+            if nn < 1e-15:
+                continue
+            shade = 0.55 + 0.45 * abs((n / nn) @ light)
+            polys.append((float(depth[f].mean()), px[f], py[f], base, shade))
+    polys.sort(key=lambda t: -t[0])
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    for _, X, Yp, base, shade in polys:
+        c = QColor(int(base.red() * shade), int(base.green() * shade),
+                   int(base.blue() * shade), alpha)
+        p.setPen(QPen(c.darker(140), 0.7))
+        p.setBrush(QBrush(c))
+        p.drawPolygon(QPolygonF([QPointF(a, b) for a, b in zip(X, Yp)]))
+    p.restore()
 
 
 def compose(width, height, left, draw_right, title, info_lines, t,

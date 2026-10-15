@@ -2,45 +2,67 @@
 
 Works for open chains and closed loops alike (four-bar, scissor...).
 """
+import math
 import numpy as np
 from .model import perp_basis
 
 
+def _joint_residual(mech, j, x):
+    qa, qb = mech.pose(x, j.a), mech.pose(x, j.b)
+    if j.kind == "guide":                     # point on the rail (rank 2)
+        p = j.a.local_point(qa, j.b.world_point(qb, j.point))
+        return p - j.path.closest(p)[1]
+    Ra, Rb = j.a.rot(qa), j.b.rot(qb)
+    pa = j.a.world_point(qa, j.point)
+    pb = j.b.world_point(qb, j.point)
+    ua, ub = Ra @ j.axis, Rb @ j.axis
+    if j.kind == "pivot":
+        return np.concatenate([pa - pb, np.cross(ua, ub)])   # same point, axis
+    d = pb - pa
+    Rr = Ra.T @ Rb                            # no relative rotation
+    return np.concatenate([d - ua * (ua @ d),                # stays on the line
+                           [Rr[2, 1] - Rr[1, 2], Rr[0, 2] - Rr[2, 0],
+                            Rr[1, 0] - Rr[0, 1]]])
+
+
+def _driver_residual(mech, x, driver_value):
+    j = mech.driver[0]
+    d = mech.joint_value(j, x) - driver_value
+    if j.kind == "pivot":                     # angles: a full turn is no error
+        d = math.atan2(math.sin(d), math.cos(d))
+    return d
+
+
 def residual(mech, x, driver_value=None):
-    r = []
-    for j in mech.joints:
-        qa, qb = mech.pose(x, j.a), mech.pose(x, j.b)
-        if j.kind == "guide":                 # point on the rail (rank 2)
-            p = j.a.local_point(qa, j.b.world_point(qb, j.point))
-            r.extend(p - j.path.closest(p)[1])
-            continue
-        Ra, Rb = j.a.rot(qa), j.b.rot(qb)
-        pa = j.a.world_point(qa, j.point)
-        pb = j.b.world_point(qb, j.point)
-        ua, ub = Ra @ j.axis, Rb @ j.axis
-        if j.kind == "pivot":
-            r.extend(pa - pb)                 # same point
-            r.extend(np.cross(ua, ub))        # same axis
-        else:
-            d = pb - pa
-            r.extend(d - ua * (ua @ d))       # stays on the line
-            Rr = Ra.T @ Rb                    # no relative rotation
-            r.extend([Rr[2, 1] - Rr[1, 2], Rr[0, 2] - Rr[2, 0],
-                      Rr[1, 0] - Rr[0, 1]])
+    r = [_joint_residual(mech, j, x) for j in mech.joints]
     if driver_value is not None:
-        j = mech.driver[0]
-        r.append(mech.joint_value(j, x) - driver_value)
-    return np.array(r, float)
+        r.append([_driver_residual(mech, x, driver_value)])
+    return np.concatenate(r) if r else np.zeros(0)
 
 
 def jacobian(mech, x, driver_value=None, eps=1e-7):
-    r0 = residual(mech, x, driver_value)
-    J = np.zeros((r0.size, x.size))
-    for k in range(x.size):
-        xp = x.copy(); xp[k] += eps
-        xm = x.copy(); xm[k] -= eps
-        J[:, k] = (residual(mech, xp, driver_value)
-                   - residual(mech, xm, driver_value)) / (2 * eps)
+    """Central differences, body by body: a body's 6 columns only touch the
+    joints that body takes part in (the rest of the column is zero)."""
+    rows, at = [], 0
+    for j in mech.joints:
+        n = 3 if j.kind == "guide" else 6
+        rows.append((j, slice(at, at + n)))
+        at += n
+    m_rows = at + (1 if driver_value is not None else 0)
+    J = np.zeros((m_rows, x.size))
+    for body in mech.bodies:
+        mine = [(j, sl) for j, sl in rows if j.a is body or j.b is body]
+        drv = (driver_value is not None
+               and body in (mech.driver[0].a, mech.driver[0].b))
+        for k in range(6 * body.index, 6 * body.index + 6):
+            xp = x.copy(); xp[k] += eps
+            xm = x.copy(); xm[k] -= eps
+            for j, sl in mine:
+                J[sl, k] = (_joint_residual(mech, j, xp)
+                            - _joint_residual(mech, j, xm)) / (2 * eps)
+            if drv:
+                J[-1, k] = (_driver_residual(mech, xp, driver_value)
+                            - _driver_residual(mech, xm, driver_value)) / (2 * eps)
     return J
 
 

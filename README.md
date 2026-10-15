@@ -55,7 +55,7 @@ edit is one undo step. Collision boxes are fitted to each group.
   motion. Box pairs of joined parts that already touch when drawn are the
   joint; the rest of the two parts is still checked.
 - Examples: folding chair with crossed legs, sectional door (any number of
-  panels, two tracks).
+  panels, two tracks), flapping bird (crank, slider, two-segment wings).
 
 ## Tests
 
@@ -64,6 +64,7 @@ python tests/test_core.py        # V0.1: drop-leaf, drawer, four-bar
 python tests/test_chair.py       # folding chair vs closed forms
 python tests/test_clearance.py   # exact distances, gaps along a motion
 python tests/test_guide.py       # rail, trammel ellipse, sectional door
+python tests/test_bird.py        # flapping bird over a full crank turn
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)
 python tests/test_panel_ingetrazo.py   # the panel in a real IngeTrazo
