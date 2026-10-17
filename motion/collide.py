@@ -116,7 +116,8 @@ def box_distance(A, B):
 def _joined(mech):
     out = {}
     for j in mech.joints:
-        out.setdefault(frozenset((j.a.name, j.b.name)), []).append(j)
+        if j.kind != "coupling":           # a ratio joins no parts together
+            out.setdefault(frozenset((j.a.name, j.b.name)), []).append(j)
     return out
 
 
@@ -136,19 +137,49 @@ def _skipped_box_pairs(mech, a, b, mode, tol=1e-9):
 
 def _pairs(mech, ignore_joined):
     bodies = [mech.ground] + mech.bodies
+    key = (str(ignore_joined), len(mech.joints),
+           tuple(len(b.boxes) for b in bodies))
+    memo = getattr(mech, "_skip_memo", None)
+    if memo is None or memo[0] != key:
+        memo = (key, {})
+        try:
+            mech._skip_memo = memo
+        except Exception:
+            pass
     for i, a in enumerate(bodies):
         for b in bodies[i + 1:]:
             if a.boxes and b.boxes:
-                yield a, b, _skipped_box_pairs(mech, a, b, ignore_joined)
+                k = (id(a), id(b))
+                if k not in memo[1]:
+                    memo[1][k] = _skipped_box_pairs(mech, a, b, ignore_joined)
+                yield a, b, memo[1][k]
+
+
+def _world_boxes(body, q):
+    """[(obb, aabb_lo, aabb_hi)] of a body's boxes at pose ``q``."""
+    out = []
+    for bx in body.boxes:
+        c, R, h = world_obb(body, q, bx)
+        e = np.abs(R) @ h
+        out.append(((c, R, h), c - e, c + e))
+    return out
+
+
+def _aabb_gap(a, b):
+    return float(np.linalg.norm(np.maximum(0.0, np.maximum(b[1] - a[2], a[1] - b[2]))))
 
 
 def interferences(mech, x, margin=1e-6, ignore_joined=True):
     """List of (body_a, body_b) pairs that overlap at configuration ``x``."""
     hits = []
+    cache = {}
     for a, b, skip in _pairs(mech, ignore_joined):
-        qa, qb = mech.pose(x, a), mech.pose(x, b)
-        if any(obb_overlap(world_obb(a, qa, ba), world_obb(b, qb, bb), margin)
-               for i, ba in enumerate(a.boxes) for k, bb in enumerate(b.boxes)
+        for body in (a, b):
+            if id(body) not in cache:
+                cache[id(body)] = _world_boxes(body, mech.pose(x, body))
+        WA, WB = cache[id(a)], cache[id(b)]
+        if any(_aabb_gap(A, B) <= 0 and obb_overlap(A[0], B[0], margin)
+               for i, A in enumerate(WA) for k, B in enumerate(WB)
                if (i, k) not in skip):
             hits.append((a.name, b.name))
     return hits
@@ -157,20 +188,26 @@ def interferences(mech, x, margin=1e-6, ignore_joined=True):
 def clearances(mech, x, ignore_joined=True):
     """Smallest gap for every pair of bodies at configuration ``x``:
     list of dicts (a, b, box_a, box_b, distance, pa, pb), smallest first.
-    distance < 0 means the boxes overlap (by about -distance)."""
+    distance < 0 means the boxes overlap (by about -distance).
+    Box pairs are taken nearest first by their axis-aligned bounds, and the
+    exact distance is only computed while it can still beat the best."""
     out = []
+    cache = {}
     for a, b, skip in _pairs(mech, ignore_joined):
-        qa, qb = mech.pose(x, a), mech.pose(x, b)
+        for body in (a, b):
+            if id(body) not in cache:
+                cache[id(body)] = _world_boxes(body, mech.pose(x, body))
+        WA, WB = cache[id(a)], cache[id(b)]
+        cand = sorted((_aabb_gap(A, B), i, k) for i, A in enumerate(WA)
+                      for k, B in enumerate(WB) if (i, k) not in skip)
         best = None
-        for i, ba in enumerate(a.boxes):
-            A = world_obb(a, qa, ba)
-            for k, bb in enumerate(b.boxes):
-                if (i, k) in skip:
-                    continue
-                d, pa, pb = box_distance(A, world_obb(b, qb, bb))
-                if best is None or d < best["distance"]:
-                    best = dict(a=a.name, b=b.name, box_a=ba.name or str(i),
-                                box_b=bb.name or str(k), distance=d, pa=pa, pb=pb)
+        for gap, i, k in cand:
+            if best is not None and gap >= best["distance"]:
+                break                              # the rest is further away
+            d, pa, pb = box_distance(WA[i][0], WB[k][0])
+            if best is None or d < best["distance"]:
+                best = dict(a=a.name, b=b.name, box_a=a.boxes[i].name or str(i),
+                            box_b=b.boxes[k].name or str(k), distance=d, pa=pa, pb=pb)
         if best is not None:
             out.append(best)
     return sorted(out, key=lambda r: r["distance"])

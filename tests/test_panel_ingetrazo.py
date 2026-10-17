@@ -251,7 +251,7 @@ def test_examples_validate_in_the_panel():
         print("skip:", SKIP); return
     win = _window()
     panel = _state["panel"]
-    for key in ("chaise", "porte", "oiseau"):
+    for key in ("chaise", "porte", "oiseau", "draisine"):
         panel.set_source(key)
         m = panel.mechanism()
         unit = math.degrees if m.driver[0].kind == "pivot" else (lambda v: 1000 * v)

@@ -52,6 +52,7 @@ class Box:
     half: np.ndarray
     R: np.ndarray = None
     name: str = ""
+    color: tuple = None        # (r, g, b) for drawings; None = the body's
 
     def __post_init__(self):
         self.center = np.asarray(self.center, float)
@@ -218,6 +219,33 @@ class Guide:
     kind: str = "guide"
 
 
+@dataclass
+class Coupling:
+    """Fixed ratio between two joints: value(jb) = ratio * value(ja),
+    both counted from the drawn configuration. Gears (two pivots, ratio
+    -z1/z2 for external teeth), rolling without slip (a wheel pivot and a
+    slider, ratio = -radius or +radius by direction), rack and pinion.
+    Pivot angles are taken continuously (whole turns counted), which holds
+    for planar mechanisms (axes parallel)."""
+    ja: object
+    jb: object
+    ratio: float
+    name: str = ""
+    kind: str = "coupling"
+    limits: tuple = None
+
+    @property
+    def a(self):
+        return self.ja.b
+
+    @property
+    def b(self):
+        return self.jb.b
+
+    def bodies(self):
+        return [self.ja.a, self.ja.b, self.jb.a, self.jb.b]
+
+
 class Mechanism:
     def __init__(self):
         self.bodies = []
@@ -253,6 +281,12 @@ class Mechanism:
         self.joints.append(j)
         return j
 
+    def couple(self, ja, jb, ratio, name=""):
+        """``jb`` follows ``ja`` at ``ratio`` (see :class:`Coupling`)."""
+        j = Coupling(ja, jb, float(ratio), name or f"couplage{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
     def drive(self, joint, lo, hi):
         """Make ``joint`` the driver: 0 % -> ``lo``, 100 % -> ``hi``."""
         self.driver = (joint, float(lo), float(hi))
@@ -267,9 +301,24 @@ class Mechanism:
             return np.zeros(6)
         return x[6 * body.index: 6 * body.index + 6]
 
+    def continuous_value(self, j, x):
+        """Like :meth:`joint_value`, but a pivot's angle keeps counting
+        past +-180 deg (from the rotation vectors: planar mechanisms)."""
+        if j.kind == "pivot":
+            qa, qb = self.pose(x, j.a), self.pose(x, j.b)
+            return float((qb[3:] - qa[3:]) @ j.axis)
+        return self.joint_value(j, x)
+
+    def multi_turn(self):
+        """The driver is a pivot turning more than one revolution."""
+        return (self.driver is not None and self.driver[0].kind == "pivot"
+                and abs(self.driver[2] - self.driver[1]) > 2 * np.pi + 1e-9)
+
     def joint_value(self, j, x):
         """Current relative angle (pivot), travel (slider) or position
         along the rail (guide)."""
+        if j.kind == "coupling":
+            return self.continuous_value(j.jb, x)
         qa, qb = self.pose(x, j.a), self.pose(x, j.b)
         if j.kind == "guide":
             p = j.a.local_point(qa, j.b.world_point(qb, j.point))

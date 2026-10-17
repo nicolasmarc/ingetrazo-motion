@@ -47,7 +47,8 @@ edit is one undo step. Collision boxes are fitted to each group.
 ## What the core does
 
 - Rigid bodies with 6-parameter poses; pivot, slider and guide/rail
-  (a point on a path of lines and circular arcs) with optional stops.
+  (a point on a path of lines and circular arcs) with optional stops;
+  coupling (gears, rolling without slip, rack and pinion).
 - Levenberg–Marquardt position solver for open chains and closed loops;
   degrees of freedom from the constraint Jacobian's rank.
 - Oriented boxes: separating-axis interference, **exact** box-to-box
@@ -55,7 +56,8 @@ edit is one undo step. Collision boxes are fitted to each group.
   motion. Box pairs of joined parts that already touch when drawn are the
   joint; the rest of the two parts is still checked.
 - Examples: folding chair with crossed legs, sectional door (any number of
-  panels, two tracks), flapping bird (crank, slider, two-segment wings).
+  panels, two tracks), flapping bird (crank, slider, two-segment wings),
+  hand-pumped rail car (beam, rod, gears, rolling axles).
 
 ## Tests
 
@@ -65,6 +67,8 @@ python tests/test_chair.py       # folding chair vs closed forms
 python tests/test_clearance.py   # exact distances, gaps along a motion
 python tests/test_guide.py       # rail, trammel ellipse, sectional door
 python tests/test_bird.py        # flapping bird over a full crank turn
+python tests/test_coupling.py    # gears over several turns, rolling without slip
+python tests/test_handcar.py     # rail car over three crank turns
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)
 python tests/test_panel_ingetrazo.py   # the panel in a real IngeTrazo

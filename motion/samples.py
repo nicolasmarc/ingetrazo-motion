@@ -401,3 +401,203 @@ def oiseau_reference(info, theta):
         out[tag] = dict(A=A, E=E, C=C, tip=E + info["main"] * hand,
                         arm=math.atan2(spar[2], sgn * spar[0]), hand=ang)
     return out
+
+
+# -- hand-pumped rail car (draisine à balancier) ---------------------------------
+
+def _prism(center, radius, y0, y1, n=28, outline=None):
+    """Faces (reference pose) of a prism along y: a polygon in the xz plane
+    around ``center`` (``outline``: list of (angle, radius), else a regular
+    n-gon), from y0 to y1."""
+    c = np.asarray(center, float)
+    if outline is None:
+        outline = [(2 * math.pi * k / n, radius) for k in range(n)]
+    ring = [c + np.array([r * math.cos(a), 0, r * math.sin(a)]) for a, r in outline]
+    A = [p + np.array([0, y0 - c[1], 0]) for p in ring]
+    B = [p + np.array([0, y1 - c[1], 0]) for p in ring]
+    faces = [np.array(A), np.array(B[::-1])]
+    for k in range(len(ring)):
+        k2 = (k + 1) % len(ring)
+        faces.append(np.array([A[k], A[k2], B[k2], B[k]]))
+    return faces
+
+
+def _gear_outline(z, module, phase=0.0):
+    """Tooth outline (angle, radius): z trapezoid teeth, addendum = module,
+    dedendum = 1.25 module; a tooth centred on ``phase``."""
+    rp = module * z / 2
+    ra, rf = rp + module, rp - 1.25 * module
+    p = 2 * math.pi / z
+    out = []
+    for k in range(z):
+        a = phase + k * p
+        out += [(a - 0.5 * p, rf), (a - 0.27 * p, rf), (a - 0.14 * p, ra),
+                (a + 0.14 * p, ra), (a + 0.27 * p, rf)]
+    return out
+
+
+def _box_faces(box):
+    c, R, h = box.center, box.R, box.half
+    k = c + (np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1)
+                       for sz in (-1, 1)]) * h) @ R.T
+    return [k[list(f)] for f in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1),
+                                 (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3))]
+
+
+def draisine(rayon_roue=0.25, empattement=1.10, voie=1.0, hauteur_pivot=1.45,
+             bras_bielle=0.43, demi_balancier=0.85, manivelle=0.13,
+             dents_roue=40, dents_pignon=20, module=0.008, tours=3,
+             longueur_voie=17.0):
+    """Hand-pumped rail car (metres). The walking beam (``balancier``) rocks
+    on top of the A-frame; a connecting rod takes it to the crank of an
+    intermediate shaft whose gear (``dents_roue`` teeth) drives a pinion
+    (``dents_pignon``) on the rear axle; both axles roll without slipping
+    on a metre-gauge track (``voie``). x = along the track, z = up.
+
+    Driver = crank angle, ``tours`` whole turns (constant speed): each turn
+    of the crank is one up-and-down of the beam and moves the car by
+    2 pi R x dents_roue / dents_pignon.
+    """
+    R, gr = rayon_roue, dents_roue / dents_pignon
+    Or = _p(-empattement / 2, R)                    # rear axle
+    Of = _p(empattement / 2, R)                     # front axle
+    dc = module * (dents_roue + dents_pignon) / 2   # centre distance
+    a_c = math.radians(60)
+    C = Or + _p(dc * math.cos(a_c), dc * math.sin(a_c))   # crank shaft
+    P = _p(0, hauteur_pivot)                        # beam pivot
+    B = P + _p(-bras_bielle, 0)                     # rod on the beam
+    K = C + _p(manivelle, 0)                        # crank pin (angle 0)
+    L = float(np.linalg.norm(B - K))
+    zdeck = 0.62
+    m = Mechanism()
+    g = m.ground
+    g.name = "voie"
+    polys = {}
+    # track: rails in 1 m lengths, sleepers every 0.6 m
+    x0 = -3.0
+    for k in range(int(longueur_voie)):
+        for y in (-voie / 2, voie / 2):
+            g.boxes.append(Box(_p(x0 + k + 0.5, -0.04, y), (0.5, 0.03, 0.04), name="rail",
+                               color=(176, 180, 188)))
+    for k in range(int(longueur_voie / 0.6)):
+        g.boxes.append(Box(_p(x0 + 0.3 + 0.6 * k, -0.11, 0), (0.09, voie / 2 + 0.25, 0.03),
+                           name="traverse", color=(112, 86, 62)))
+    g.color = (120, 110, 100)
+
+    car = m.body("châssis", _p(0, zdeck))
+    W = voie / 2 + 0.12                            # side beams outside the wheels
+    car.boxes += [Box(_p(0, 0.56, s * W), (0.9, 0.04, 0.06), name="longeron")
+                  for s in (-1, 1)]
+    car.boxes += [Box(_p(xx, 0.56, 0), (0.04, W - 0.04, 0.05), name="traverse châssis")
+                  for xx in (-0.85, 0.85)]
+    # deck with an opening for the rod
+    car.boxes += [Box(_p(0.315, zdeck + 0.02, 0), (0.535, W + 0.02, 0.02), name="plancher"),
+                  Box(_p(-0.735, zdeck + 0.02, 0), (0.115, W + 0.02, 0.02), name="plancher"),
+                  Box(_p(-0.42, zdeck + 0.02, 0.10 + (W - 0.08) / 2 + 0.01),
+                      (0.2, (W - 0.08) / 2, 0.02), name="plancher"),
+                  Box(_p(-0.42, zdeck + 0.02, -(0.10 + (W - 0.08) / 2 + 0.01)),
+                      (0.2, (W - 0.08) / 2, 0.02), name="plancher")]
+    # A-frame: two legs each side, from the deck to the pivot
+    for s in (-1, 1):
+        for xx in (-0.38, 0.38):
+            car.boxes.append(bar(_p(xx, zdeck + 0.04, s * 0.09), P + _p(0, -0.03, s * 0.09),
+                                 0.05, 0.04, name="chevalet"))
+    # bearings: axle boxes on the side beams, hangers of the crank shaft
+    for O in (Or, Of):
+        for s in (-1, 1):
+            car.boxes.append(Box(O + _p(0, 0.13, s * W), (0.06, 0.12, 0.05), name="palier"))
+    for yy in (0.06, 0.24):                       # overhung crank: shaft on one side
+        car.boxes.append(bar(C + _p(0, 0, yy), _p(C[0], zdeck, yy), 0.05, 0.03,
+                             name="support d'arbre"))
+    car.color = (214, 124, 48)
+
+    def axle(name, O, gear=False):
+        body = m.body(name, O)
+        body.boxes.append(Box(O, (0.035, W + 0.04, 0.035), name="essieu"))
+        faces = _box_faces(body.boxes[-1])
+        for s in (-1, 1):
+            yc = s * voie / 2
+            body.boxes.append(Box(O + _p(0, 0, yc), (0.15, 0.04, 0.15), name="roue"))
+            faces += _prism(O + _p(0, 0, yc), R, yc - 0.04, yc + 0.04)
+            yi = yc - s * 0.04                     # flange on the inside
+            faces += _prism(O + _p(0, 0, yi), R + 0.03, min(yi, yi - s * 0.015),
+                            max(yi, yi - s * 0.015))
+            yo = yc + s * 0.041                    # spokes on the outside face
+            for k in range(4):
+                a = k * math.pi / 4
+                d = _p(math.cos(a), math.sin(a)) * (R - 0.03)
+                faces += _box_faces(bar(O + _p(0, 0, yo) - d, O + _p(0, 0, yo) + d,
+                                        0.03, 0.006))
+        if gear:                                   # pinion, a tooth towards C
+            u = C - O
+            ph = math.atan2(u[2], u[0])
+            body.boxes.append(Box(O + _p(0, 0, 0.10), (0.045, 0.02, 0.045), name="pignon"))
+            faces += _prism(O + _p(0, 0, 0.10), 0, 0.08, 0.12,
+                            outline=_gear_outline(dents_pignon, module, ph))
+        polys[name] = faces
+        body.color = (70, 72, 78)
+        return body
+
+    rear = axle("essieu arrière", Or, gear=True)
+    front = axle("essieu avant", Of)
+    shaft = m.body("arbre de manivelle", C,
+                   [Box(C + _p(0, 0, 0.145), (0.025, 0.115, 0.025), name="arbre"),
+                    bar(C - 0.0 * Y, K, 0.05, 0.03, name="manivelle"),
+                    Box(C + _p(0, 0, 0.10), (0.10, 0.02, 0.10), name="roue dentée")])
+    u = Or - C
+    ph = math.atan2(u[2], u[0]) + math.pi / dents_roue          # a gap towards O
+    polys["arbre de manivelle"] = (_box_faces(shaft.boxes[0]) + _box_faces(shaft.boxes[1])
+                                   + _prism(C + _p(0, 0, 0.10), 0, 0.08, 0.12,
+                                            outline=_gear_outline(dents_roue, module, ph)))
+    shaft.color = (150, 152, 160)
+    rod = m.body("bielle", (B + K) / 2, [bar(K, B, 0.04, 0.03, name="bielle")])
+    rod.color = (90, 92, 100)
+    beam = m.body("balancier", P,
+                  [bar(P + _p(-demi_balancier, 0), P + _p(demi_balancier, 0), 0.07, 0.06,
+                       name="balancier")]
+                  + [Box(P + _p(sx * demi_balancier, 0), (0.025, 0.45, 0.025), name="poignée")
+                     for sx in (-1, 1)])
+    beam.color = (196, 106, 36)
+
+    track = m.slider(g, car, _p(0, zdeck), (1, 0, 0), name="voie")
+    pr = m.pivot(car, rear, Or, CCW, name="essieu arrière")
+    pf = m.pivot(car, front, Of, CCW, name="essieu avant")
+    pc = m.pivot(car, shaft, C, CCW, name="arbre")
+    pb = m.pivot(car, beam, P, CCW, name="pivot du balancier")
+    m.pivot(shaft, rod, K, CCW, name="maneton")
+    m.pivot(rod, beam, B, CCW, name="tête de bielle")
+    m.couple(pc, pr, -gr, name="engrenage")
+    m.couple(pr, track, -R, name="roulement arrière")
+    m.couple(pf, track, -R, name="roulement avant")
+    m.drive(pc, 0.0, tours * 2 * math.pi)
+    info = dict(R=R, ratio=gr, C=C, P=P, B=B, K=K, L=L, rc=manivelle, db=bras_bielle,
+                hb=demi_balancier, Or=Or, Of=Of, sideB=_side(P, K, B),
+                joints=dict(voie=track, arriere=pr, avant=pf, arbre=pc, balancier=pb),
+                bodies=dict(chassis=car, arriere=rear, avant=front, arbre=shaft,
+                            bielle=rod, balancier=beam),
+                polys=polys, suivre="châssis", vue=(-62.0, 18.0), jeu_min=0.003, sol=False,
+                traces=[(beam, P + _p(demi_balancier, 0)), (beam, P + _p(-demi_balancier, 0))])
+
+    def mesures(mech, x):
+        b = math.degrees(mech.continuous_value(pb, x))
+        s = mech.continuous_value(track, x)
+        return [f"balancier {b:+.1f}°", f"avance {s:.2f} m",
+                f"roues {math.degrees(-mech.continuous_value(pr, x)) / 360:.2f} tr"]
+
+    info["mesures"] = mesures
+    return m, info
+
+
+def draisine_reference(info, theta):
+    """Closed form for crank angle ``theta`` (car frame): crank pin,
+    beam end of the rod (circle cut), beam angle, axle angle (gear) and
+    car travel (rolling)."""
+    C, P, rc, db, L = info["C"], info["P"], info["rc"], info["db"], info["L"]
+    K = C + _p(rc * math.cos(theta), rc * math.sin(theta))
+    B = _circle_cut(P, db, K, L, info["sideB"])
+    v0 = info["B"] - P
+    v = B - P
+    beam = math.atan2(v[2], v[0]) - math.atan2(v0[2], v0[0])
+    beam = math.atan2(math.sin(beam), math.cos(beam))
+    axle = -info["ratio"] * theta
+    return dict(K=K, B=B, beam=beam, axle=axle, travel=-info["R"] * axle)

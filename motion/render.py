@@ -45,6 +45,7 @@ class Shaded:
         k = 0
         for body in [mech.ground] + mech.bodies:
             faces = polys.get(body.name)
+            fcols = None
             if faces:
                 V = np.vstack(faces)
                 idx, o = [], 0
@@ -52,7 +53,7 @@ class Shaded:
                     idx.append(np.arange(o, o + len(f)))
                     o += len(f)
             else:
-                V, idx = self._boxes(body)
+                V, idx, fcols = self._boxes(body)
             if not len(V):
                 continue
             if getattr(body, "color", None):
@@ -61,23 +62,29 @@ class Shaded:
                 col = FIXED if body.fixed else MOVING[k % len(MOVING)]
             if not body.fixed:
                 k += 1
-            self.items.append([body, V, idx, col])
+            self.items.append([body, V, idx, col, fcols])
         total = sum(len(i[2]) for i in self.items)
         if total > max_faces:                     # keep it drawable
             step = int(math.ceil(total / max_faces))
             for it in self.items:
                 it[2] = it[2][::step]
+                if it[4] is not None:
+                    it[4] = it[4][::step]
 
     @staticmethod
     def _boxes(body):
-        V, idx = [], []
+        V, idx, cols = [], [], []
         for bx in body.boxes:
             c, R, h = collide.world_obb(body, np.zeros(6), bx)
             k = collide._corners((c, R, h))
             base = len(V) * 8
             V.append(k)
             idx += [np.array(f) + base for f in _BOX_FACES]
-        return (np.vstack(V) if V else np.zeros((0, 3))), idx
+            col = QColor(*bx.color) if getattr(bx, "color", None) else None
+            cols += [col] * len(_BOX_FACES)
+        if not any(cols):
+            cols = None
+        return (np.vstack(V) if V else np.zeros((0, 3))), idx, cols
 
     def world(self, body, x):
         q = self.m.pose(x, body)
@@ -87,13 +94,20 @@ class Shaded:
         R = body.rot(q)
         return body.center + q[:3] + (V - body.center) @ R.T
 
-    def fit(self, xs, yaw, pitch, w, h, margin=0.08):
-        """(scale, centre) so every pose in ``xs`` fits a w x h area."""
+    def fit(self, xs, yaw, pitch, w, h, margin=0.08, follow=None):
+        """(scale, centre) so every pose in ``xs`` fits a w x h area.
+        ``follow``: a body the camera follows — the frame is fitted to the
+        moving parts around it (the fixed ones, a long track, are left out)."""
         right, up, _ = view_axes(yaw, pitch)
         pts = []
         for x in xs:
+            shift = 0.0
+            if follow is not None:
+                shift = follow.world_point(self.m.pose(x, follow), follow.center) - follow.center
             for it in self.items:
-                W = self.world(it[0], x)
+                if follow is not None and it[0].fixed:
+                    continue
+                W = self.world(it[0], x) - shift
                 pts.append(W[:: max(1, len(W) // 400)])
         P = np.vstack(pts)
         u, v = P @ right, P @ up
@@ -132,12 +146,13 @@ class Shaded:
                     (x0, y0), (x1, y1) = to_px(P0), to_px(P1)
                     p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
         polys = []
-        for body, V, idx, col in self.items:
+        for body, V, idx, col, fcols in self.items:
             W = self.world(body, x)
             px, py = to_px(W)
             depth = W @ fwd
-            base = HIT if body.name in hits else col
-            for f in idx:
+            hit = body.name in hits
+            for fi, f in enumerate(idx):
+                base = HIT if hit else (fcols[fi] if fcols and fcols[fi] else col)
                 Pf = W[f]
                 if len(f) < 3:
                     continue
@@ -164,6 +179,8 @@ class Shaded:
         p.setPen(QPen(ACCENT, 2))
         p.setBrush(QColor(255, 255, 255))
         for j in self.m.joints:
+            if j.kind == "coupling":
+                continue
             body = j.b if not j.b.fixed else j.a
             X, Yp = to_px(body.world_point(self.m.pose(x, body), j.point))
             p.drawEllipse(QPointF(X, Yp), 4, 4)
@@ -180,14 +197,15 @@ def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255):
     light = -fwd + np.array([-0.3, -0.4, 0.8])
     light /= np.linalg.norm(light)
     polys = []
-    for body, V, idx, col in shaded.items:
+    for body, V, idx, col, fcols in shaded.items:
         if bodies is not None and body.name not in bodies:
             continue
         W = shaded.world(body, x)
         px, py, ok = project(W)
         depth = W @ fwd
-        base = HIT if body.name in hits else col
-        for f in idx:
+        hit = body.name in hits
+        for fi, f in enumerate(idx):
+            base = HIT if hit else (fcols[fi] if fcols and fcols[fi] else col)
             if len(f) < 3 or not np.all(ok[f]):
                 continue
             Pf = W[f]

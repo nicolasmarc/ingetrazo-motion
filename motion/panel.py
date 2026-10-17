@@ -34,10 +34,12 @@ from . import collide, document as doc, icons, samples, solver
 SOURCES = (("model", "Modèle (document)"),
            ("chaise", "Exemple : chaise pliante"),
            ("porte", "Exemple : porte sectionnelle"),
-           ("oiseau", "Exemple : oiseau à battement d'ailes"))
+           ("oiseau", "Exemple : oiseau à battement d'ailes"),
+           ("draisine", "Exemple : draisine à balancier"))
 
 SAMPLE_NAMES = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle",
-                "oiseau": "Oiseau à battement d'ailes"}
+                "oiseau": "Oiseau à battement d'ailes",
+                "draisine": "Draisine à balancier"}
 
 TIPS = {
     "fixed": "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.",
@@ -317,7 +319,7 @@ class MotionPanel(QWidget):
         if self.mech is not None:
             return self.mech
         builders = {"chaise": samples.chaise_pliante, "porte": samples.porte_sectionnelle,
-                    "oiseau": samples.oiseau}
+                    "oiseau": samples.oiseau, "draisine": samples.draisine}
         self.sample_info = None
         if self.source in builders:
             self.mech, self.sample_info = builders[self.source]()
@@ -353,7 +355,8 @@ class MotionPanel(QWidget):
             joints = [(j.name, j.kind, f"{j.a.name} ↔ {j.b.name}") for j in m.joints]
             drv = m.driver[0].name if m.driver else None
         kinds = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot",
-                 "slider": "Glissière", "guide": "Guide / rail"}
+                 "slider": "Glissière", "guide": "Guide / rail",
+                 "coupling": "Couplage"}
         for name, kind, detail in bodies + joints:
             it = QTreeWidgetItem([name, kinds[kind], detail])
             it.setIcon(0, icons.icon(kind, self.tree, 16))
@@ -602,6 +605,8 @@ class MotionPanel(QWidget):
             self.traces = [(b, np.asarray(p, float)) for b, p in self.sample_info["traces"]]
         else:
             for j in m.joints:
+                if j.kind == "coupling":
+                    continue
                 for body in (j.a, j.b):
                     if not body.fixed:
                         self.traces.append((body, np.asarray(j.point, float)))
@@ -670,7 +675,7 @@ class MotionPanel(QWidget):
             self.timer.stop()
 
     def _tick(self):
-        if self.full_turn():                     # a crank keeps turning
+        if self.full_turn() or self.mechanism().multi_turn():   # a crank keeps turning
             self.slider.setValue((self.slider.value() + 10) % 1000)
             return
         v = self.slider.value() + self._dir * 10
@@ -716,6 +721,8 @@ class MotionPanel(QWidget):
         # joints
         pts = []
         for j in m.joints:
+            if j.kind == "coupling":
+                continue
             body = j.b if not j.b.fixed else j.a
             pts.append(body.world_point(m.pose(x, body), j.point))
         if pts:
@@ -949,7 +956,9 @@ class MotionPanel(QWidget):
         n = max(2, int(round(seconds * fps)))
         hold = min(int(0.5 * fps), n // 6)
         ease = lambda u: 0.5 - 0.5 * math.cos(math.pi * u)
-        if self.full_turn():
+        if m.multi_turn():                        # several turns: once, steadily
+            tl = [i / (n - 1) for i in range(n)]
+        elif self.full_turn():
             cycles = cycles or max(1, round(seconds / 2.0))
             tl = [(i * cycles / n) % 1.0 for i in range(n)]
         elif aller_retour:
@@ -966,15 +975,26 @@ class MotionPanel(QWidget):
         vue = (self.sample_info or {}).get("vue")         # a view of its own
         if vue:
             yaw, pitch = math.radians(vue[0]), math.radians(vue[1])
-        shaded = render.Shaded(m, self._polys())
+        polys = self._polys() or (self.sample_info or {}).get("polys") or {}
+        shaded = render.Shaded(m, polys)
+        follow = None                                      # camera follows a part
+        fname = (self.sample_info or {}).get("suivre")
+        if fname:
+            follow = next((b for b in m.bodies if b.name == fname), None)
         W, H = size
         u = H / 1080.0
         pane = ((W - 48 * u) / 2 - 8, H - 180 * u - 8)
-        scale, centre = shaded.fit([r["x"] for r in sweep_rows], yaw, pitch, *pane)
+        scale, centre = shaded.fit([r["x"] for r in sweep_rows], yaw, pitch, *pane,
+                                   follow=follow)
+        floor = (abs(math.degrees(pitch)) > 12
+                 and (self.sample_info or {}).get("sol", True))
+        cam_target = getattr(cam, "target", None)
         traces = self.trace_pts if self.buttons["trajectory"].isChecked() else []
         j, lo, hi = m.driver
         unit = (lambda v: f"{math.degrees(v):.1f}°") if j.kind == "pivot" else \
             (lambda v: f"{1000 * v:.0f} mm")
+        if m.multi_turn():
+            unit = lambda v: f"{v / (2 * math.pi):.2f} tr"
         name = SAMPLE_NAMES.get(self.source, "Mécanisme")
         writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
         saved_x, saved_t = self.x, self.t
@@ -1003,12 +1023,21 @@ class MotionPanel(QWidget):
                 info.append("collision : " + " / ".join(sorted(hits)) if hits else "aucune collision")
                 if not ok:
                     info.append("position non atteinte")
+                shift = np.zeros(3)
+                if follow is not None:
+                    shift = follow.world_point(m.pose(x, follow), follow.center) - follow.center
+                    if cam_target is not None:
+                        try:
+                            cam.target = type(cam_target)(cam_target.x() + shift[0],
+                                                          cam_target.y() + shift[1],
+                                                          cam_target.z() + shift[2])
+                        except Exception:
+                            pass
                 left = self._viewport_image(int(pane[0] * 1.5), shaded, x, hits)
                 frame = render.compose(
                     W, H, left,
-                    lambda p, r: shaded.draw(p, r, x, yaw, pitch, scale, centre,
-                                             hits, traces,
-                                             floor=abs(math.degrees(pitch)) > 12),
+                    lambda p, r: shaded.draw(p, r, x, yaw, pitch, scale, centre + shift,
+                                             hits, traces, floor=floor),
                     f"{name} — IngeTrazo Motion", info, t)
                 writer.add(frame)
             if progress is not None:
@@ -1016,6 +1045,11 @@ class MotionPanel(QWidget):
             out = writer.close()
         finally:
             self.x, self.t = saved_x, saved_t
+            if cam_target is not None:
+                try:
+                    cam.target = cam_target
+                except Exception:
+                    pass
             self.app.viewport.update()
         return out, writer.label
 
@@ -1061,6 +1095,7 @@ def setup(app):
         sub.addAction("Exemple : chaise pliante", lambda: show("chaise"))
         sub.addAction("Exemple : porte sectionnelle", lambda: show("porte"))
         sub.addAction("Exemple : oiseau à battement d'ailes", lambda: show("oiseau"))
+        sub.addAction("Exemple : draisine à balancier", lambda: show("draisine"))
     else:
         app.add_menu_action("Motion", lambda: show(),
                             tip="Mécanismes : pivots, glissières, rails, validation.")

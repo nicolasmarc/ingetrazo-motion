@@ -20,6 +20,7 @@ LABELS = {
     "driver": ("Moteur 0–100 %", "Driver 0–100 %"),
     "validate": ("Valider", "Validate"),
     "trajectory": ("Trajectoire", "Trajectory"),
+    "coupling": ("Couplage", "Coupling"),
 }
 
 FALLBACK_ACCENT = QColor(232, 115, 12)       # orange
@@ -198,7 +199,28 @@ def _trajectory(p, ink, acc):
     p.setBrush(Qt.NoBrush)
 
 
-_DRAW = dict(fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
+def _coupling(p, ink, acc):
+    """Two meshing gears: a ratio between two joints."""
+    def gear(cx, cy, r, z, col, phase):
+        path = QPainterPath()
+        for k in range(z * 2 + 1):
+            a = phase + k * math.pi / z
+            rr = r + (1.4 if k % 2 == 0 else -0.2)
+            pt = QPointF(cx + rr * math.cos(a), cy + rr * math.sin(a))
+            path.moveTo(pt) if k == 0 else path.lineTo(pt)
+        p.setPen(_pen(ink, 1.3))
+        p.setBrush(_soft(col, 255) if col is acc else Qt.NoBrush)
+        p.drawPath(path)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(ink))
+        p.drawEllipse(QPointF(cx, cy), 1.2, 1.2)
+        p.setBrush(Qt.NoBrush)
+    gear(8.5, 13.5, 5.6, 9, acc, 0.0)
+    gear(17.0, 8.0, 3.6, 6, ink, math.pi / 6)
+
+
+_DRAW = dict(coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
              guide=_guide, driver=_driver, validate=_validate,
              trajectory=_trajectory)
 

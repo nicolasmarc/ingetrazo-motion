@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0 — 2026-10-17
+
+### Added
+- **Coupling joint** (`Mechanism.couple`): a fixed ratio between two
+  joints — gears (two pivots, -z1/z2), rolling without slip (wheel pivot
+  and slider, -R), rack and pinion. Pivot angles are counted continuously
+  (whole turns), so a driver may run several turns.
+- **Hand-pumped rail car** example (`samples.draisine`): walking beam on
+  an A-frame, connecting rod, overhung crank on an intermediate shaft,
+  40/20 gears to the rear axle, both axles rolling on a metre-gauge track;
+  wheels and toothed gears drawn as real outlines. Tested against closed
+  forms over three crank turns (crank pin, rod end, beam angle, axle
+  angles, travel), no slip at both contact points, beam stroke ends.
+  The validation caught the first draft's crank shaft crossing the rod.
+- Video: the camera can follow a part (the car), in both panes; colours
+  per box (steel rails, wooden sleepers); a multi-turn driver runs once,
+  at constant speed.
+- Icon «Couplage» (two meshing gears) for the joints list.
+
+### Changed
+- Collisions and clearances: box pairs are sorted by their axis-aligned
+  bounds and the exact distance is only computed while it can still beat
+  the best; joined-pair data is cached — about 20 times faster on the rail
+  car (80 s -> 4 s for 25 steps).
+- `solver.sweep` follows a pivot in steps of 0.4 rad at most, whatever the
+  number of recorded steps.
+
 ## 0.4.0 — 2026-10-16
 
 ### Added

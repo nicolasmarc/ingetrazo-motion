@@ -8,6 +8,9 @@ from .model import perp_basis
 
 
 def _joint_residual(mech, j, x):
+    if j.kind == "coupling":
+        return np.array([mech.continuous_value(j.jb, x)
+                         - j.ratio * mech.continuous_value(j.ja, x)])
     qa, qb = mech.pose(x, j.a), mech.pose(x, j.b)
     if j.kind == "guide":                     # point on the rail (rank 2)
         p = j.a.local_point(qa, j.b.world_point(qb, j.point))
@@ -27,6 +30,8 @@ def _joint_residual(mech, j, x):
 
 def _driver_residual(mech, x, driver_value):
     j = mech.driver[0]
+    if mech.multi_turn():                     # several turns: count them
+        return mech.continuous_value(j, x) - driver_value
     d = mech.joint_value(j, x) - driver_value
     if j.kind == "pivot":                     # angles: a full turn is no error
         d = math.atan2(math.sin(d), math.cos(d))
@@ -45,13 +50,15 @@ def jacobian(mech, x, driver_value=None, eps=1e-7):
     joints that body takes part in (the rest of the column is zero)."""
     rows, at = [], 0
     for j in mech.joints:
-        n = 3 if j.kind == "guide" else 6
+        n = {"guide": 3, "coupling": 1}.get(j.kind, 6)
         rows.append((j, slice(at, at + n)))
         at += n
     m_rows = at + (1 if driver_value is not None else 0)
     J = np.zeros((m_rows, x.size))
     for body in mech.bodies:
-        mine = [(j, sl) for j, sl in rows if j.a is body or j.b is body]
+        mine = [(j, sl) for j, sl in rows
+                if (any(o is body for o in j.bodies()) if j.kind == "coupling"
+                    else j.a is body or j.b is body)]
         drv = (driver_value is not None
                and body in (mech.driver[0].a, mech.driver[0].b))
         for k in range(6 * body.index, 6 * body.index + 6):
@@ -112,9 +119,19 @@ def sweep(mech, steps=51):
     """Solve 0..100 % of the driver. Returns list of dicts with pose x."""
     j, lo, hi = mech.driver
     out, x = [], None
+    # a pivot is followed in steps of at most 0.4 rad, whatever ``steps``
+    # (several turns in few steps would otherwise lose count)
+    sub = 1
+    if j.kind == "pivot" and steps > 1:
+        sub = max(1, int(math.ceil(abs(hi - lo) / (steps - 1) / 0.4)))
+    v_prev = lo
     for i in range(steps):
         t = i / (steps - 1)
         v = lo + t * (hi - lo)
+        if x is not None:
+            for k in range(1, sub):
+                x, _, _ = solve(mech, v_prev + (v - v_prev) * k / sub, x)
         x, ok, nr = solve(mech, v, x)
+        v_prev = v
         out.append({"t": t, "value": v, "x": x.copy(), "ok": ok, "res": nr})
     return out
