@@ -3,15 +3,15 @@
 # (python tools/build_zip.py prints it).
 
 id = "motion"
-version = "0.5.0"
+version = "0.6.0"
 author = "Nicolas Marc"
 author_url = "https://github.com/nicolasmarc"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/nicolasmarc/ingetrazo-motion"
-download = "https://raw.githubusercontent.com/nicolasmarc/ingetrazo-motion/v0.5.0/dist/motion-0.5.0.zip"
-sha256 = "bc3aab41d4dd9608eb8776cecd19bf19e0c5bd1335ec36ea6465109113821030"
+download = "https://raw.githubusercontent.com/nicolasmarc/ingetrazo-motion/v0.6.0/dist/motion-0.6.0.zip"
+sha256 = "7c5012b798feb5e4e2968bfd44b182c8645b63f4b6782084058890e9e198d08b"
 ingetrazo = "0.5.8"
-tags = ["fabrication", "analysis"]
+tags = ["fabrication", "analysis", "import-export"]
 screenshot = "motion.png"
 
 [name]
@@ -20,6 +20,6 @@ en = "Motion (mechanisms)"
 pt = "Motion (mecanismos)"
 
 [summary]
-es = "Valida mecanismos sencillos: piezas, pivotes, correderas y guías sobre el modelo, animación con cursor, colisiones, topes y holgura mínima. Ejemplos: silla plegable, puerta seccional."
-en = "Check simple mechanisms: parts, pivots, slides and rails on your model, playback slider, collisions, stops and minimum clearance. Examples: folding chair, sectional door."
-pt = "Valide mecanismos simples: peças, pivôs, corrediças e trilhos no modelo, animação com cursor, colisões, batentes e folga mínima. Exemplos: cadeira dobrável, porta seccional."
+es = "Mecanismos sobre el modelo: pivotes, correderas, guías, engranajes, varios motores; animación, colisiones, holgura mínima, vídeo. Importa ensamblajes STEP."
+en = "Mechanisms on your model: pivots, slides, rails, gears, several motors; playback, collisions, minimum clearance, split-screen video. Imports STEP assemblies."
+pt = "Mecanismos no modelo: pivôs, corrediças, trilhos, engrenagens, vários motores; animação, colisões, folga mínima, vídeo. Importa montagens STEP."

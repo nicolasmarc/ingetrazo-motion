@@ -34,6 +34,14 @@ tab appears in the side tray, and Extensions ▸ Motion has the examples.
 | Validate | — | 0 → 100 %: convergence, collisions, stops, gaps under *Jeu mini* |
 | Trajectory | edges whose end points to trace (else the joint points) | dashed paths in the view |
 
+**Several motors**: tick «Moteur» on as many joints as needed; all run on
+the same 0–100 %, each over its own travel (speed) from its own start
+(phase).
+
+**Importer STEP…** brings a STEP assembly (AP203/214/242) into the model,
+one group per part, named and coloured, in one undo step — then select
+groups to make them fixed or moving parts.
+
 **Exporter la vidéo…** (under the playback slider) writes a split-screen
 video: the IngeTrazo view on the left, a shaded animation with the readings
 on the right. MP4 needs an encoder: Qt Multimedia if your IngeTrazo has it,
@@ -69,12 +77,16 @@ python tests/test_guide.py       # rail, trammel ellipse, sectional door
 python tests/test_bird.py        # flapping bird over a full crank turn
 python tests/test_coupling.py    # gears over several turns, rolling without slip
 python tests/test_handcar.py     # rail car over three crank turns
+python tests/test_multidriver.py # two motors, speed and phase
+python tests/test_stepread.py    # STEP reader vs an independent CAD kernel
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)
 python tests/test_panel_ingetrazo.py   # the panel in a real IngeTrazo
                                        # window (needs PySide6 and an
                                        # IngeTrazo checkout: INGETRAZO_SRC)
 ```
+STEP fixtures: `tests/data/` (regenerate with `tools/make_step_fixtures.py`,
+which needs CadQuery — a test-data tool only, nothing of it is shipped).
 All are pytest-compatible. Build the package: `python tools/build_zip.py`
 (prints the sha256 for `catalog/motion.toml`).
 

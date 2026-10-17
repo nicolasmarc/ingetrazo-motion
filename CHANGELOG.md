@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.0 — 2026-10-17
+
+### Added
+- **Several motors** (`Mechanism.add_driver`): every motor runs on the same
+  0..100 % from its own start to its own end — a different travel is a
+  different speed, a different start a phase. Panel: «Moteur» adds a motor
+  (or updates its travel), a «Moteur» tick box per joint removes it; every
+  motor is marked in the list and read out in the video. Document: a list
+  of motors, files with the single motor of 0.1–0.5 still open.
+  Tested on two four-bars, one at twice the speed and 90° ahead.
+- **STEP assemblies** (`motion.stepread`, pure Python, from ISO 10303-21):
+  product tree, placements, units, colours; planes, cylinders, cones,
+  spheres, tori, linear extrusions, revolutions and B-spline surfaces
+  meshed to a chord tolerance (constrained Delaunay in the face's
+  parameters, seams and poles handled), closed parts watertight. Checked
+  against files written by an independent CAD kernel (CadQuery /
+  OpenCascade): volumes within 0.3 %, exact bounding boxes, placements of
+  turned parts, colours.
+- **Importer STEP…** (panel and Extensions ▸ Motion): one group per part,
+  named and painted, in one undo step; the parts are left selected, ready
+  to become fixed or moving parts. 80 parts / 110 000 faces in about 28 s.
+
+### Changed
+- Solver: one residual row per motor; the sweep follows every turning
+  motor in steps of at most 0.4 rad.
+
 ## 0.5.0 — 2026-10-17
 
 ### Added

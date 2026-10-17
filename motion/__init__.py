@@ -7,10 +7,11 @@ guide/rail), ``motion.solver`` (closed loops, degrees of freedom),
 hand-pumped rail car),
 ``motion.document``
 (what the panel stores in the .igz), ``motion.render`` and ``motion.video``
-(split-screen video export). The IngeTrazo panel is loaded lazily
+(split-screen video export), ``motion.stepread`` (STEP assemblies, pure
+Python) and ``motion.stepimport``. The IngeTrazo panel is loaded lazily
 by ``setup``.
 """
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 def setup(app):          # pragma: no cover - UI, needs IngeTrazo

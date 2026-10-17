@@ -149,7 +149,15 @@ class MotionPanel(QWidget):
         for key, text in SOURCES:
             self.src.addItem(text, key)
         self.src.currentIndexChanged.connect(self._source_changed)
-        lay.addWidget(self.src)
+        srow = QHBoxLayout()
+        srow.addWidget(self.src, 1)
+        self.step_btn = QToolButton()
+        self.step_btn.setText("Importer STEP…")
+        self.step_btn.setToolTip("Assemblage STEP (AP203/214/242) : une pièce = un groupe, "
+                                 "en une seule étape d'annulation.")
+        self.step_btn.clicked.connect(self._import_step_dialog)
+        srow.addWidget(self.step_btn)
+        lay.addLayout(srow)
 
         grid = QGridLayout()
         grid.setSpacing(2)
@@ -646,6 +654,35 @@ class MotionPanel(QWidget):
         self.slider.setValue(0)
         self._scrub(0)
 
+    # ---- STEP import -----------------------------------------------------------------
+    def import_step(self, path, tol=0.0002):
+        """Add the parts of a STEP assembly to the model; they are left
+        selected, ready to become fixed or moving parts."""
+        from . import stepimport
+        asm, groups = stepimport.import_into(self.app, path, tol)
+        sel = getattr(self._scene(), "selection", None)
+        if sel is not None:
+            sel.clear()
+            sel.update(groups)
+        warn = "; ".join(f"{k} ×{n}" for k, n in asm.warnings.items())
+        self.say(f"STEP : {len(groups)} pièce(s) importée(s)"
+                 + (f" — non lu : {warn}" if warn else "") + ".")
+        return asm, groups
+
+    def _import_step_dialog(self):
+        from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+        path, _ = QFileDialog.getOpenFileName(self, "Importer un assemblage STEP", "",
+                                              "STEP (*.step *.stp *.STEP *.STP)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.import_step(path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Importer STEP", f"{type(exc).__name__} : {exc}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
     def set_source(self, key):
         i = [k for k, _ in SOURCES].index(key)
         self.src.setCurrentIndex(i)
@@ -1110,6 +1147,8 @@ def setup(app):
     sub = app.add_menu("Motion")
     if sub is not None:
         sub.addAction("Panneau Motion", lambda: show())
+        sub.addAction("Importer un assemblage STEP…",
+                      lambda: (show(), panel._import_step_dialog()))
         sub.addAction("Exemple : chaise pliante", lambda: show("chaise"))
         sub.addAction("Exemple : porte sectionnelle", lambda: show("porte"))
         sub.addAction("Exemple : oiseau à battement d'ailes", lambda: show("oiseau"))

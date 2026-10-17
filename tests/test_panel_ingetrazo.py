@@ -274,6 +274,78 @@ def test_video_export_split_screen():
     assert out is None
 
 
+def test_step_assembly_imported_then_animated():
+    """A STEP assembly from another CAD kernel becomes groups, then a
+    mechanism: the left lever turns about its hole."""
+    if SKIP:
+        print("skip:", SKIP); return
+    from PySide6.QtGui import QVector3D as V
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    n0 = len(scene.groups)
+    asm, groups = panel.import_step(str(HERE / "data" / "assemblage.step"))
+    assert sorted(g.name for g in groups) == ["levier_d", "levier_g", "socle"]
+    assert len(scene.groups) == n0 + 3 and set(scene.selection) == set(groups)
+    socle = next(g for g in groups if g.name == "socle")
+    assert socle.material["color"][0] == pytest_approx(0.6)
+    from motion_probe import probe  # noqa: F401  (keeps the import list honest)
+    # extents in metres
+    sys.path.insert(0, str(REPO))
+    import importlib
+    pan = importlib.import_module(type(panel).__module__)
+    pts = pan.group_points(socle)
+    assert np.allclose(pts.min(0), (-0.05, -0.015, -0.0025), atol=1e-9)
+    # faces come in turned outward: the signed volume of each closed part
+    # (from IngeTrazo's own faces, triangulated by fan) is positive
+    for g in groups:
+        vol = 0.0
+        for f in g.mesh.faces:
+            P = [np.array([v.x(), v.y(), v.z()]) for v in f.vertices]
+            for k in range(1, len(P) - 1):
+                vol += P[0] @ np.cross(P[k], P[k + 1]) / 6
+            for hole in f.holes:
+                H = [np.array([v.x(), v.y(), v.z()]) for v in hole]
+                for k in range(1, len(H) - 1):
+                    vol += H[0] @ np.cross(H[k], H[k + 1]) / 6
+        assert vol > 0, (g.name, vol)
+    # undo takes the whole import back, redo brings it again
+    win._on_undo()
+    assert len(scene.groups) == n0
+    win._on_redo()
+    assert len(scene.groups) == n0 + 3
+    # mechanism: socle fixed, left lever on a pivot through its hole
+    lev = next(g for g in groups if g.name == "levier_g")
+    a = math.radians(30)
+    hole = np.array([-25 + (-20) * math.cos(a), (-20) * math.sin(a), 10]) / 1000
+    axis = scene.mesh.add_edge(V(*(hole - [0, 0, 0.01])), V(*(hole + [0, 0, 0.01])))
+    win.viewport.notify_scene_changed()
+    _select(win, socle); panel._action("fixed")
+    _select(win, lev); panel._action("moving")
+    _select(win, axis); panel._action("pivot")
+    panel.tree.setCurrentItem(panel.tree.findItems("pivot1", Qt_MatchExactly())[0])
+    panel.drv_lo.setValue(0)
+    panel.drv_hi.setValue(90)
+    panel._action("driver")
+    panel.pas.setValue(7)
+    panel._action("validate")
+    assert panel.report["ok"], panel.report["problems"]
+    m = panel.mechanism()
+    x = panel.report["steps"][-1]["x"]
+    body = m.bodies[0]
+    c0 = np.array([-25 + 0.6487 * math.cos(a), 0.6487 * math.sin(a), 10]) / 1000
+    c1 = body.world_point(m.pose(x, body), c0)
+    assert abs(np.linalg.norm((c1 - hole)[:2]) - np.linalg.norm((c0 - hole)[:2])) < 1e-9
+
+
+def pytest_approx(v, tol=1e-6):
+    class _A:
+        def __eq__(self, other):
+            return abs(other - v) < tol
+    return _A()
+
+
 def Qt_MatchExactly():
     from PySide6.QtCore import Qt
     return Qt.MatchExactly
