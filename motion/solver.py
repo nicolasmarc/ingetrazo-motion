@@ -28,11 +28,14 @@ def _joint_residual(mech, j, x):
                             Rr[1, 0] - Rr[0, 1]]])
 
 
-def _driver_residual(mech, x, driver_value):
-    j = mech.driver[0]
-    if mech.multi_turn():                     # several turns: count them
-        return mech.continuous_value(j, x) - driver_value
-    d = mech.joint_value(j, x) - driver_value
+def _driver_residual(mech, x, driver_value, k=0, targets=None):
+    """Residual of motor ``k`` (target from the leading motor's value)."""
+    drv = mech.drivers[k]
+    j = drv[0]
+    target = (targets or mech.driver_targets(driver_value))[k]
+    if mech.multi_turn(drv):                  # several turns: count them
+        return mech.continuous_value(j, x) - target
+    d = mech.joint_value(j, x) - target
     if j.kind == "pivot":                     # angles: a full turn is no error
         d = math.atan2(math.sin(d), math.cos(d))
     return d
@@ -41,35 +44,41 @@ def _driver_residual(mech, x, driver_value):
 def residual(mech, x, driver_value=None):
     r = [_joint_residual(mech, j, x) for j in mech.joints]
     if driver_value is not None:
-        r.append([_driver_residual(mech, x, driver_value)])
+        tg = mech.driver_targets(driver_value)
+        r.append([_driver_residual(mech, x, driver_value, k, tg)
+                  for k in range(len(mech.drivers))])
     return np.concatenate(r) if r else np.zeros(0)
+
+
+def _joint_bodies(j):
+    return j.bodies() if j.kind == "coupling" else [j.a, j.b]
 
 
 def jacobian(mech, x, driver_value=None, eps=1e-7):
     """Central differences, body by body: a body's 6 columns only touch the
-    joints that body takes part in (the rest of the column is zero)."""
+    joints (and motors) that body takes part in."""
     rows, at = [], 0
     for j in mech.joints:
         n = {"guide": 3, "coupling": 1}.get(j.kind, 6)
         rows.append((j, slice(at, at + n)))
         at += n
-    m_rows = at + (1 if driver_value is not None else 0)
-    J = np.zeros((m_rows, x.size))
+    nd = len(mech.drivers) if driver_value is not None else 0
+    J = np.zeros((at + nd, x.size))
+    tg = mech.driver_targets(driver_value) if nd else None
     for body in mech.bodies:
         mine = [(j, sl) for j, sl in rows
-                if (any(o is body for o in j.bodies()) if j.kind == "coupling"
-                    else j.a is body or j.b is body)]
-        drv = (driver_value is not None
-               and body in (mech.driver[0].a, mech.driver[0].b))
-        for k in range(6 * body.index, 6 * body.index + 6):
-            xp = x.copy(); xp[k] += eps
-            xm = x.copy(); xm[k] -= eps
+                if any(o is body for o in _joint_bodies(j))]
+        drv = [k for k in range(nd)
+               if any(o is body for o in _joint_bodies(mech.drivers[k][0]))]
+        for c in range(6 * body.index, 6 * body.index + 6):
+            xp = x.copy(); xp[c] += eps
+            xm = x.copy(); xm[c] -= eps
             for j, sl in mine:
-                J[sl, k] = (_joint_residual(mech, j, xp)
+                J[sl, c] = (_joint_residual(mech, j, xp)
                             - _joint_residual(mech, j, xm)) / (2 * eps)
-            if drv:
-                J[-1, k] = (_driver_residual(mech, xp, driver_value)
-                            - _driver_residual(mech, xm, driver_value)) / (2 * eps)
+            for k in drv:
+                J[at + k, c] = (_driver_residual(mech, xp, driver_value, k, tg)
+                                - _driver_residual(mech, xm, driver_value, k, tg)) / (2 * eps)
     return J
 
 
@@ -119,11 +128,13 @@ def sweep(mech, steps=51):
     """Solve 0..100 % of the driver. Returns list of dicts with pose x."""
     j, lo, hi = mech.driver
     out, x = [], None
-    # a pivot is followed in steps of at most 0.4 rad, whatever ``steps``
-    # (several turns in few steps would otherwise lose count)
+    # every motor that is a pivot is followed in steps of at most 0.4 rad,
+    # whatever ``steps`` (several turns in few steps would lose count)
     sub = 1
-    if j.kind == "pivot" and steps > 1:
-        sub = max(1, int(math.ceil(abs(hi - lo) / (steps - 1) / 0.4)))
+    if steps > 1:
+        for jj, l_, h_ in mech.drivers:
+            if jj.kind == "pivot":
+                sub = max(sub, int(math.ceil(abs(h_ - l_) / (steps - 1) / 0.4)))
     v_prev = lo
     for i in range(steps):
         t = i / (steps - 1)

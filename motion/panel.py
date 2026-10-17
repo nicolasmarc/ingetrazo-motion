@@ -204,6 +204,10 @@ class MotionPanel(QWidget):
         self.unit = QLabel("")
         dr.addWidget(self.unit)
         form.addRow("Course moteur", dr)
+        self.motor_on = QCheckBox("Moteur (plusieurs possibles : même 0–100 %, chacun sa course)")
+        self.motor_on.setToolTip("Coché : cette liaison est un moteur. Vitesse = course ; "
+                                 "déphasage = valeur de départ.")
+        form.addRow(self.motor_on)
         self.apply_btn = QToolButton()
         self.apply_btn.setText("Appliquer")
         self.apply_btn.clicked.connect(self._apply_joint)
@@ -347,13 +351,13 @@ class MotionPanel(QWidget):
                        f"{len(b['groups'])} groupe(s)") for b in self.data["bodies"]]
             joints = [(j["name"], j["kind"], f"{j['a']} ↔ {j['b']}")
                       for j in self.data["joints"]]
-            drv = (self.data["driver"] or {}).get("joint")
+            motors = [x["joint"] for x in self.data["drivers"]]
         else:
             m = self.mechanism()
             bodies = [(m.ground.name, "fixed", "")] + [(b.name, "moving", "")
                                                        for b in m.bodies]
             joints = [(j.name, j.kind, f"{j.a.name} ↔ {j.b.name}") for j in m.joints]
-            drv = m.driver[0].name if m.driver else None
+            motors = [d[0].name for d in m.drivers]
         kinds = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot",
                  "slider": "Glissière", "guide": "Guide / rail",
                  "coupling": "Couplage"}
@@ -361,7 +365,7 @@ class MotionPanel(QWidget):
             it = QTreeWidgetItem([name, kinds[kind], detail])
             it.setIcon(0, icons.icon(kind, self.tree, 16))
             it.setData(0, Qt.UserRole, name)
-            if name == drv:
+            if name in motors:
                 it.setIcon(1, icons.icon("driver", self.tree, 16))
                 it.setText(1, kinds[kind] + " · moteur")
             self.tree.addTopLevelItem(it)
@@ -381,8 +385,8 @@ class MotionPanel(QWidget):
             c.clear()
             c.addItems(names)
             c.blockSignals(False)
-        if drv:                                  # show the driver's travel
-            hit = self.tree.findItems(drv, Qt.MatchExactly)
+        if motors:                               # show the first motor's travel
+            hit = self.tree.findItems(motors[0], Qt.MatchExactly)
             if hit:
                 self.tree.setCurrentItem(hit[0])
 
@@ -427,12 +431,16 @@ class MotionPanel(QWidget):
 
     def _show_travel(self, kind, mj, rec):
         self.unit.setText("°" if self._is_angle(kind) else "mm")
-        drv = self.data.get("driver") if self.source == "model" else None
         m = self.mechanism()
-        if self.source != "model" and m.driver and m.driver[0] is mj:
-            lo, hi = m.driver[1], m.driver[2]
-        elif drv and rec and drv["joint"] == rec["name"]:
-            lo, hi = drv["lo"], drv["hi"]
+        mine = None
+        if self.source != "model":
+            mine = next(((lo, hi) for jj, lo, hi in m.drivers if jj is mj), None)
+        elif rec is not None:
+            mine = next(((x["lo"], x["hi"]) for x in self.data["drivers"]
+                         if x["joint"] == rec["name"]), None)
+        self.motor_on.setChecked(mine is not None)
+        if mine is not None:
+            lo, hi = mine
         else:
             lo = m.joint_value(mj, np.zeros(m.n)) if mj is not None else 0.0
             if kind == "pivot":
@@ -517,11 +525,12 @@ class MotionPanel(QWidget):
         if self.source != "model":
             m = self.mechanism()
             j = next((j for j in m.joints if j.name == name), m.driver[0])
-            m.drive(j, self._from_ui(j.kind, self.drv_lo.value()),
-                    self._from_ui(j.kind, self.drv_hi.value()))
+            m.add_driver(j, self._from_ui(j.kind, self.drv_lo.value()),
+                         self._from_ui(j.kind, self.drv_hi.value()))
             self.frames = None
+            self.report = None
             self._fill_tree()
-            self.say(f"Moteur : {j.name}.")
+            self.say(f"Moteur : {j.name} ({len(m.drivers)} moteur(s)).")
             return
         j = self._joint_record(name)
         if j is None:
@@ -530,9 +539,9 @@ class MotionPanel(QWidget):
                 self._show_travel(j["kind"], None, j)
             else:
                 raise ValueError("choisir une liaison dans la liste")
-        d = doc.set_driver(self.data, j["name"], self._from_ui(j["kind"], self.drv_lo.value()),
+        d = doc.add_driver(self.data, j["name"], self._from_ui(j["kind"], self.drv_lo.value()),
                            self._from_ui(j["kind"], self.drv_hi.value()))
-        self._store(d, f"Moteur : {j['name']}.")
+        self._store(d, f"Moteur : {j['name']} ({len(d['drivers'])} moteur(s)).")
 
     def _apply_joint(self):
         j = self._joint_record(self._chosen())
@@ -544,9 +553,11 @@ class MotionPanel(QWidget):
         rec["limits"] = ([self._from_ui(j["kind"], self.lim_lo.value()),
                           self._from_ui(j["kind"], self.lim_hi.value())]
                          if self.lim_on.isChecked() else None)
-        if d["driver"] and d["driver"]["joint"] == j["name"]:
-            d["driver"]["lo"] = self._from_ui(j["kind"], self.drv_lo.value())
-            d["driver"]["hi"] = self._from_ui(j["kind"], self.drv_hi.value())
+        if self.motor_on.isChecked():
+            d = doc.add_driver(d, j["name"], self._from_ui(j["kind"], self.drv_lo.value()),
+                               self._from_ui(j["kind"], self.drv_hi.value()))
+        else:
+            d = doc.remove_driver(d, j["name"])
         self._store(d, f"{j['name']} mis à jour.")
 
     def _delete(self):
@@ -1014,7 +1025,14 @@ class MotionPanel(QWidget):
                 hits = {nm for pair in near.get("hits", []) for nm in pair}
                 cl = [near["clearance"]] if near.get("clearance") else []
                 shown = lo + t * (hi - lo)
-                info = [f"{j.name} : {unit(shown)}"]
+                info = []
+                for (jj, l_, h_), v in zip(m.drivers, m.driver_targets(shown)):
+                    if jj.kind == "pivot":
+                        txt = (f"{v / (2 * math.pi):.2f} tr" if m.multi_turn((jj, l_, h_))
+                               else f"{math.degrees(v):.1f}°")
+                    else:
+                        txt = f"{1000 * v:.0f} mm"
+                    info.append(f"{jj.name} : {txt}")
                 extra = (self.sample_info or {}).get("mesures")
                 if extra:
                     info += extra(m, x)

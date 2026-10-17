@@ -9,7 +9,8 @@ One JSON-safe dict (``app.set_document_data``), metres and radians::
                  "point": [x, y, z], "axis": [x, y, z],      # pivot, slider
                  "rail": [[x, y, z], ...],                   # guide polyline
                  "limits": [lo, hi] | null}],
-     "driver": {"joint": "<name>", "lo": 0.0, "hi": 1.57} | null,
+     "drivers": [{"joint": "<name>", "lo": 0.0, "hi": 1.57}, ...],
+     "driver": <the first of "drivers"> | null,      # kept for 0.1-0.5 files
      "jeu_min": 0.005, "pas": 51}
 
 A body is one or more IngeTrazo groups moving together; every body marked
@@ -24,17 +25,21 @@ FORMAT = 1
 
 
 def empty():
-    return {"format": FORMAT, "bodies": [], "joints": [], "driver": None,
-            "jeu_min": 0.005, "pas": 51}
+    return {"format": FORMAT, "bodies": [], "joints": [], "drivers": [],
+            "driver": None, "jeu_min": 0.005, "pas": 51}
 
 
 def normalized(data):
-    """A complete, independent copy (missing keys filled in)."""
+    """A complete, independent copy (missing keys filled in). A file with
+    the single ``driver`` of 0.1-0.5 gets it as its one motor."""
     out = empty()
     if isinstance(data, dict):
         for k in out:
             if k in data and data[k] is not None:
                 out[k] = copy.deepcopy(data[k])
+    if isinstance(data, dict) and "drivers" not in data and out["driver"]:
+        out["drivers"] = [copy.deepcopy(out["driver"])]
+    out["driver"] = copy.deepcopy(out["drivers"][0]) if out["drivers"] else None
     return out
 
 
@@ -82,15 +87,36 @@ def remove(data, name):
     d["bodies"] = [b for b in d["bodies"] if b["name"] != name]
     d["joints"] = [j for j in d["joints"]
                    if j["name"] != name and name not in (j["a"], j["b"])]
-    if d["driver"] and d["driver"]["joint"] not in {j["name"] for j in d["joints"]}:
-        d["driver"] = None
-    return d
+    names = {j["name"] for j in d["joints"]}
+    d["drivers"] = [x for x in d["drivers"] if x["joint"] in names]
+    return normalized(d)
 
 
 def set_driver(data, joint, lo, hi):
+    """``joint`` becomes the only motor."""
     d = normalized(data)
-    d["driver"] = {"joint": joint, "lo": float(lo), "hi": float(hi)}
-    return d
+    d["drivers"] = [{"joint": joint, "lo": float(lo), "hi": float(hi)}]
+    return normalized(d)
+
+
+def add_driver(data, joint, lo, hi):
+    """One more motor (or new travel for an existing one). All motors run
+    on the same 0..100 %, each from its ``lo`` to its ``hi``."""
+    d = normalized(data)
+    rec = {"joint": joint, "lo": float(lo), "hi": float(hi)}
+    for k, x in enumerate(d["drivers"]):
+        if x["joint"] == joint:
+            d["drivers"][k] = rec
+            break
+    else:
+        d["drivers"].append(rec)
+    return normalized(d)
+
+
+def remove_driver(data, joint):
+    d = normalized(data)
+    d["drivers"] = [x for x in d["drivers"] if x["joint"] != joint]
+    return normalized(d)
 
 
 # -- geometry helpers ---------------------------------------------------------
@@ -273,10 +299,12 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None):
         else:
             joints[j["name"]] = m.guide(a, b, j["point"], path_from_points(j["rail"]),
                                         lim, j["name"])
-    drv = d["driver"]
-    if drv and drv["joint"] in joints:
-        m.drive(joints[drv["joint"]], drv["lo"], drv["hi"])
-    elif m.bodies:
+    for drv in d["drivers"]:
+        if drv["joint"] in joints:
+            m.add_driver(joints[drv["joint"]], drv["lo"], drv["hi"])
+        else:
+            problems.append(f"moteur {drv['joint']} : liaison inconnue")
+    if not m.drivers and m.bodies:
         problems.append("aucun moteur : choisir une liaison et « Moteur 0–100 % »")
     return m, problems
 

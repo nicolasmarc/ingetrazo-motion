@@ -251,7 +251,7 @@ class Mechanism:
         self.bodies = []
         self.joints = []
         self.ground = Body("ground", fixed=True)
-        self.driver = None     # (joint, lo, hi)
+        self.drivers = []      # [(joint, lo, hi)]: the motors
 
     # -- building -------------------------------------------------------
     def body(self, name, center=(0, 0, 0), boxes=()):
@@ -288,8 +288,32 @@ class Mechanism:
         return j
 
     def drive(self, joint, lo, hi):
-        """Make ``joint`` the driver: 0 % -> ``lo``, 100 % -> ``hi``."""
-        self.driver = (joint, float(lo), float(hi))
+        """Make ``joint`` THE driver (the only motor): 0 % -> ``lo``,
+        100 % -> ``hi``."""
+        self.drivers = [(joint, float(lo), float(hi))]
+
+    def add_driver(self, joint, lo, hi):
+        """One more motor. Every motor runs on the same 0..100 % sweep from
+        its own ``lo`` to its own ``hi``: different speeds are different
+        travels, a phase is a different ``lo``. The first motor leads (its
+        value is what ``solver.solve`` is given)."""
+        self.drivers = [d for d in self.drivers if d[0] is not joint]
+        self.drivers.append((joint, float(lo), float(hi)))
+
+    @property
+    def driver(self):
+        """The leading motor (joint, lo, hi), or None."""
+        return self.drivers[0] if self.drivers else None
+
+    @driver.setter
+    def driver(self, value):
+        self.drivers = [] if value is None else [tuple(value)]
+
+    def driver_targets(self, value):
+        """Target of every motor when the leading one is at ``value``."""
+        j0, lo0, hi0 = self.drivers[0]
+        t = 0.0 if hi0 == lo0 else (value - lo0) / (hi0 - lo0)
+        return [value] + [lo + t * (hi - lo) for _, lo, hi in self.drivers[1:]]
 
     # -- helpers --------------------------------------------------------
     @property
@@ -309,10 +333,12 @@ class Mechanism:
             return float((qb[3:] - qa[3:]) @ j.axis)
         return self.joint_value(j, x)
 
-    def multi_turn(self):
-        """The driver is a pivot turning more than one revolution."""
-        return (self.driver is not None and self.driver[0].kind == "pivot"
-                and abs(self.driver[2] - self.driver[1]) > 2 * np.pi + 1e-9)
+    def multi_turn(self, drv=None):
+        """The (leading, or given) motor is a pivot turning more than one
+        revolution."""
+        drv = drv if drv is not None else self.driver
+        return (drv is not None and drv[0].kind == "pivot"
+                and abs(drv[2] - drv[1]) > 2 * np.pi + 1e-9)
 
     def joint_value(self, j, x):
         """Current relative angle (pivot), travel (slider) or position

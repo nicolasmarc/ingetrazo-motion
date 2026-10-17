@@ -131,6 +131,53 @@ def test_drop_leaf_built_from_the_model():
     assert panel.app.document_data()["driver"]["joint"] == "pivot1"
 
 
+def test_two_motors_from_the_panel():
+    """Two leaves, two hinges, two motors: the second at half speed."""
+    if SKIP:
+        print("skip:", SKIP); return
+    from PySide6.QtGui import QVector3D as V
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    table = _box_group("Plateau", (-0.4, -0.2, -0.009), (0, 0.2, 0.009))
+    leaf1 = _box_group("Abattant1", (0.0, -0.2, -0.009), (0.6, 0.2, 0.009))
+    table2 = _box_group("Plateau2", (-0.4, 1.0, -0.009), (0, 1.4, 0.009))
+    leaf2 = _box_group("Abattant2", (0.0, 1.0, -0.009), (0.6, 1.4, 0.009))
+    scene.groups += [table, leaf1, table2, leaf2]
+    h1 = scene.mesh.add_edge(V(0, -0.2, 0), V(0, 0.2, 0))
+    h2 = scene.mesh.add_edge(V(0, 1.0, 0), V(0, 1.4, 0))
+    win.viewport.notify_scene_changed()
+    _select(win, table, table2); panel._action("fixed")
+    _select(win, leaf1); panel._action("moving")
+    _select(win, leaf2); panel._action("moving")
+    _select(win, h1); panel._action("pivot")
+    _select(win, h2); panel._action("pivot")
+    for name, hi in (("pivot1", -90), ("pivot2", -45)):
+        panel.tree.setCurrentItem(panel.tree.findItems(name, Qt_MatchExactly())[0])
+        panel.drv_lo.setValue(0)
+        panel.drv_hi.setValue(hi)
+        panel._action("driver")
+    data = panel.app.document_data()
+    assert [x["joint"] for x in data["drivers"]] == ["pivot1", "pivot2"]
+    panel.pas.setValue(11)
+    panel._action("validate")
+    assert panel.report["ok"], panel.report["problems"]
+    panel.slider.setValue(500)
+    m = panel.mechanism()
+    for body, deg in ((m.bodies[0], 45), (m.bodies[1], 22.5)):
+        tip = body.world_point(m.pose(panel.x, body), (0.6, body.center[1], 0))
+        assert abs(math.degrees(math.atan2(abs(tip[2]), tip[0])) - deg) < 1e-5
+    # untick «Moteur» on the second one: back to one motor (one undo step)
+    panel.tree.setCurrentItem(panel.tree.findItems("pivot2", Qt_MatchExactly())[0])
+    assert panel.motor_on.isChecked()
+    panel.motor_on.setChecked(False)
+    panel._apply_joint()
+    assert [x["joint"] for x in panel.app.document_data()["drivers"]] == ["pivot1"]
+    win._on_undo()
+    assert len(panel.app.document_data()["drivers"]) == 2
+
+
 def test_panel_on_two_curved_rails_built_from_edges():
     """One door panel, two rollers per side, rails drawn as edges (line,
     12 arc segments, line), rollers marked by short strokes."""
