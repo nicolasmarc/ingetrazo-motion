@@ -602,7 +602,15 @@ class MotionPanel(QWidget):
             lines.append(f"Jeu le plus faible : {w['distance'] * 1000:.1f} mm entre "
                          f"{w['a']} ({w['box_a']}) et {w['b']} ({w['box_b']}) "
                          f"à {round(100 * w['t'])} %.")
-        lines.append(f"Degrés de liberté (sans moteur) : {solver.dof(self.mechanism(), self.frames[len(self.frames) // 2]['x'])}")
+        # the most frequent count over a few poses: a single pose can mislead
+        # (a roller at the very end of its rail reads 0; after whole turns of
+        # a crank a part's rotation parameters reach 2π and it reads 5 or 7
+        # on the rail car instead of 1)
+        m, F = self.mechanism(), self.frames
+        counts = [solver.dof(m, F[round(f * (len(F) - 1))]["x"])
+                  for f in (0.1, 0.3, 0.5, 0.7, 0.9)]
+        dof = max(set(counts), key=lambda c: (counts.count(c), -c))
+        lines.append(f"Degrés de liberté (sans moteur) : {dof}")
         self.out.setPlainText("\n".join(lines))
 
     def _do_trajectory(self):

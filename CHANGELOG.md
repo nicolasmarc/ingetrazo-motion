@@ -6,6 +6,9 @@
   `stepexport/stepread.py` in the STEP extension (ingetrazo-step), kept in step.
 - STEP reader: the component name typed by the designer ("Marche") wins over a solid name
   the CAD program gave on its own ("Solide", "Body1"); accented names decoded.
+- Validation report: degrees of freedom counted over several poses (most frequent value);
+  a single mid-run pose read 5 instead of 1 on the rail car after whole crank turns.
+- Screenshot: the rail-car example in IngeTrazo.
 
 ## 0.6.0 — 2026-10-17
 
