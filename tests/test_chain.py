@@ -130,6 +130,100 @@ def test_example_tensioner_takes_up_the_slack():
     assert solver.dof(m, rep["steps"][5]["x"]) == 2              # two motors
 
 
+# -- dynamics -------------------------------------------------------------------
+
+def _run(m, ch, theta_of, seconds, fps=30, kick=None):
+    """Advance the chain in time; returns per frame (max pin distance from
+    the chain at rest, longest and shortest link / pitch)."""
+    x = solver.solve(m, 0.0)[0]
+    ch.dynamic = True
+    ch.advance(m, x, 0.0)
+    if kick is not None:
+        kick(ch)
+    out = []
+    for i in range(1, int(seconds * fps) + 1):
+        xx = x.copy()
+        b = ch.b1.index
+        xx[6 * b + 3: 6 * b + 6] = ch.j1.axis * theta_of(i / fps)
+        xx = ch.place(m, xx)
+        rest = np.array(ch.state["pins"])
+        ch.advance(m, xx, 1.0 / fps)
+        P = np.array(ch.state["pins"])
+        d = np.linalg.norm(np.roll(P, -1, axis=0) - P, axis=1) / ch.p
+        out.append((float(np.linalg.norm(P - rest, axis=1).max()), d.max(), d.min()))
+    return np.array(out)
+
+
+def test_a_chain_running_steadily_keeps_its_rest_shape():
+    # a chain moving along its own catenary needs no sideways force: at a
+    # steady speed the dynamic chain sits on the shape at rest
+    m, info = samples.chaine(tension=0.0)
+    ch = info["chain"]
+    w = 2 * math.pi * 1.2                                     # 1.2 turn/s
+    # speed ramps up over the first second (angle w (t^2 / 2), then w (t - 1/2))
+    r = _run(m, ch, lambda t: w * (0.5 * t * t if t < 1 else t - 0.5), 6.0)
+    assert r[-60:, 0].max() < 0.002, r[-60:, 0].max()         # within 2 mm
+    assert r[:, 1].max() < 1.005 and r[:, 2].min() > 0.995     # links one pitch
+
+
+def test_a_disturbed_strand_swings_then_settles():
+    m, info = samples.chaine(tension=0.0)
+    ch = info["chain"]
+    ch.damping = 0.8
+
+    def kick(c):                                               # a tap on the strand
+        free = ~c._kinematic(c._dyn["g"])
+        c._dyn["V"][free, 0] += 0.8                            # sideways
+    r = _run(m, ch, lambda t: 0.0, 8.0, kick=kick)
+    assert r[:15, 0].max() > 0.01                              # it moved (> 10 mm)
+    assert r[-15:, 0].max() < 0.25 * r[:15, 0].max()           # and calmed down
+    assert r[:, 1].max() < 1.005 and r[:, 2].min() > 0.995
+
+
+def test_supple_example_is_not_quasi_static():
+    m, info = samples.chaine_souple()
+    ch = info["chain"]
+    assert solver.dof(m) == 1 and collide.validate(m, 31, info["jeu_min"])["ok"]
+    al = info["allure"]
+    assert al(0.0) == 0.0 and abs(al(1.0) - 1.0) < 1e-12 and al(0.95) == 1.0   # stops, settles
+    n, fps = 14 * 30, 30
+    x, dev = None, []
+    j, lo, hi = m.driver
+    for i in range(n):
+        x, ok, _ = solver.solve(m, lo + al(i / (n - 1)) * (hi - lo), x)
+        rest = np.array(ch.state["pins"])
+        x = ch.advance(m, x, 0.0 if i == 0 else 1.0 / fps)
+        dev.append(float(np.linalg.norm(np.array(ch.state["pins"]) - rest, axis=1).max()))
+    assert max(dev) > 0.02                                     # lags and swings: > 20 mm
+
+
+def test_sway_frequency_matches_string_theory():
+    # a shallow hanging strand swings like a string: its first antisymmetric
+    # mode is f = sqrt(H / mu) / L = sqrt(g c) / L (H = mu g c, c the
+    # catenary parameter, L the span) — the sag does not change that mode
+    m, info = samples.chaine(tension=0.0, entraxe=0.4245)      # sag 14 mm, 3.4 %
+    ch = info["chain"]
+    ch.damping = 0.0
+    x = solver.solve(m, 0.0)[0]
+    ch.dynamic = True
+    ch.advance(m, x, 0.0)
+    g = ch._dyn["g"]
+    free = [i for i in np.argsort(g["u"]) if not ch._kinematic(g)[i]]
+    for k, i in enumerate(free):                               # antisymmetric push
+        ch._dyn["V"][i, 1] += 0.02 * math.sin(2 * math.pi * (k + 1) / (len(free) + 1))
+    q, fps, zs = free[len(free) // 4], 400, []
+    for _ in range(4 * fps):
+        ch.advance(m, x, 1.0 / fps)
+        zs.append(ch.state["pins"][q][1])
+    zs = np.array(zs) - np.mean(zs)
+    F = np.abs(np.fft.rfft(zs * np.hanning(len(zs))))
+    k = int(np.argmax(F[3:])) + 3
+    a, b, c = F[k - 1], F[k], F[k + 1]
+    f_sim = (k + 0.5 * (a - c) / (a - 2 * b + c)) * fps / len(zs)
+    f_th = math.sqrt(9.81 * g["catenary"][0]) / g["chord"]
+    assert abs(f_sim / f_th - 1) < 0.03, (f_sim, f_th)
+
+
 if __name__ == "__main__":
     for k, fn in list(globals().items()):
         if k.startswith("test_"):

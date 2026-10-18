@@ -15,6 +15,18 @@
   sag from about 10 % to 3 % of the centre distance. Tested against closed forms (pitch
   diameters, every link one pitch, tangency, speed ratio, pins in the tooth gaps) and an
   independent catenary solution.
+- **Dynamics, first step: a supple chain** (`Chain.dynamic`, `Chain.advance`): in a
+  video (and while playing) the slack strand is computed in time — pins with weight and
+  inertia, damping (1/s), every link one pitch at every sub-step (the strand's
+  constraints solved at once, a tridiagonal system; velocities projected the same way so
+  the swing is not braked by the scheme), kept off the sprockets, guided into the tooth
+  gaps. Checked: a chain running steadily keeps its shape at rest (a chain moving along
+  its own catenary needs no sideways force), a tapped strand swings then settles, and its
+  sway frequency matches string theory sqrt(g c) / L within 3 %.
+- **Example «chaîne souple (dynamique)»** (`samples.chaine_souple`): the driven
+  sprocket's bearing moved by an eccentric geared to the crank (3 times per turn,
+  ±2.5 mm), the crank turned by hand (from rest, uneven speed, then stopped): the slack
+  strand lags, whips and settles. An example may give its own timing (`allure`).
 
 ## 0.6.1 — 2026-10-18
 - STEP reader: several named solids in one product become several parts (as the STEP export

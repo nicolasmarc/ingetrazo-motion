@@ -68,7 +68,9 @@ edit is one undo step. Collision boxes are fitted to each group.
   hand-pumped rail car (beam, rod, gears, rolling axles), roller chain with a
   hanging slack strand and a tensioner.
 - Roller chain: straight tight strand, slack strand as a catenary of the exact
-  length left, links as parts that seat in the sprocket teeth, sag readout.
+  length left, links as parts that seat in the sprocket teeth, sag readout;
+  optional dynamics (weight, inertia, damping) for a supple slack strand in
+  videos and playback — the first step towards a dynamic Motion.
 
 ## Tests
 

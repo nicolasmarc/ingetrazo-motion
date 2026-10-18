@@ -36,12 +36,14 @@ SOURCES = (("model", "Modèle (document)"),
            ("porte", "Exemple : porte sectionnelle"),
            ("oiseau", "Exemple : oiseau à battement d'ailes"),
            ("draisine", "Exemple : draisine à balancier"),
-           ("chaine", "Exemple : chaîne détendue et tendeur"))
+           ("chaine", "Exemple : chaîne détendue et tendeur"),
+           ("chaine_souple", "Exemple : chaîne souple (dynamique)"))
 
 SAMPLE_NAMES = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle",
                 "oiseau": "Oiseau à battement d'ailes",
                 "draisine": "Draisine à balancier",
-                "chaine": "Chaîne détendue et tendeur"}
+                "chaine": "Chaîne détendue et tendeur",
+                "chaine_souple": "Chaîne souple (dynamique)"}
 
 TIPS = {
     "fixed": "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.",
@@ -334,7 +336,7 @@ class MotionPanel(QWidget):
             return self.mech
         builders = {"chaise": samples.chaise_pliante, "porte": samples.porte_sectionnelle,
                     "oiseau": samples.oiseau, "draisine": samples.draisine,
-                    "chaine": samples.chaine}
+                    "chaine": samples.chaine, "chaine_souple": samples.chaine_souple}
         self.sample_info = None
         if self.source in builders:
             self.mech, self.sample_info = builders[self.source]()
@@ -703,9 +705,23 @@ class MotionPanel(QWidget):
         self.pct.setText(f"{round(100 * self.t)} %")
         try:
             self._pose_at(self.t)
+            self._dynamics(v)
         except Exception as exc:
             self.say(f"Lecture : {exc}")
         self.app.viewport.update()
+
+    def _dynamics(self, v):
+        """Chains with dynamics: while playing, they go on in time (one
+        timer tick); a jump of the slider starts them again at rest."""
+        m = self.mechanism()
+        dyn = [f for f in getattr(m, "followers", []) if getattr(f, "dynamic", False)]
+        if not dyn or self.x is None:
+            return
+        last = getattr(self, "_last_v", None)
+        going = self.timer.isActive() and last is not None and abs(v - last) <= 20
+        self._last_v = v
+        for f in dyn:
+            self.x = f.advance(m, self.x, self.timer.interval() / 1000.0 if going else 0.0)
 
     def _pose_at(self, t):
         m = self.mechanism()
@@ -1015,7 +1031,10 @@ class MotionPanel(QWidget):
         n = max(2, int(round(seconds * fps)))
         hold = min(int(0.5 * fps), n // 6)
         ease = lambda u: 0.5 - 0.5 * math.cos(math.pi * u)
-        if m.multi_turn():                        # several turns: once, steadily
+        allure = (self.sample_info or {}).get("allure")
+        if allure:                                # an example's own timing
+            tl = [allure(i / (n - 1)) for i in range(n)]
+        elif m.multi_turn():                      # several turns: once, steadily
             tl = [i / (n - 1) for i in range(n)]
         elif self.full_turn():
             cycles = cycles or max(1, round(seconds / 2.0))
@@ -1058,6 +1077,9 @@ class MotionPanel(QWidget):
         writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
         saved_x, saved_t = self.x, self.t
         x = None
+        dyn = [f for f in getattr(m, "followers", []) if getattr(f, "dynamic", False)]
+        for f in dyn:                             # chains computed in time
+            f.reset()
         try:
             for i, t in enumerate(tl):
                 if progress is not None and not progress(i, len(tl)):
@@ -1068,6 +1090,8 @@ class MotionPanel(QWidget):
                 a = f - k
                 guess = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
                 x, ok, _ = solver.solve(m, lo + t * (hi - lo), guess)
+                for f in dyn:
+                    x = f.advance(m, x, 0.0 if i == 0 else 1.0 / fps)
                 self.x, self.t = x, t
                 near = rows[int(round(t * (len(rows) - 1)))]
                 hits = {nm for pair in near.get("hits", []) for nm in pair}
@@ -1165,6 +1189,7 @@ def setup(app):
         sub.addAction("Exemple : oiseau à battement d'ailes", lambda: show("oiseau"))
         sub.addAction("Exemple : draisine à balancier", lambda: show("draisine"))
         sub.addAction("Exemple : chaîne détendue et tendeur", lambda: show("chaine"))
+        sub.addAction("Exemple : chaîne souple (dynamique)", lambda: show("chaine_souple"))
     else:
         app.add_menu_action("Motion", lambda: show(),
                             tip="Mécanismes : pivots, glissières, rails, validation.")

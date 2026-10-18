@@ -152,7 +152,8 @@ class Chain:
             for f in np.linspace(0, 1, 41):
                 q = at(marks[2] + f * nc)
                 sag = max(sag, float((q - B1) @ nrm))
-        return dict(pins=pins, theta2=theta2, T1=T1, T2=T2, B1=B1, B2=B2, aB1=aB1, aB2=aB2,
+        return dict(pins=pins, u=[(k + phase) % N for k in range(N)], marks=marks,
+                    S=(S1, S2), theta2=theta2, T1=T1, T2=T2, B1=B1, B2=B2, aB1=aB1, aB2=aB2,
                     n_top=n_top, n1=n1, n2=n2, nc=nc, slack_len=Lc, catenary=(c, u0, v0),
                     sag=sag, taut=taut, span=float(np.hypot(*(S2 - S1))),
                     chord=float(np.hypot(*(B2 - B1))))
@@ -176,8 +177,14 @@ class Chain:
             return B1, u0, v0
 
         def F(v):
+            try:
+                return _F(v)
+            except (OverflowError, ValueError, ZeroDivisionError):
+                return np.full(3, 1e6)
+
+        def _F(v):
             a1, a2, lc = v
-            c = math.exp(lc)
+            c = math.exp(min(lc, 30.0))
             B1, u0, v0 = curve(a1, c)
             B2 = S2 + r2 * np.array([math.cos(a2), math.sin(a2)])
             on = v0 + c * math.cosh((B2[0] - u0) / c) - B2[1]
@@ -194,8 +201,21 @@ class Chain:
         straight = float(np.hypot(*(B2s - B1s)))
         if left <= straight * (1 + 1e-9):
             return a_lo, a_lo, 1.0, 0.0, 0.0, straight, True
-        v = self._guess if self._guess is not None else np.array(
-            [a_lo - 0.05, a_lo + 0.05, math.log(max(straight, 1e-3))])
+        start = np.array([a_lo - 0.05, a_lo + 0.05, math.log(max(straight, 1e-3))])
+        v = self._newton(F, self._guess if self._guess is not None else start)
+        if np.linalg.norm(F(v)) > 1e-8:                 # lost: start again
+            v = self._newton(F, start)
+        if np.linalg.norm(F(v)) > 1e-6:                 # (nearly) no slack left
+            return a_lo, a_lo, 1.0, 0.0, 0.0, straight, True
+        self._guess = v
+        a1, a2, lc = v
+        c = math.exp(lc)
+        B1, u0, v0 = curve(a1, c)
+        return a1, a2, c, u0, v0, length_left(a1, a2), False
+
+    @staticmethod
+    def _newton(F, v):
+        v = np.array(v, float)
         for _ in range(60):
             f = F(v)
             if np.linalg.norm(f) < 1e-12:
@@ -210,23 +230,23 @@ class Chain:
             while t > 1e-4 and np.linalg.norm(F(v + t * step)) >= np.linalg.norm(f):
                 t *= 0.5
             v = v + t * step
-        self._guess = v
-        a1, a2, lc = v
-        c = math.exp(lc)
-        B1, u0, v0 = curve(a1, c)
-        return a1, a2, c, u0, v0, length_left(a1, a2), False
+        return v
 
     # -- follower -------------------------------------------------------
     def place(self, mech, x):
+        """Chain at rest for the pose ``x`` (quasi-static)."""
         theta = mech.continuous_value(self.j1, x)
         g = self.geometry(theta, self._centres(mech, x))
         self.state = g
+        return self._write(mech, x, g["pins"], g["theta2"])
+
+    def _write(self, mech, x, pins, theta2):
         x = np.array(x, float)
         ref = self.ref["pins"]
         for b in self.bodies:
             i, k = b.pins
             P0, Q0 = ref[i], ref[k]
-            P, Q = g["pins"][i], g["pins"][k]
+            P, Q = pins[i], pins[k]
             a = _ang(Q - P) - _ang(Q0 - P0)
             q = np.zeros(6)
             q[:3] = self._w(0.5 * (P + Q)) - self._w(0.5 * (P0 + Q0))
@@ -235,8 +255,165 @@ class Chain:
         # the driven sprocket turns with the chain (on its carrier)
         qa = mech.pose(x, self.j2.a)
         i = self.b2.index
-        x[6 * i + 3: 6 * i + 6] = qa[3:] + self.j2.axis * g["theta2"]
+        x[6 * i + 3: 6 * i + 6] = qa[3:] + self.j2.axis * theta2
         return x
+
+    # -- dynamics ---------------------------------------------------------
+    # The links on the sprockets and in the upper strand follow the
+    # sprockets (the strand is under tension: straight). The pins of the
+    # slack strand are point masses: weight, damping, one pitch between
+    # neighbours (position-based dynamics, Verlet velocities), kept off the
+    # sprockets. A pin that leaves the driving sprocket keeps the speed it
+    # had; one that reaches the driven sprocket is guided into its tooth gap
+    # over its last pitch. Time goes on in sub-steps of ``h`` seconds, the
+    # sprockets interpolated between two video frames.
+    dynamic = False
+    damping = 0.4          # 1/s: speed lost per second (exp)
+    gravity = 9.81         # m/s^2, along -z
+    h = 1.0 / 1000
+    iterations = 4
+
+    def reset(self):
+        self._dyn = None
+
+    def advance(self, mech, x, dt):
+        """Chain after ``dt`` seconds, the joints being at ``x`` now.
+        ``dt`` <= 0 (or a first call) starts from the chain at rest."""
+        theta = mech.continuous_value(self.j1, x)
+        cen = self._centres(mech, x)
+        d = getattr(self, "_dyn", None)
+        if d is None or dt <= 0:
+            g = self.geometry(theta, cen)
+            self._dyn = dict(P=np.array(g["pins"]), V=np.zeros((self.N, 2)), theta=theta,
+                             cen=cen, kin=self._kinematic(g), g=g)
+            self.state = self._dyn_state(g, self._dyn["P"])
+            return self._write(mech, x, list(self._dyn["P"]), g["theta2"])
+        n = max(1, int(math.ceil(dt / self.h)))
+        hs = dt / n
+        th0, c0 = d["theta"], d["cen"]
+        P, V, kin_prev = d["P"], d["V"], d["kin"]
+        damp = math.exp(-self.damping * hs)
+        for s in range(1, n + 1):
+            f = s / n
+            th = th0 + f * (theta - th0)
+            cs = (c0[0] + f * (cen[0] - c0[0]), c0[1] + f * (cen[1] - c0[1]))
+            g = self.geometry(th, cs)
+            T = np.array(g["pins"])
+            kin, w = self._kinematic(g), self._blend(g)
+            X = P.copy()
+            free = ~kin
+            born = free & kin_prev                 # just left the sprocket
+            V[born] = (T[born] - P[born]) / hs
+            V[free, 1] -= self.gravity * hs
+            X[free] = P[free] + V[free] * hs
+            X[kin] = T[kin]
+            touched = self._project(X, kin, w, T, g)
+            # velocities: the free pins keep their own speed, less what
+            # would stretch a link (projected like the positions) — taking
+            # (X - P) / h instead would brake the swing at every sub-step
+            Vk = (T - P) / hs
+            Vn = np.where(free[:, None], V, Vk)
+            self._project_velocity(X, Vn, kin, g)
+            Vn[touched] = (X[touched] - P[touched]) / hs
+            V = np.where(free[:, None], Vn * damp, Vk)
+            P, kin_prev = X, kin
+        self._dyn = dict(P=P, V=V, theta=theta, cen=cen, kin=kin_prev, g=g)
+        self.state = self._dyn_state(g, P)
+        return self._write(mech, x, list(P), g["theta2"])
+
+    def _kinematic(self, g):
+        m2, m3 = g["marks"][2], g["marks"][3]
+        return np.array([not (m2 < u < m3) for u in g["u"]]) if not g["taut"] \
+            else np.ones(self.N, bool)
+
+    def _blend(self, g):
+        """Weight pulling a free pin to its tooth gap over its last pitch
+        before the driven sprocket (0 .. 1)."""
+        m3 = g["marks"][3]
+        return np.array([min(1.0, max(0.0, u - (m3 - 1.0))) ** 2 for u in g["u"]])
+
+    def _project(self, X, kin, w, T, g):
+        """One pitch between neighbours, solved for the whole slack strand at
+        once (its constraints form a tridiagonal system: a few Newton steps
+        make every link exact), then the pins kept off the sprockets and
+        the arriving pin guided to its tooth gap."""
+        N, p = self.N, self.p
+        free = [i for i in np.argsort(g["u"]) if not kin[i]]
+        if not free:
+            return np.zeros(N, bool)
+        run = [(free[0] - 1) % N] + free + [(free[-1] + 1) % N]   # anchors at the ends
+        wv = np.array([0.0] + [1.0] * len(free) + [0.0])
+        m = len(run) - 1                                          # constraints
+        for _ in range(self.iterations):
+            Xr = X[run]
+            D = Xr[1:] - Xr[:-1]
+            L = np.hypot(D[:, 0], D[:, 1])
+            nrm = D / L[:, None]
+            c = L - p
+            if np.abs(c).max() < 1e-10:
+                break
+            A = np.zeros((m, m))
+            A[np.arange(m), np.arange(m)] = wv[:-1] + wv[1:]
+            off = -wv[1:-1] * np.einsum("ij,ij->i", nrm[:-1], nrm[1:])
+            A[np.arange(m - 1), np.arange(1, m)] = off
+            A[np.arange(1, m), np.arange(m - 1)] = off
+            lam = np.linalg.solve(A, -c)
+            dX = np.zeros_like(Xr)
+            dX[:-1] -= wv[:-1, None] * nrm * lam[:, None]
+            dX[1:] += wv[1:, None] * nrm * lam[:, None]
+            X[run] = Xr + dX
+        S = g["S"]
+        lim = ((S[0], self.r1 * math.cos(math.pi / self.z1)),
+               (S[1], self.r2 * math.cos(math.pi / self.z2)))
+        touched = np.zeros(N, bool)
+        for i in free:
+            for cen, r in lim:                    # off the sprockets
+                d = X[i] - cen
+                L = math.hypot(d[0], d[1])
+                if 1e-12 < L < r:
+                    X[i] = cen + d * (r / L)
+                    touched[i] = True
+            if w[i] > 0:
+                X[i] += w[i] * (T[i] - X[i])
+                touched[i] = True
+        return touched
+
+    def _project_velocity(self, X, V, kin, g):
+        """Remove from the free pins' velocities what would change a link
+        length (same tridiagonal system as the positions)."""
+        N = self.N
+        free = [i for i in np.argsort(g["u"]) if not kin[i]]
+        if not free:
+            return
+        run = [(free[0] - 1) % N] + free + [(free[-1] + 1) % N]
+        wv = np.array([0.0] + [1.0] * len(free) + [0.0])
+        m = len(run) - 1
+        Xr, Vr = X[run], V[run]
+        D = Xr[1:] - Xr[:-1]
+        nrm = D / np.hypot(D[:, 0], D[:, 1])[:, None]
+        cdot = np.einsum("ij,ij->i", nrm, Vr[1:] - Vr[:-1])
+        A = np.zeros((m, m))
+        A[np.arange(m), np.arange(m)] = wv[:-1] + wv[1:]
+        off = -wv[1:-1] * np.einsum("ij,ij->i", nrm[:-1], nrm[1:])
+        A[np.arange(m - 1), np.arange(1, m)] = off
+        A[np.arange(1, m), np.arange(m - 1)] = off
+        mu = np.linalg.solve(A, -cdot)
+        dV = np.zeros_like(Vr)
+        dV[:-1] -= wv[:-1, None] * nrm * mu[:, None]
+        dV[1:] += wv[1:, None] * nrm * mu[:, None]
+        V[run] = Vr + dV
+
+    def _dyn_state(self, g, P):
+        st = dict(g)
+        st["pins"] = list(P)
+        if not g["taut"]:
+            B1, B2 = g["B1"], g["B2"]
+            dd = (B2 - B1) / np.linalg.norm(B2 - B1)
+            nrm = np.array([dd[1], -dd[0]])
+            kin = self._kinematic(g)
+            st["sag"] = max([float((P[i] - B1) @ nrm) for i in range(self.N) if not kin[i]]
+                            or [0.0])
+        return st
 
     def measures(self):
         g = self.state or self.ref

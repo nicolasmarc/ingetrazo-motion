@@ -642,13 +642,18 @@ def _stadium(P, Q, rad, n=6):
 
 
 def chaine(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entraxe=0.420,
-           tension=0.0047, tours=3, hauteur=0.25):
+           tension=0.0047, tours=3, hauteur=0.25, excentrique=0.0, rapport_excentrique=2):
     """Roller chain (pitch ``pas``, ISO 08B by default: 1/2 in) on two
     sprockets, with a tensioner (metres). The driving sprocket (crank
     handle, ``tours`` turns) pulls the upper strand; the lower strand hangs.
     A second motor moves the driven sprocket's bearing by ``tension``: the
     chain goes from loose (about 10 % sag) to well tensioned. x = along the
     chain, z = up, the chain in the plane y = 0.
+
+    ``excentrique`` > 0: no tensioner motor; the bearing is pushed back and
+    forth by an eccentric geared to the crank (``rapport_excentrique`` turns
+    per crank turn) through a short rod, so the centre distance breathes by
+    twice that amount — the slack strand swings (see :func:`chaine_souple`).
     """
     from .chain import Chain, AXIS
     roller, width = 0.00851, 0.00775            # 08B roller and inner width
@@ -684,7 +689,24 @@ def chaine(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entraxe=0.42
     js = m.slider(g, car, S2, (1, 0, 0), name="tendeur")
     j2 = m.pivot(car, driven, S2, AXIS, name="arbre mené")
     m.drive(j1, 0.0, tours * 2 * math.pi)
-    m.add_driver(js, 0.0, tension)
+    if excentrique > 0:
+        E = _p(entraxe + 0.13, hauteur)               # eccentric shaft, behind the bearing
+        pin = E + _p(-excentrique, 0)
+        Kb = S2 + _p(0.035, 0)                         # rod end on the bearing block
+        exc = m.body("excentrique", E, [Box(E + _p(0, 0, 0.05), (0.018, 0.012, 0.018),
+                                            name="excentrique")])
+        exc.color = (196, 106, 36)
+        rod = m.body("biellette", (pin + Kb) / 2, [bar(Kb + _p(0, 0, 0.05), pin + _p(0, 0, 0.05),
+                                                       0.012, 0.006, name="biellette")])
+        rod.color = (150, 152, 160)
+        car.boxes.append(Box(Kb + _p(-0.0175, 0, 0.05), (0.0175, 0.008, 0.008), name="chape"))
+        g.boxes.append(Box(E + _p(0, 0, 0.07), (0.02, 0.012, 0.03), name="palier d'excentrique"))
+        je = m.pivot(g, exc, E, AXIS, name="excentrique")
+        m.pivot(exc, rod, pin, AXIS, name="maneton")
+        m.pivot(rod, car, Kb, AXIS, name="chape")
+        m.couple(j1, je, rapport_excentrique, name="renvoi")
+    else:
+        m.add_driver(js, 0.0, tension)
     ch = Chain(m, j1, drive, S1, dents_menant, j2, driven, S2, dents_mene, pas, maillons,
                roller=roller, width=width)
 
@@ -715,8 +737,7 @@ def chaine(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entraxe=0.42
         faces += _prism(Pw, roller / 2, -width / 2, width / 2, n=10)          # roller
         faces += _prism(Pw, 0.0022, -(width / 2 + 4.2 * t), width / 2 + 4.2 * t, n=6)  # pin
         polys[b.name] = faces
-    car_faces = _box_faces(car.boxes[0])
-    polys["tendeur"] = car_faces
+    polys["tendeur"] = [f for bx in car.boxes for f in _box_faces(bx)]
 
     info = dict(chain=ch, j1=j1, j2=j2, tendeur=js, pas=pas, z1=dents_menant, z2=dents_mene,
                 polys=polys, vue=(-28.0, 14.0), jeu_min=0.002, sol=True,
@@ -730,3 +751,44 @@ def chaine(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entraxe=0.42
 
     info["mesures"] = mesures
     return m, info
+
+
+def chaine_souple(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entraxe=0.420,
+                  excentrique=0.0025, rapport_excentrique=3, tours=12, amortissement=0.4):
+    """The chain with dynamics: the slack strand has weight and inertia.
+    The driven sprocket's bearing is moved by an eccentric (``rapport_excentrique``
+    times per crank turn, stroke 2 x ``excentrique``), so the slack length breathes and the strand
+    swings, lags and settles; the crank is turned by hand (starts from rest,
+    uneven speed, stops) — see ``info["allure"]``. ``amortissement``: 1/s.
+    In a video the chain is computed in time; elsewhere (slider, validation)
+    it is shown at rest."""
+    m, info = chaine(pas, dents_menant, dents_mene, maillons, entraxe, tours=tours,
+                     excentrique=excentrique, rapport_excentrique=rapport_excentrique)
+    ch = info["chain"]
+    ch.dynamic = True
+    ch.damping = amortissement
+
+    # hand cranking over the run u in [0, 1]: start from rest, uneven speed
+    # (faster on the push, slower on the pull), stop at 85 %, then the
+    # chain settles
+    n = 4000
+    us = np.linspace(0.0, 1.0, n)
+    run = 0.85
+    speed = np.where(us < run,
+                     np.minimum(1.0, us / 0.07) ** 2 * (1 + 0.45 * np.sin(2 * math.pi * 2 * tours * us / run)),
+                     0.0)
+    speed[(us > run - 0.02) & (us < run)] *= np.linspace(1, 0, ((us > run - 0.02) & (us < run)).sum())
+    cum = np.concatenate([[0.0], np.cumsum(0.5 * (speed[1:] + speed[:-1]) * np.diff(us))])
+    cum /= cum[-1]
+    info["allure"] = lambda u: float(np.interp(u, us, cum))
+    info["dynamique"] = True
+    info["vue"] = (-24.0, 12.0)
+    info["traces"] = []                 # a trace would show the chain at rest
+
+    def mesures(mech, x):
+        out = ch.measures()
+        out.append(f"dynamique, amortissement {ch.damping:g}/s")
+        return out
+    info["mesures"] = mesures
+    return m, info
+
