@@ -21,6 +21,7 @@ LABELS = {
     "validate": ("Valider", "Validate"),
     "trajectory": ("Trajectoire", "Trajectory"),
     "coupling": ("Couplage", "Coupling"),
+    "scan": ("Détecter", "Detect"),
 }
 
 FALLBACK_ACCENT = QColor(232, 115, 12)       # orange
@@ -220,7 +221,21 @@ def _coupling(p, ink, acc):
     gear(17.0, 8.0, 3.6, 6, ink, math.pi / 6)
 
 
-_DRAW = dict(coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
+def _scan(p, ink, acc):
+    """A magnifier over a pivot (an axis found by scanning the model)."""
+    p.setPen(_pen(ink, 1.3))
+    p.drawEllipse(QPointF(7.5, 15.5), 4.2, 4.2)          # a part with a bore
+    p.drawLine(QPointF(3.3, 15.5), QPointF(11.7, 15.5))
+    p.setPen(_pen(acc, 2.0))
+    p.drawEllipse(QPointF(13.5, 9.5), 5.6, 5.6)          # the lens
+    p.drawLine(QPointF(17.6, 13.6), QPointF(21.5, 17.5))
+    p.setPen(Qt.NoPen)
+    p.setBrush(QBrush(acc))
+    p.drawEllipse(QPointF(13.5, 9.5), 1.6, 1.6)          # the axis found
+    p.setBrush(Qt.NoBrush)
+
+
+_DRAW = dict(scan=_scan, coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
              guide=_guide, driver=_driver, validate=_validate,
              trajectory=_trajectory)
 

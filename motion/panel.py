@@ -161,6 +161,16 @@ class MotionPanel(QWidget):
                                  "en une seule étape d'annulation.")
         self.step_btn.clicked.connect(self._import_step_dialog)
         srow.addWidget(self.step_btn)
+        self.scan_btn = QToolButton()
+        self.scan_btn.setIcon(icons.icon("scan", self, 20))
+        self.scan_btn.setText("Détecter…")
+        self.scan_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.scan_btn.setToolTip("Analyse les pièces (la sélection, sinon tout le modèle) et "
+                                 "propose les liaisons : arbres dans des alésages (pivots), "
+                                 "appuis plans (glissières), engrenages. Rien n'est appliqué "
+                                 "avant validation.")
+        self.scan_btn.clicked.connect(self._scan_dialog)
+        srow.addWidget(self.scan_btn)
         lay.addLayout(srow)
 
         grid = QGridLayout()
@@ -681,6 +691,131 @@ class MotionPanel(QWidget):
         self.say(f"STEP : {len(groups)} pièce(s) importée(s)"
                  + (f" — non lu : {warn}" if warn else "") + ".")
         return asm, groups
+
+    # ---- automatic joint detection ------------------------------------------------
+    def _scan_groups(self):
+        sc = self._scene()
+        sel = [g for g in (getattr(sc, "selection", None) or ())
+               if hasattr(g, "mesh") and hasattr(g, "uid")]
+        groups = sel if len(sel) >= 2 else [g for g in getattr(sc, "groups", [])
+                                            if not getattr(g, "hidden", False)
+                                            and not getattr(g, "billboard", False)]
+        return groups
+
+    @staticmethod
+    def _detect_part(g):
+        """detect.Part of an IngeTrazo group: its faces, joined through soft
+        edges into smooth regions."""
+        from . import detect
+        try:
+            from core.group import world_mesh
+            mesh = world_mesh(g)
+        except Exception:
+            mesh = g.mesh
+        faces, index = [], {}
+        vol = 0.0
+        for f in mesh.faces:
+            P = np.array([(v.x(), v.y(), v.z()) for v in f.vertices], float)
+            if len(P) < 3:
+                continue
+            index[id(f)] = len(faces)
+            faces.append(P)
+            n, a = detect.polygon_normal_area(P)
+            for H in getattr(f, "holes", []) or []:
+                H = np.array([(v.x(), v.y(), v.z()) for v in H], float)
+                if len(H) >= 3:
+                    a -= detect.polygon_normal_area(H)[1]
+            vol += float(n @ P.mean(axis=0)) * a / 3.0
+        soft = []
+        for e in mesh.edges:
+            fs = getattr(e, "faces", ())
+            if getattr(e, "soft", False) and len(fs) == 2:
+                i, j = index.get(id(fs[0])), index.get(id(fs[1]))
+                if i is not None and j is not None:
+                    soft.append((i, j))
+        regions = detect.regions_from_faces(faces, soft)
+        return detect.make_part(g.uid, str(getattr(g, "name", "pièce")), regions, vol)
+
+    def scan_model(self, groups=None):
+        """(parts {uid: (name, [uid])}, proposals, frame uid) for ``groups``
+        (default: the selection, else every visible group)."""
+        from . import detect
+        groups = self._scan_groups() if groups is None else list(groups)
+        parts = [self._detect_part(g) for g in groups]
+        props, frame = detect.scan(parts)
+        names = {p.key: (p.name, [p.key]) for p in parts}
+        return names, props, frame
+
+    def apply_scan(self, parts, frame, proposals):
+        """Bodies and joints for the ticked ``proposals`` (one undo step)."""
+        if self.source != "model":
+            self.set_source("model")
+        d, made = doc.apply_detection(self.data, parts, frame, proposals)
+        n = {k: sum(1 for x in proposals if x.kind == k) for k in ("pivot", "slider", "gears")}
+        msg = (f"Détection : {n['pivot']} pivot(s), {n['slider']} glissière(s), "
+               f"{n['gears']} engrenage(s) ; pièce fixe : {parts[frame][0]}.")
+        if not d["drivers"]:
+            msg += " Choisir un moteur dans la liste."
+        self._store(d, msg)
+        return made
+
+    def _scan_dialog(self):
+        from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox,
+                                       QMessageBox, QTreeWidgetItem)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            parts, props, frame = self.scan_model()
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Détecter les liaisons", f"{type(exc).__name__} : {exc}")
+            return
+        QApplication.restoreOverrideCursor()
+        if not props:
+            QMessageBox.information(self, "Détecter les liaisons",
+                                    f"{len(parts)} pièce(s) analysée(s) : aucune liaison "
+                                    "reconnue (arbre dans un alésage, appuis plans, engrenage).")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Liaisons proposées")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(f"{len(parts)} pièce(s) analysée(s). Cocher les liaisons à créer :"))
+        fr = QHBoxLayout()
+        fr.addWidget(QLabel("Pièce fixe"))
+        combo = QComboBox()
+        keys = sorted(parts, key=lambda k: parts[k][0])
+        for k in keys:
+            combo.addItem(parts[k][0], k)
+        combo.setCurrentIndex(keys.index(frame))
+        fr.addWidget(combo, 1)
+        lay.addLayout(fr)
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["Liaison", "Pièces", "Détail", "Confiance"])
+        tree.setRootIsDecorated(False)
+        label = {"pivot": "Pivot", "slider": "Glissière", "gears": "Engrenage"}
+        icon = {"pivot": "pivot", "slider": "slider", "gears": "coupling"}
+        items = []
+        for x in props:
+            it = QTreeWidgetItem([label[x.kind], f"{parts[x.a][0]} ↔ {parts[x.b][0]}",
+                                  x.detail, f"{round(100 * x.score)} %"])
+            it.setIcon(0, icons.icon(icon[x.kind], tree, 16))
+            it.setCheckState(0, Qt.Checked if x.score >= 0.5 else Qt.Unchecked)
+            tree.addTopLevelItem(it)
+            items.append((it, x))
+        for c in range(4):
+            tree.resizeColumnToContents(c)
+        lay.addWidget(tree, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Créer les liaisons")
+        bb.button(QDialogButtonBox.Cancel).setText("Annuler")
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        dlg.resize(720, 420)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        chosen = [x for it, x in items if it.checkState(0) == Qt.Checked]
+        if chosen:
+            self.apply_scan(parts, combo.currentData(), chosen)
 
     def _import_step_dialog(self):
         from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox

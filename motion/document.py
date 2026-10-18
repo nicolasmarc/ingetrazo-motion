@@ -8,7 +8,9 @@ One JSON-safe dict (``app.set_document_data``), metres and radians::
                  "a": "<body>", "b": "<body>",
                  "point": [x, y, z], "axis": [x, y, z],      # pivot, slider
                  "rail": [[x, y, z], ...],                   # guide polyline
-                 "limits": [lo, hi] | null}],
+                 "limits": [lo, hi] | null},
+                {"kind": "coupling", "name": "...", "a": "<body>", "b": "<body>",
+                 "ja": "<joint>", "jb": "<joint>", "ratio": -0.5}],  # jb = ratio x ja
      "drivers": [{"joint": "<name>", "lo": 0.0, "hi": 1.57}, ...],
      "driver": <the first of "drivers"> | null,      # kept for 0.1-0.5 files
      "jeu_min": 0.005, "pas": 51}
@@ -87,9 +89,79 @@ def remove(data, name):
     d["bodies"] = [b for b in d["bodies"] if b["name"] != name]
     d["joints"] = [j for j in d["joints"]
                    if j["name"] != name and name not in (j["a"], j["b"])]
+    names = {j["name"] for j in d["joints"]}            # couplings of a gone joint
+    d["joints"] = [j for j in d["joints"] if j["kind"] != "coupling"
+                   or (j.get("ja") in names and j.get("jb") in names)]
     names = {j["name"] for j in d["joints"]}
     d["drivers"] = [x for x in d["drivers"] if x["joint"] in names]
     return normalized(d)
+
+
+def add_coupling(data, ja, jb, ratio, name=None):
+    """``jb`` turns ``ratio`` times ``ja`` (gears: -z1/z2)."""
+    d = normalized(data)
+    rec = {j["name"]: j for j in d["joints"]}
+    a, b = rec[ja], rec[jb]
+    j = {"kind": "coupling", "name": name or unique_name(d, "engrenage"),
+         "a": a["b"], "b": b["b"], "ja": ja, "jb": jb, "ratio": float(ratio), "limits": None}
+    d["joints"].append(j)
+    return d, j["name"]
+
+
+def apply_detection(data, parts, frame, proposals):
+    """Bodies and joints from the detection (``motion.detect``):
+    ``parts`` = {key: (name, [group uids])}, ``frame`` = key of the fixed
+    part, ``proposals`` = the ticked ones. One body per part involved;
+    joints keyed on the frame side first. Returns (data, [joint names])."""
+    d = normalized(data)
+    names = {}
+    merge = {}                                   # pin -> the part it is fixed in
+    for x in proposals:
+        merge.update(getattr(x, "extra", {}).get("merge", {}))
+    used = ({k for x in proposals for k in (x.a, x.b)} | {frame}) - set(merge)
+    for key in [frame] + sorted((k for k in used if k != frame), key=lambda k: parts[k][0]):
+        if key not in parts:
+            continue
+        nm, uids = parts[key]
+        uids = list(uids) + [u for pin, host in merge.items() if host == key
+                             for u in parts[pin][1]]
+        base = nm
+        taken = {b["name"] for b in d["bodies"]} | {j["name"] for j in d["joints"]}
+        k = 2
+        while nm in taken:
+            nm, k = f"{base} {k}", k + 1
+        d, nm = add_body(d, uids, key == frame, nm)
+        names[key] = nm
+    made, by_prop = [], {}
+    for x in proposals:
+        if x.kind not in ("pivot", "slider"):
+            continue
+        a, b = (x.a, x.b) if x.b != frame else (x.b, x.a)
+        stem = "pivot" if x.kind == "pivot" else "glissière"
+        jn = f"{stem} {names[a]}–{names[b]}"
+        if jn in {b_["name"] for b_ in d["bodies"]} | {j["name"] for j in d["joints"]}:
+            jn = unique_name(d, jn + " ")
+        d, jn = add_joint(d, x.kind, names[a], names[b], point=x.point, axis=x.axis, name=jn)
+        made.append(jn)
+        by_prop[id(x)] = (jn, a, b, np.asarray(x.axis, float))
+    for x in proposals:
+        if x.kind != "gears":
+            continue
+        pa, pb = x.extra["pivot_a"], x.extra["pivot_b"]
+        if id(pa) not in by_prop or id(pb) not in by_prop:
+            continue                       # a gear's pivot was not kept
+        ja, a0, a1, ax_a = by_prop[id(pa)]
+        jb, b0, b1, ax_b = by_prop[id(pb)]
+        # angles are of the joint's second part about its axis, seen from
+        # its first: turn the gear ratio into a ratio of those values
+        f = x.extra["frame"]
+        r = x.extra["ratio"]
+        r *= (1 if a0 == f else -1) * (1 if b0 == f else -1)
+        if ax_a @ ax_b < 0:
+            r = -r
+        d, cn = add_coupling(d, ja, jb, r, name=unique_name(d, "engrenage "))
+        made.append(cn)
+    return d, made
 
 
 def set_driver(data, joint, lo, hi):
@@ -292,6 +364,8 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None):
             problems.append(f"{j['name']} : relie une pièce à elle-même")
             continue
         lim = tuple(j["limits"]) if j.get("limits") else None
+        if j["kind"] == "coupling":
+            continue                      # after every other joint
         if j["kind"] == "pivot":
             joints[j["name"]] = m.pivot(a, b, j["point"], j["axis"], lim, j["name"])
         elif j["kind"] == "slider":
@@ -299,6 +373,14 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None):
         else:
             joints[j["name"]] = m.guide(a, b, j["point"], path_from_points(j["rail"]),
                                         lim, j["name"])
+    for j in d["joints"]:
+        if j["kind"] != "coupling":
+            continue
+        ja, jb = joints.get(j.get("ja")), joints.get(j.get("jb"))
+        if ja is None or jb is None:
+            problems.append(f"{j['name']} : liaison couplée inconnue")
+            continue
+        joints[j["name"]] = m.couple(ja, jb, j["ratio"], j["name"])
     for drv in d["drivers"]:
         if drv["joint"] in joints:
             m.add_driver(joints[drv["joint"]], drv["lo"], drv["hi"])

@@ -27,6 +27,21 @@
   sprocket's bearing moved by an eccentric geared to the crank (3 times per turn,
   ±2.5 mm), the crank turned by hand (from rest, uneven speed, then stopped): the slack
   strand lags, whips and settles. An example may give its own timing (`allure`).
+- **Détecter… — automatic joints** (`motion.detect`, panel button next to «Importer
+  STEP…»): scans the parts (the selection, else the whole model) and proposes the joints:
+  a shaft in a bore of another part (coaxial, bore as large or slightly larger, overlapping)
+  → pivot, several coaxial fits making one; two or more flat contacts with non-parallel
+  normals → slider along the only free direction; two toothed parts on parallel pivots
+  whose tip circles mesh → gears, ratio -z1/z2 from the teeth counted on the outline; a
+  separate pin through two parts → one pivot, the pin going with the part it is pressed
+  in. The frame proposed is the part the most joints lean on (then the largest). Each
+  proposal shows Ø, play, bearing length and a confidence; nothing is created until ticked,
+  then bodies and joints come in one undo step. Works on IngeTrazo's own faces (curved
+  surfaces = faces joined by soft edges), so on drawn models as on STEP imports.
+  Tested on four assemblies written by an independent CAD kernel (four-bar, gears, slide,
+  hinge with a separate pin): joints in place, the four-bar's rocker swing against its
+  closed form, the gear ratio, one degree of freedom each.
+- Document: `coupling` joints (gears) are stored and rebuilt.
 
 ## 0.6.1 — 2026-10-18
 - STEP reader: several named solids in one product become several parts (as the STEP export

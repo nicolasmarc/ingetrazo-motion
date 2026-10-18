@@ -432,6 +432,49 @@ def test_screenshot():
     assert panel.trace_pts
 
 
+def test_detection_finds_the_joints_of_imported_assemblies():
+    """Détecter… on STEP assemblies from another CAD kernel, read through
+    IngeTrazo's own groups (faces + soft edges): a four-bar, gears, a
+    slide. The proposals become a working mechanism in one undo step."""
+    if SKIP:
+        print("skip:", SKIP); return
+    sys.path.insert(0, str(REPO))
+    win = _window()
+    panel = _state["panel"]
+    results = {}
+    for name in ("quadrilatere", "engrenages", "coulisse"):
+        _reset(win, panel)
+        scene = win.viewport.scene
+        scene.groups[:] = [g for g in scene.groups if getattr(g, "billboard", False)]
+        scene.version += 1
+        asm, groups = panel.import_step(str(HERE / "data" / f"detect_{name}.step"))
+        parts, props, frame = panel.scan_model(groups)
+        kinds = sorted(x.kind for x in props)
+        results[name] = (parts[frame][0], kinds)
+        made = panel.apply_scan(parts, frame, props)
+        piv = [j for j in panel.data["joints"] if j["kind"] in ("pivot", "slider")]
+        lo, hi = (0.0, 1.0) if piv[0]["kind"] == "pivot" else (0.0, 0.05)
+        panel._store(doc_add_driver(panel.data, piv[0]["name"], lo, hi))
+        m = panel.mechanism()
+        rep = __import__("motion.collide", fromlist=["validate"]).validate(m, 11, 0.0)
+        assert all(r["ok"] for r in rep["steps"]), name
+        dof = __import__("motion.solver", fromlist=["dof"]).dof(m, rep["steps"][3]["x"])
+        assert dof == 1, (name, dof)
+        if name == "engrenages":
+            pv = [j for j in m.joints if j.kind == "pivot"]
+            x = rep["steps"][-1]["x"]
+            r = m.continuous_value(pv[1], x) / m.continuous_value(pv[0], x)
+            assert abs(abs(r) - 20 / 30) < 1e-6 and r < 0, r
+    assert results["quadrilatere"] == ("Socle", ["pivot"] * 4)
+    assert results["engrenages"] == ("Platine", ["gears", "pivot", "pivot"])
+    assert results["coulisse"] == ("Rail", ["slider"])
+
+
+def doc_add_driver(data, joint, lo, hi):
+    from motion import document
+    return document.add_driver(data, joint, lo, hi)
+
+
 def teardown_module(module=None):
     win = _state.pop("win", None)
     if win is not None:

@@ -38,6 +38,12 @@ tab appears in the side tray, and Extensions ▸ Motion has the examples.
 the same 0–100 %, each over its own travel (speed) from its own start
 (phase).
 
+**Détecter…** scans the parts (the selection, or the whole model) and
+proposes the joints — shafts in bores (pivots), flat guides (sliders),
+meshing gears (ratio from the teeth), separate pins kept with the part they
+are pressed in — with the frame; tick the ones to keep, they are created in
+one undo step. Then pick a motor.
+
 **Importer STEP…** brings a STEP assembly (AP203/214/242) into the model,
 one group per part, named and coloured, in one undo step — then select
 groups to make them fixed or moving parts.
@@ -84,6 +90,7 @@ python tests/test_coupling.py    # gears over several turns, rolling without sli
 python tests/test_handcar.py     # rail car over three crank turns
 python tests/test_multidriver.py # two motors, speed and phase
 python tests/test_chain.py       # chain: pitch, tangency, catenary, teeth, tensioner
+python tests/test_detect.py      # automatic joints on independent STEP assemblies
 python tests/test_stepread.py    # STEP reader vs an independent CAD kernel
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)
@@ -91,7 +98,8 @@ python tests/test_panel_ingetrazo.py   # the panel in a real IngeTrazo
                                        # window (needs PySide6 and an
                                        # IngeTrazo checkout: INGETRAZO_SRC)
 ```
-STEP fixtures: `tests/data/` (regenerate with `tools/make_step_fixtures.py`,
+STEP fixtures: `tests/data/` (regenerate with `tools/make_step_fixtures.py` and
+`tools/make_detect_fixtures.py`,
 which needs CadQuery — a test-data tool only, nothing of it is shipped).
 All are pytest-compatible. Build the package: `python tools/build_zip.py`
 (prints the sha256 for `catalog/motion.toml`).
