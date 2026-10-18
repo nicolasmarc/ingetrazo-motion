@@ -65,7 +65,10 @@ edit is one undo step. Collision boxes are fitted to each group.
   joint; the rest of the two parts is still checked.
 - Examples: folding chair with crossed legs, sectional door (any number of
   panels, two tracks), flapping bird (crank, slider, two-segment wings),
-  hand-pumped rail car (beam, rod, gears, rolling axles).
+  hand-pumped rail car (beam, rod, gears, rolling axles), roller chain with a
+  hanging slack strand and a tensioner.
+- Roller chain: straight tight strand, slack strand as a catenary of the exact
+  length left, links as parts that seat in the sprocket teeth, sag readout.
 
 ## Tests
 
@@ -78,6 +81,7 @@ python tests/test_bird.py        # flapping bird over a full crank turn
 python tests/test_coupling.py    # gears over several turns, rolling without slip
 python tests/test_handcar.py     # rail car over three crank turns
 python tests/test_multidriver.py # two motors, speed and phase
+python tests/test_chain.py       # chain: pitch, tangency, catenary, teeth, tensioner
 python tests/test_stepread.py    # STEP reader vs an independent CAD kernel
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)

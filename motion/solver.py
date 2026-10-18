@@ -65,7 +65,10 @@ def jacobian(mech, x, driver_value=None, eps=1e-7):
     nd = len(mech.drivers) if driver_value is not None else 0
     J = np.zeros((at + nd, x.size))
     tg = mech.driver_targets(driver_value) if nd else None
+    fb = {id(b) for b in getattr(mech, "follower_bodies", lambda: [])()}
     for body in mech.bodies:
+        if id(body) in fb:
+            continue
         mine = [(j, sl) for j, sl in rows
                 if any(o is body for o in _joint_bodies(j))]
         drv = [k for k in range(nd)
@@ -83,8 +86,19 @@ def jacobian(mech, x, driver_value=None, eps=1e-7):
 
 
 def solve(mech, driver_value, x0=None, tol=1e-10, max_iter=100):
-    """Return (x, converged, residual_norm)."""
+    """Return (x, converged, residual_norm). Follower parts (chain links)
+    are left out of the iteration and placed once the joints are solved."""
     x = np.zeros(mech.n) if x0 is None else np.array(x0, float)
+    if getattr(mech, "followers", None):
+        fb = {id(b) for b in mech.follower_bodies()}
+        act = np.array([c for b in mech.bodies if id(b) not in fb
+                        for c in range(6 * b.index, 6 * b.index + 6)], int)
+        xs, ok, nr = _solve(mech, driver_value, x, tol, max_iter, act)
+        return mech.place(xs), ok, nr
+    return _solve(mech, driver_value, x, tol, max_iter, None)
+
+
+def _solve(mech, driver_value, x, tol, max_iter, act):
     lam = 1e-3
     r = residual(mech, x, driver_value)
     for _ in range(max_iter):
@@ -92,11 +106,18 @@ def solve(mech, driver_value, x0=None, tol=1e-10, max_iter=100):
         if nr < tol:
             return x, True, nr
         J = jacobian(mech, x, driver_value)
+        if act is not None:
+            J = J[:, act]
         g = J.T @ r
         H = J.T @ J
         while True:
             try:
-                dx = np.linalg.solve(H + lam * np.eye(x.size), -g)
+                d = np.linalg.solve(H + lam * np.eye(H.shape[0]), -g)
+                if act is None:
+                    dx = d
+                else:
+                    dx = np.zeros(x.size)
+                    dx[act] = d
             except np.linalg.LinAlgError:
                 lam *= 10
                 if lam > 1e12:
@@ -121,7 +142,10 @@ def dof(mech, x=None, tol=1e-6):
     J = jacobian(mech, x)
     s = np.linalg.svd(J, compute_uv=False)
     rank = int((s > tol * max(s.max(), 1.0)).sum()) if s.size else 0
-    return mech.n - rank
+    # chain links are placed by a rule, not free
+    fol = getattr(mech, "followers", [])
+    return (mech.n - rank - 6 * len(mech.follower_bodies() if fol else [])
+            - sum(getattr(f, "free_dof", 0) for f in fol))
 
 
 def sweep(mech, steps=51):

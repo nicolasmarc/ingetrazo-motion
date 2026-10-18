@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — 2026-10-18
+
+### Added
+- **Roller chain with a slack strand** (`motion.chain`): a chain on two sprockets
+  (teeth, pitch, number of links). The driving sprocket pulls the upper strand, which
+  stays straight; the lower strand gets the length left and hangs as a catenary tangent
+  to both pitch circles. Every link is a part (drawn, animated, checked for clearance);
+  the pins stay in the tooth gaps, and the chain turns the driven sprocket. Readings:
+  sag (and % of the centre distance), centre distance; a chain too short is reported.
+  Mechanism parts placed by such a rule: `Mechanism.followers`.
+- **Example «chaîne détendue et tendeur»** (`samples.chaine`): 1/2 in chain, 17 and 25
+  teeth, 88 links, a crank turned 3 times and a tensioner (second motor) that takes the
+  sag from about 10 % to 3 % of the centre distance. Tested against closed forms (pitch
+  diameters, every link one pitch, tangency, speed ratio, pins in the tooth gaps) and an
+  independent catenary solution.
+
 ## 0.6.1 — 2026-10-18
 - STEP reader: several named solids in one product become several parts (as the STEP export
   extension writes them). `motion/stepread.py` is the same file as

@@ -35,11 +35,13 @@ SOURCES = (("model", "Modèle (document)"),
            ("chaise", "Exemple : chaise pliante"),
            ("porte", "Exemple : porte sectionnelle"),
            ("oiseau", "Exemple : oiseau à battement d'ailes"),
-           ("draisine", "Exemple : draisine à balancier"))
+           ("draisine", "Exemple : draisine à balancier"),
+           ("chaine", "Exemple : chaîne détendue et tendeur"))
 
 SAMPLE_NAMES = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle",
                 "oiseau": "Oiseau à battement d'ailes",
-                "draisine": "Draisine à balancier"}
+                "draisine": "Draisine à balancier",
+                "chaine": "Chaîne détendue et tendeur"}
 
 TIPS = {
     "fixed": "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.",
@@ -331,7 +333,8 @@ class MotionPanel(QWidget):
         if self.mech is not None:
             return self.mech
         builders = {"chaise": samples.chaise_pliante, "porte": samples.porte_sectionnelle,
-                    "oiseau": samples.oiseau, "draisine": samples.draisine}
+                    "oiseau": samples.oiseau, "draisine": samples.draisine,
+                    "chaine": samples.chaine}
         self.sample_info = None
         if self.source in builders:
             self.mech, self.sample_info = builders[self.source]()
@@ -1161,6 +1164,7 @@ def setup(app):
         sub.addAction("Exemple : porte sectionnelle", lambda: show("porte"))
         sub.addAction("Exemple : oiseau à battement d'ailes", lambda: show("oiseau"))
         sub.addAction("Exemple : draisine à balancier", lambda: show("draisine"))
+        sub.addAction("Exemple : chaîne détendue et tendeur", lambda: show("chaine"))
     else:
         app.add_menu_action("Motion", lambda: show(),
                             tip="Mécanismes : pivots, glissières, rails, validation.")

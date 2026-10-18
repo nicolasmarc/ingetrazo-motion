@@ -252,6 +252,10 @@ class Mechanism:
         self.joints = []
         self.ground = Body("ground", fixed=True)
         self.drivers = []      # [(joint, lo, hi)]: the motors
+        # parts placed by a rule once the joints are solved (chain links):
+        # objects with ``bodies`` and ``place(mech, x)`` -> x
+        self.followers = []
+        self.no_contact = set()   # {frozenset((id(a), id(b)))}: never checked
 
     # -- building -------------------------------------------------------
     def body(self, name, center=(0, 0, 0), boxes=()):
@@ -319,6 +323,15 @@ class Mechanism:
     @property
     def n(self):
         return 6 * len(self.bodies)
+
+    def follower_bodies(self):
+        return [b for f in self.followers for b in f.bodies]
+
+    def place(self, x):
+        """Pose of the follower parts (chain links) from the solved joints."""
+        for f in self.followers:
+            x = f.place(self, x)
+        return x
 
     def pose(self, x, body):
         if body.fixed:

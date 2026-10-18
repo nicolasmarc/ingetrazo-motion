@@ -601,3 +601,132 @@ def draisine_reference(info, theta):
     beam = math.atan2(math.sin(beam), math.cos(beam))
     axle = -info["ratio"] * theta
     return dict(K=K, B=B, beam=beam, axle=axle, travel=-info["R"] * axle)
+
+
+# -- roller chain with a slack strand (chaîne détendue) ----------------------------
+
+def _sprocket_outline(r, z, roller, pitch, seat0):
+    """Sprocket outline (angle, radius) around its centre: a seat for a
+    roller at every pin position (seat0 + 2 pi k / z), teeth between."""
+    rs = 0.53 * roller
+    ra = r + 0.32 * pitch
+    ds = math.asin(min(rs / r, 0.99))
+    half = math.pi / z
+    out = []
+    for k in range(z):
+        a0 = seat0 + 2 * math.pi * k / z
+        for t in np.linspace(-half, half, 13)[:-1]:
+            d = abs(t)
+            if d < ds:
+                rr = r * math.cos(d) - math.sqrt(max(rs * rs - (r * math.sin(d)) ** 2, 0.0))
+            else:
+                f = (d - ds) / (half - ds)
+                rr = r * math.cos(ds) + (ra - r * math.cos(ds)) * min(1.0, 1.6 * f)
+            out.append((a0 + t, rr))
+    return out
+
+
+def _stadium(P, Q, rad, n=6):
+    """(angle, radius) outline around the midpoint of P-Q (x-z) of a link
+    plate: two half circles of radius ``rad`` round the pins."""
+    P, Q = np.asarray(P, float), np.asarray(Q, float)
+    mid = 0.5 * (P + Q)
+    a = math.atan2(Q[1] - P[1], Q[0] - P[0])
+    pts = []
+    for C, a0 in ((Q, a - math.pi / 2), (P, a + math.pi / 2)):
+        for k in range(n + 1):
+            t = a0 + math.pi * k / n
+            pts.append(C + rad * np.array([math.cos(t), math.sin(t)]))
+    return mid, [(math.atan2(p[1] - mid[1], p[0] - mid[0]), float(np.hypot(*(p - mid))))
+                 for p in pts]
+
+
+def chaine(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entraxe=0.420,
+           tension=0.0047, tours=3, hauteur=0.25):
+    """Roller chain (pitch ``pas``, ISO 08B by default: 1/2 in) on two
+    sprockets, with a tensioner (metres). The driving sprocket (crank
+    handle, ``tours`` turns) pulls the upper strand; the lower strand hangs.
+    A second motor moves the driven sprocket's bearing by ``tension``: the
+    chain goes from loose (about 10 % sag) to well tensioned. x = along the
+    chain, z = up, the chain in the plane y = 0.
+    """
+    from .chain import Chain, AXIS
+    roller, width = 0.00851, 0.00775            # 08B roller and inner width
+    S1 = _p(0, hauteur)
+    S2 = _p(entraxe, hauteur)
+    m = Mechanism()
+    g = m.ground
+    g.name = "bâti"
+    yb = 0.07                                    # frame behind the chain
+    g.boxes += [Box(_p(entraxe / 2, 0.01, 0.04), (entraxe / 2 + 0.16, 0.10, 0.01), name="socle"),
+                Box(_p(0, (hauteur + 0.04) / 2, yb), (0.025, 0.015, (hauteur - 0.0) / 2),
+                    name="montant"),
+                Box(_p(entraxe, (hauteur - 0.02) / 2 + 0.01, yb), (0.025, 0.015, (hauteur - 0.06) / 2),
+                    name="montant"),
+                Box(_p(entraxe + 0.005, hauteur, yb), (0.045, 0.015, 0.03), name="coulisse")]
+    g.color = (92, 96, 104)
+    polys = {}
+    t = 0.0015                                   # plate thickness
+
+    drive = m.body("pignon menant", S1, [Box(S1, (0.045, 0.005, 0.045), name="pignon")])
+    drive.boxes += [bar(S1 + _p(0, 0, -0.03), S1 + _p(0.085, 0, -0.03), 0.018, 0.008,
+                        name="manivelle"),
+                    Box(S1 + _p(0.085, 0, -0.055), (0.009, 0.025, 0.009), name="poignée"),
+                    Box(S1 + _p(0, 0, 0.0325), (0.012, 0.0325, 0.012), name="arbre")]
+    drive.color = (196, 106, 36)
+    car = m.body("tendeur", S2, [Box(S2 + _p(0, 0, 0.05), (0.02, 0.008, 0.02), name="palier")])
+    car.color = (120, 124, 132)
+    driven = m.body("pignon mené", S2, [Box(S2, (0.06, 0.005, 0.06), name="pignon"),
+                                        Box(S2 + _p(0, 0, 0.022), (0.012, 0.022, 0.012), name="arbre")])
+    driven.color = (196, 106, 36)
+
+    j1 = m.pivot(g, drive, S1, AXIS, name="arbre menant")
+    js = m.slider(g, car, S2, (1, 0, 0), name="tendeur")
+    j2 = m.pivot(car, driven, S2, AXIS, name="arbre mené")
+    m.drive(j1, 0.0, tours * 2 * math.pi)
+    m.add_driver(js, 0.0, tension)
+    ch = Chain(m, j1, drive, S1, dents_menant, j2, driven, S2, dents_mene, pas, maillons,
+               roller=roller, width=width)
+
+    # drawings: sprockets with a seat at every pin, plates, rollers, pins
+    a0 = ch._anchor
+    seat1 = a0[1] - a0[0] * 2 * math.pi / dents_menant
+    seat2 = a0[2]
+    hub = lambda c, r, y0, y1: _prism(c, r, y0, y1, n=20)
+    polys["pignon menant"] = (
+        _prism(S1, 0, -0.9 * width / 2, 0.9 * width / 2,
+               outline=_sprocket_outline(ch.r1, dents_menant, roller, pas, seat1))
+        + hub(S1, 0.012, -0.03, 0.065)
+        + _box_faces(drive.boxes[1]) + _box_faces(drive.boxes[2]))
+    polys["pignon mené"] = (
+        _prism(S2, 0, -0.9 * width / 2, 0.9 * width / 2,
+               outline=_sprocket_outline(ch.r2, dents_mene, roller, pas, seat2))
+        + hub(S2, 0.012, -0.012, 0.044))
+    for k, b in enumerate(ch.bodies):
+        P, Q = ch.ref["pins"][k], ch.ref["pins"][(k + 1) % maillons]
+        mid, out = _stadium(P, Q, 0.55 * roller)
+        c3 = _p(mid[0], mid[1])
+        yi = width / 2 + (t if k % 2 else 3 * t)          # inner / outer links
+        faces = []
+        for s in (-1, 1):
+            y0 = s * (yi - t)
+            faces += _prism(c3, 0, min(y0, s * yi), max(y0, s * yi), outline=out)
+        Pw = _p(P[0], P[1])
+        faces += _prism(Pw, roller / 2, -width / 2, width / 2, n=10)          # roller
+        faces += _prism(Pw, 0.0022, -(width / 2 + 4.2 * t), width / 2 + 4.2 * t, n=6)  # pin
+        polys[b.name] = faces
+    car_faces = _box_faces(car.boxes[0])
+    polys["tendeur"] = car_faces
+
+    info = dict(chain=ch, j1=j1, j2=j2, tendeur=js, pas=pas, z1=dents_menant, z2=dents_mene,
+                polys=polys, vue=(-28.0, 14.0), jeu_min=0.002, sol=True,
+                traces=[(ch.bodies[0], _p(*ch.ref["pins"][0]))])
+
+    def mesures(mech, x):
+        ch.place(mech, x)
+        out = ch.measures()
+        out.append(f"pignon mené {math.degrees(mech.continuous_value(j2, x)) / 360:.2f} tr")
+        return out
+
+    info["mesures"] = mesures
+    return m, info

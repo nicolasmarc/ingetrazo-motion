@@ -146,8 +146,12 @@ def _pairs(mech, ignore_joined):
             mech._skip_memo = memo
         except Exception:
             pass
+    fb = {id(b) for b in getattr(mech, "follower_bodies", lambda: [])()}
+    nc = getattr(mech, "no_contact", set())
     for i, a in enumerate(bodies):
         for b in bodies[i + 1:]:
+            if (id(a) in fb and id(b) in fb) or frozenset((id(a), id(b))) in nc:
+                continue                  # links of one chain, link on its sprocket
             if a.boxes and b.boxes:
                 k = (id(a), id(b))
                 if k not in memo[1]:
