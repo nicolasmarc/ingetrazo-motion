@@ -4,6 +4,8 @@
 - STEP reader: several named solids in one product become several parts (as the STEP export
   extension writes them). `motion/stepread.py` is the same file as
   `stepexport/stepread.py` in the STEP extension (ingetrazo-step), kept in step.
+- STEP reader: the component name typed by the designer ("Marche") wins over a solid name
+  the CAD program gave on its own ("Solide", "Body1"); accented names decoded.
 
 ## 0.6.0 — 2026-10-17
 
