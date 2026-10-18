@@ -1436,31 +1436,58 @@ def read(path_or_text, tol=0.0002, max_angle=math.radians(15)):
             colour[int(a[2])] = rgb
 
     geo_cache = {}
+    SOLIDS = ("MANIFOLD_SOLID_BREP", "BREP_WITH_VOIDS", "FACETED_BREP",
+              "SHELL_BASED_SURFACE_MODEL", "MAPPED_ITEM")
 
     def geometry(pd):
+        """[(item name, faces, colour)] — one entry per solid of the
+        product's shape (a file may put several named solids in one
+        product); loose faces and shells are gathered in one entry."""
         rep = pd_rep.get(pd)
         if rep is None:
-            return [], None
+            return []
         if rep in geo_cache:
             return geo_cache[rep]
         reps = [rep] + rep_geo.get(rep, [])
-        faces, col = [], None
+        out, loose, loose_col = [], [], None
         for r in reps:
             rec = E[r]
             k = next(iter(rec))
             for it in rec[k][1]:
-                if int(it) in colour and col is None:
-                    col = colour[int(it)]
-                faces += rd.item_faces(it)
-        geo_cache[rep] = (faces, col)
-        return faces, col
+                faces = rd.item_faces(it)
+                if not faces:
+                    continue
+                col = colour.get(int(it))
+                kind = rd.kind(it)
+                if kind in SOLIDS:
+                    name = rec_name(it)
+                    out.append((name, faces, col))
+                else:
+                    loose += faces
+                    loose_col = loose_col or col
+        if loose:
+            out.append(("", loose, loose_col))
+        geo_cache[rep] = out
+        return out
+
+    def rec_name(it):
+        rec = E[int(it)]
+        args = rec[next(iter(rec))]
+        n = args[0] if args and isinstance(args[0], str) else ""
+        return n.strip()
 
     parts = []
 
     def walk(pd, M, path):
-        faces, col = geometry(pd)
-        if faces:
-            parts.append(Part(path[-1], tuple(path), M.copy(), faces, col))
+        items = geometry(pd)
+        for k, (iname, faces, col) in enumerate(items):
+            if len(items) == 1:
+                name = iname or path[-1]
+                p = path if not iname or iname == path[-1] else path + [iname]
+            else:
+                name = iname or f"{path[-1]} {k + 1}"
+                p = path + [name]
+            parts.append(Part(name, tuple(p), M.copy(), faces, col))
         for child, T, occ_name in children.get(pd, []):
             walk(child, M @ T, path + [str(occ_name or pd_name.get(child))])
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 — 2026-10-18
+- STEP reader: several named solids in one product become several parts (as the STEP export
+  extension writes them). `motion/stepread.py` is the same file as
+  `stepexport/stepread.py` in the STEP extension (ingetrazo-step), kept in step.
+
 ## 0.6.0 — 2026-10-17
 
 ### Added
