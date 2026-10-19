@@ -42,6 +42,11 @@
   hinge with a separate pin): joints in place, the four-bar's rocker swing against its
   closed form, the gear ratio, one degree of freedom each.
 - Document: `coupling` joints (gears) are stored and rebuilt.
+- «Jeu mini» and «Pas» are stored in the document when validating (one undo step):
+  they used to be kept only in memory and came back at their old values with the file.
+- Checked with IngeTrazo 0.5.9, with and without its experimental Rust engine: a
+  model saved and reopened as lazy meshes keeps its mechanism, masses and report; a
+  model without Motion parts stays lazy (Motion only touches the groups that are parts).
 - **Materials** (`motion.materials`, the panel's «Matériau» row): a library of woods
   (chêne, hêtre, frêne, noyer, pin, épicéa, douglas, contreplaqué, MDF, OSB), metals
   (acier, inox, aluminium, laiton, bronze, fonte) and plastics (POM, PA 6, PEHD, ABS,

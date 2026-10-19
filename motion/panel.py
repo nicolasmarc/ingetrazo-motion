@@ -984,9 +984,14 @@ class MotionPanel(QWidget):
         poses = self.simulation()
         if m.driver is None and poses is None:
             raise ValueError("pas de moteur")
-        if self.source == "model":
-            self.data["jeu_min"] = self.jeu.value() / 1000
-            self.data["pas"] = self.pas.value()
+        if self.source == "model" and (
+                abs(self.data.get("jeu_min", 0.005) - self.jeu.value() / 1000) > 1e-12
+                or int(self.data.get("pas", 51)) != self.pas.value()):
+            # the gap and the steps belong to the document: stored (one undo
+            # step), so they come back with the file
+            self._store(doc.normalized(self.data))
+            m = self.mechanism()
+            poses = self.simulation()
         self.report = collide.validate(m, self.pas.value(), self.jeu.value() / 1000,
                                        poses=poses)
         self.frames = self.report["steps"]
