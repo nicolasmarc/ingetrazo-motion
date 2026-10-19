@@ -37,13 +37,15 @@ SOURCES = (("model", "Modèle (document)"),
            ("oiseau", "Exemple : oiseau à battement d'ailes"),
            ("draisine", "Exemple : draisine à balancier"),
            ("chaine", "Exemple : chaîne détendue et tendeur"),
-           ("chaine_souple", "Exemple : chaîne souple (dynamique)"))
+           ("chaine_souple", "Exemple : chaîne souple (dynamique)"),
+           ("pendule_double", "Exemple : pendule double (dynamique)"))
 
 SAMPLE_NAMES = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle",
                 "oiseau": "Oiseau à battement d'ailes",
                 "draisine": "Draisine à balancier",
                 "chaine": "Chaîne détendue et tendeur",
-                "chaine_souple": "Chaîne souple (dynamique)"}
+                "chaine_souple": "Chaîne souple (dynamique)",
+                "pendule_double": "Pendule double (dynamique)"}
 
 TIPS = {
     "fixed": "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.",
@@ -399,7 +401,8 @@ class MotionPanel(QWidget):
             return self.mech
         builders = {"chaise": samples.chaise_pliante, "porte": samples.porte_sectionnelle,
                     "oiseau": samples.oiseau, "draisine": samples.draisine,
-                    "chaine": samples.chaine, "chaine_souple": samples.chaine_souple}
+                    "chaine": samples.chaine, "chaine_souple": samples.chaine_souple,
+                    "pendule_double": samples.pendule_double}
         self.sample_info = None
         if self.source in builders:
             self.mech, self.sample_info = builders[self.source]()
@@ -823,14 +826,36 @@ class MotionPanel(QWidget):
         if name and self.source == "model":
             self._store(doc.remove(self.data, name), f"{name} supprimé.")
 
+    def simulation(self):
+        """The example's dynamic simulation (weight, inertia; no motor
+        needed), as poses at 30 per second; None for a kinematic one."""
+        sim = (self.sample_info or {}).get("simulation")
+        if not sim:
+            return None
+        if getattr(self, "_sim_cache", (None,))[0] is not self.mech:
+            from . import dynamics
+            m = self.mechanism()
+            dyn = dynamics.Dynamics(m, **sim.get("params", {}))
+            dt = sim.get("dt", 0.002)
+            every = max(1, int(round(1.0 / (30 * dt))))
+            rows = dyn.run(sim["duree"], dt=dt, every=every)
+            n = len(rows)
+            poses = [dict(t=i / max(n - 1, 1), value=r["t"], x=r["x"], ok=True,
+                          res=float(np.linalg.norm(dyn.C(r["x"], r["t"]))),
+                          ke=r["ke"], pe=r["pe"]) for i, r in enumerate(rows)]
+            self._sim_cache = (self.mech, poses)
+        return self._sim_cache[1]
+
     def _do_validate(self):
         m = self.mechanism()
-        if m.driver is None:
+        poses = self.simulation()
+        if m.driver is None and poses is None:
             raise ValueError("pas de moteur")
         if self.source == "model":
             self.data["jeu_min"] = self.jeu.value() / 1000
             self.data["pas"] = self.pas.value()
-        self.report = collide.validate(m, self.pas.value(), self.jeu.value() / 1000)
+        self.report = collide.validate(m, self.pas.value(), self.jeu.value() / 1000,
+                                       poses=poses)
         self.frames = self.report["steps"]
         self._write_report()
         if self.buttons["trajectory"].isChecked():
@@ -861,6 +886,11 @@ class MotionPanel(QWidget):
                   for f in (0.1, 0.3, 0.5, 0.7, 0.9)]
         dof = max(set(counts), key=lambda c: (counts.count(c), -c))
         lines.append(f"Degrés de liberté (sans moteur) : {dof}")
+        st = rep["steps"]
+        if st and "ke" in st[0]:
+            e0, e1 = st[0]["ke"] + st[0]["pe"], st[-1]["ke"] + st[-1]["pe"]
+            lines.append(f"Simulation dynamique de {st[-1]['value']:.1f} s : énergie "
+                         f"{1000 * e0:.0f} → {1000 * e1:.0f} mJ (frottement dans les liaisons).")
         ms = getattr(m, "masses", {}) or {}
         if ms:
             known = {n: mp for n, mp in ms.items() if mp["mass"] > 0}
@@ -1106,6 +1136,12 @@ class MotionPanel(QWidget):
 
     def _pose_at(self, t):
         m = self.mechanism()
+        if self.frames is None and self.simulation() is not None:
+            self.frames = self.simulation()
+        if m.driver is None and self.frames:
+            k = int(round(t * (len(self.frames) - 1)))
+            self.x = self.frames[k]["x"]
+            return
         if m.driver is None:
             self.x = np.zeros(m.n)
             return
@@ -1131,7 +1167,8 @@ class MotionPanel(QWidget):
             self.timer.stop()
 
     def _tick(self):
-        if self.full_turn() or self.mechanism().multi_turn():   # a crank keeps turning
+        if self.full_turn() or (self.mechanism().driver is not None
+                                and self.mechanism().multi_turn()):   # a crank keeps turning
             self.slider.setValue((self.slider.value() + 10) % 1000)
             return
         v = self.slider.value() + self._dir * 10
@@ -1394,7 +1431,7 @@ class MotionPanel(QWidget):
     def full_turn(self):
         """Driver is a pivot doing a whole revolution (a crank)."""
         m = self.mechanism()
-        if m.driver is None:
+        if m.driver is None or self.simulation() is not None:
             return False
         j, lo, hi = m.driver
         return j.kind == "pivot" and abs(abs(hi - lo) - 2 * math.pi) < 1e-6
@@ -1408,20 +1445,25 @@ class MotionPanel(QWidget):
         and back when ``aller_retour``."""
         from . import render, video
         m = self.mechanism()
-        if m.driver is None:
+        poses = self.simulation()
+        if m.driver is None and poses is None:
             raise ValueError("pas de moteur")
         # checked once, at the validation steps: the readings of a frame
         # (smallest gap, collisions) are those of its nearest step
         rows = self.report["steps"] if self.report else None
         if rows is None or len(rows) < 3:
             rows = collide.validate(m, max(self.pas.value(), 21),
-                                    self.jeu.value() / 1000)["steps"]
+                                    self.jeu.value() / 1000, poses=poses)["steps"]
         sweep_rows = rows
+        if poses is not None:                     # a simulation plays in real time
+            seconds = poses[-1]["value"]
         n = max(2, int(round(seconds * fps)))
         hold = min(int(0.5 * fps), n // 6)
         ease = lambda u: 0.5 - 0.5 * math.cos(math.pi * u)
         allure = (self.sample_info or {}).get("allure")
-        if allure:                                # an example's own timing
+        if poses is not None:
+            tl = [i / (n - 1) for i in range(n)]
+        elif allure:                              # an example's own timing
             tl = [allure(i / (n - 1)) for i in range(n)]
         elif m.multi_turn():                      # several turns: once, steadily
             tl = [i / (n - 1) for i in range(n)]
@@ -1457,10 +1499,10 @@ class MotionPanel(QWidget):
                  and (self.sample_info or {}).get("sol", True))
         cam_target = getattr(cam, "target", None)
         traces = self.trace_pts if self.buttons["trajectory"].isChecked() else []
-        j, lo, hi = m.driver
-        unit = (lambda v: f"{math.degrees(v):.1f}°") if j.kind == "pivot" else \
+        j, lo, hi = m.driver if m.driver is not None else (None, 0.0, 1.0)
+        unit = (lambda v: f"{math.degrees(v):.1f}°") if (j is not None and j.kind == "pivot") else \
             (lambda v: f"{1000 * v:.0f} mm")
-        if m.multi_turn():
+        if j is not None and m.multi_turn():
             unit = lambda v: f"{v / (2 * math.pi):.2f} tr"
         name = SAMPLE_NAMES.get(self.source, "Mécanisme")
         writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
@@ -1477,8 +1519,11 @@ class MotionPanel(QWidget):
                 f = t * (len(sweep_rows) - 1)
                 k = min(int(f), len(sweep_rows) - 2)
                 a = f - k
-                guess = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
-                x, ok, _ = solver.solve(m, lo + t * (hi - lo), guess)
+                if poses is not None:                 # the simulation's own pose
+                    x, ok = sweep_rows[int(round(f))]["x"], True
+                else:
+                    guess = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
+                    x, ok, _ = solver.solve(m, lo + t * (hi - lo), guess)
                 for f in dyn:
                     x = f.advance(m, x, 0.0 if i == 0 else 1.0 / fps)
                 self.x, self.t = x, t
@@ -1486,8 +1531,8 @@ class MotionPanel(QWidget):
                 hits = {nm for pair in near.get("hits", []) for nm in pair}
                 cl = [near["clearance"]] if near.get("clearance") else []
                 shown = lo + t * (hi - lo)
-                info = []
-                for (jj, l_, h_), v in zip(m.drivers, m.driver_targets(shown)):
+                info = [f"temps {near['value']:.2f} s"] if poses is not None else []
+                for (jj, l_, h_), v in zip(m.drivers, m.driver_targets(shown) if m.drivers else []):
                     if jj.kind == "pivot":
                         txt = (f"{v / (2 * math.pi):.2f} tr" if m.multi_turn((jj, l_, h_))
                                else f"{math.degrees(v):.1f}°")
@@ -1496,7 +1541,10 @@ class MotionPanel(QWidget):
                     info.append(f"{jj.name} : {txt}")
                 extra = (self.sample_info or {}).get("mesures")
                 if extra:
-                    info += extra(m, x)
+                    try:
+                        info += extra(m, x, near)
+                    except TypeError:
+                        info += extra(m, x)
                 if cl:
                     info.append(f"jeu mini {1000 * max(cl[0]['distance'], 0):.1f} mm")
                 info.append("collision : " + " / ".join(sorted(hits)) if hits else "aucune collision")
@@ -1592,6 +1640,7 @@ def setup(app):
         sub.addAction("Exemple : draisine à balancier", lambda: show("draisine"))
         sub.addAction("Exemple : chaîne détendue et tendeur", lambda: show("chaine"))
         sub.addAction("Exemple : chaîne souple (dynamique)", lambda: show("chaine_souple"))
+        sub.addAction("Exemple : pendule double (dynamique)", lambda: show("pendule_double"))
     else:
         app.add_menu_action("Motion", lambda: show(),
                             tip="Mécanismes : pivots, glissières, rails, validation.")

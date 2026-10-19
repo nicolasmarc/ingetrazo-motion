@@ -792,3 +792,62 @@ def chaine_souple(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entra
     info["mesures"] = mesures
     return m, info
 
+
+# -- dynamics: a double pendulum ----------------------------------------------------
+
+def pendule_double(bras1=0.30, bras2=0.25, angle1=120.0, angle2=150.0, duree=12.0,
+                   amortissement=0.0005):
+    """Two oak arms hanging from a steel frame, let go from ``angle1`` and
+    ``angle2`` (degrees from the vertical, metres): nothing drives them, the
+    weight does — the classic chaotic double pendulum. Masses and inertias
+    from the materials (oak 710 kg/m^3), a little friction in the pivots
+    (``amortissement``, N m s/rad). x along the arms at rest, z up."""
+    from .massprops import of_triangles
+    rho = 710.0
+    H = 0.75                                      # pivot height
+    O = _p(0, H)
+    t1, t2 = math.radians(angle1), math.radians(angle2)
+    d1 = np.array([math.sin(t1), 0, -math.cos(t1)])
+    d2 = np.array([math.sin(t2), 0, -math.cos(t2)])
+    P1 = O + bras1 * d1
+    P2 = P1 + bras2 * d2
+    m = Mechanism()
+    g = m.ground
+    g.name = "potence"
+    g.boxes += [Box(_p(0, 0.01, 0.0), (0.25, 0.10, 0.01), name="socle"),
+                Box(_p(0, H / 2, 0.07), (0.02, 0.02, H / 2 + 0.02), name="montant"),
+                Box(_p(0, H, 0.045), (0.012, 0.03, 0.012), name="axe")]
+    g.color = (92, 96, 104)
+    polys = {}
+
+    def arm(name, A, B, y, col):
+        b = m.body(name, (A + B) / 2, [bar(A, B, 0.03, 0.012)])
+        b.boxes[0].center = b.boxes[0].center + np.array([0, y, 0])
+        faces = _box_faces(b.boxes[0])
+        T = np.array([t for f in faces for t in ((f[0], f[1], f[2]), (f[0], f[2], f[3]))])
+        b.mass, b.com, b.inertia, _ = of_triangles(T, rho)
+        b.color = col
+        polys[name] = faces
+        return b
+
+    a1 = arm("bras supérieur", O, P1, 0.012, (196, 106, 36))
+    a2 = arm("bras inférieur", P1, P2, -0.012, (150, 90, 40))
+    j1 = m.pivot(g, a1, O, CCW, name="pivot haut")
+    j2 = m.pivot(a1, a2, P1, CCW, name="pivot milieu")
+    info = dict(polys=polys, vue=(-90.0, 0.0), sol=False, jeu_min=0.0,
+                traces=[(a2, P2)],
+                simulation=dict(duree=duree, dt=0.002,
+                                params=dict(damping={j1.name: amortissement,
+                                                     j2.name: amortissement})))
+
+    def mesures(mech, x, row=None):
+        a = math.degrees(mech.continuous_value(j1, x)) + angle1
+        b = math.degrees(mech.continuous_value(j2, x)) + angle2 - angle1
+        out = [f"bras supérieur {a:+.0f}°", f"bras inférieur {b:+.0f}° (relatif)"]
+        if row is not None and "ke" in row:
+            out.append(f"énergie {1000 * (row['ke'] + row['pe']):.0f} mJ "
+                       f"(cinétique {1000 * row['ke']:.0f})")
+        return out
+    info["mesures"] = mesures
+    return m, info
+

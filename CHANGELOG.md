@@ -55,6 +55,21 @@
   box (closed form) and on solids whose volume, centre and inertia OpenCascade computed:
   exact for flat faces, within 0.3 % for curved ones at 0.02 mm facets (an import at the
   default 0.2 mm reads small round parts about 1 % light).
+- **Dynamics of the whole mechanism** (`motion.dynamics`): every part with its mass,
+  centre of gravity and inertia; weight, joint friction, *speed* motors (a law in time:
+  the torque or force they must give comes out) and *torque* motors (a torque or force:
+  the mechanism answers); the joints' reactions. Newton-Euler at the centres of gravity,
+  accelerations and reactions solved together (over-constrained loops accepted),
+  Runge-Kutta 4, drift pulled back (Baumgarte); pivots differentiated analytically.
+  Checked against hand-worked cases: free fall (exact), a tumbling block (angular
+  momentum and energy kept), pendulum periods at 5°, 90° and 150° (elliptic integral,
+  within 0.02 %), a double pendulum's energy, a block sliding down a slope, a flywheel and
+  a geared pair under a torque, the torque holding an arm (m g d cos θ), a four-bar's
+  power balance (motor torque × speed = dE/dt within 1 %).
+- **Example «pendule double (dynamique)»**: two oak arms let go, nothing drives them;
+  validation, playback and the split-screen video follow the simulation in real time,
+  with the energy read out. A validation can take poses computed elsewhere
+  (`collide.validate(poses=...)`).
 
 ## 0.6.1 — 2026-10-18
 - STEP reader: several named solids in one product become several parts (as the STEP export

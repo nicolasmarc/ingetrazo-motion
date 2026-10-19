@@ -235,19 +235,22 @@ def limit_violations(mech, x, tol=1e-6):
     return out
 
 
-def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True):
+def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
     """Run the driver 0..100 % and check everything at each step.
 
     Returns a dict: ``steps`` (per step: t, value, ok, res, hits, limits,
     clearance = smallest gap record), ``worst`` (smallest gap over the run,
     with its t), ``ok`` (converged, no interference, no limit, gap >=
-    jeu_min everywhere) and ``problems`` (readable strings)."""
+    jeu_min everywhere) and ``problems`` (readable strings).
+    ``poses``: rows {t (0..1), value, x, ok, res} computed elsewhere (a
+    dynamic simulation) instead of the driver's sweep."""
     from .solver import sweep
     rows, worst, problems = [], None, []
-    for st in sweep(mech, steps):
+    for st in (poses if poses is not None else sweep(mech, steps)):
         x = st["x"]
         cl = clearances(mech, x, ignore_joined)
-        row = dict(t=st["t"], value=st["value"], x=x, ok=st["ok"], res=st["res"],
+        row = dict({k: v for k, v in st.items() if k not in ("x",)},
+                   t=st["t"], value=st["value"], x=x, ok=st["ok"], res=st["res"],
                    hits=interferences(mech, x, ignore_joined=ignore_joined),
                    limits=limit_violations(mech, x),
                    clearance=cl[0] if cl else None)

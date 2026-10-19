@@ -74,6 +74,9 @@ edit is one undo step. Collision boxes are fitted to each group.
   distance (vertex/box and edge/edge), minimum-clearance check along the
   motion. Box pairs of joined parts that already touch when drawn are the
   joint; the rest of the two parts is still checked.
+- Dynamics: weight, inertia, joint friction, speed or torque motors, joint
+  reactions and motor torques (Newton-Euler, Runge-Kutta 4), checked
+  against pendulum periods, free fall and power balance.
 - Examples: folding chair with crossed legs, sectional door (any number of
   panels, two tracks), flapping bird (crank, slider, two-segment wings),
   hand-pumped rail car (beam, rod, gears, rolling axles), roller chain with a
@@ -97,6 +100,7 @@ python tests/test_multidriver.py # two motors, speed and phase
 python tests/test_chain.py       # chain: pitch, tangency, catenary, teeth, tensioner
 python tests/test_detect.py      # automatic joints on independent STEP assemblies
 python tests/test_mass.py        # masses and inertia vs closed forms and OpenCascade
+python tests/test_dynamics.py    # free fall, pendulums, slope, flywheel, motor torque
 python tests/test_stepread.py    # STEP reader vs an independent CAD kernel
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)
