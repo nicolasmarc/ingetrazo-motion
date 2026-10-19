@@ -323,12 +323,48 @@ _DRAW = dict(cylindrical=_cylindrical, ball=_ball, lock=_lock, elastic=_elastic,
              trajectory=_trajectory)
 
 
+_FRAME = {}
+
+
+def _frame(name):
+    """Centre and scale that put the drawing of ``name`` in the middle of
+    its square, every icon filling the same 20 of its 24 units: drawn once
+    large, its inked pixels measured."""
+    if name not in _FRAME:
+        from PySide6.QtGui import QImage
+        n = 192
+        img = QImage(n, n, QImage.Format_ARGB32)
+        img.fill(Qt.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.scale(n / 24.0, n / 24.0)
+        _DRAW[name](p, QColor(0, 0, 0), QColor(0, 0, 0))
+        p.end()
+        import numpy as _np
+        ptr = img.constBits()
+        a = _np.frombuffer(ptr, _np.uint8, count=n * n * 4).reshape(n, n, 4)[:, :, 3]
+        ys, xs = _np.nonzero(a > 40)
+        if not len(xs):
+            _FRAME[name] = (12.0, 12.0, 1.0)
+        else:
+            x0, x1 = xs.min() * 24.0 / n, (xs.max() + 1) * 24.0 / n
+            y0, y1 = ys.min() * 24.0 / n, (ys.max() + 1) * 24.0 / n
+            s = min(20.0 / max(x1 - x0, y1 - y0, 1e-6), 1.6)
+            _FRAME[name] = ((x0 + x1) / 2, (y0 + y1) / 2, s)
+    return _FRAME[name]
+
+
 def paint(painter, name, size, ink, acc):
-    """Draw icon ``name`` into a ``size`` x ``size`` square at (0, 0)."""
+    """Draw icon ``name`` into a ``size`` x ``size`` square at (0, 0),
+    centred and at the common size."""
+    cx, cy, s = _frame(name)
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.setRenderHint(QPainter.TextAntialiasing, True)
     painter.scale(size / 24.0, size / 24.0)
+    painter.translate(12.0, 12.0)
+    painter.scale(s, s)
+    painter.translate(-cx, -cy)
     _DRAW[name](painter, QColor(ink), QColor(acc))
     painter.restore()
 

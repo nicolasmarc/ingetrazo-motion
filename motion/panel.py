@@ -218,6 +218,7 @@ class MotionPanel(QWidget):
         grid = QGridLayout()
         grid.setSpacing(2)
         self.buttons = {}
+        from PySide6.QtWidgets import QSizePolicy
         for i, name in enumerate(icons.NAMES):
             b = QToolButton()
             b.setIcon(icons.icon(name, self, 24))
@@ -227,9 +228,16 @@ class MotionPanel(QWidget):
             b.setToolTip(TIPS[name])
             b.setAutoRaise(True)
             b.setMinimumWidth(10)
+            b.setFixedHeight(52)
+            # every button fills its cell: the icons and their labels sit on
+            # the same centre lines, column by column, row by row
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             b.clicked.connect(lambda _c=False, n=name: self._action(n))
             grid.addWidget(b, i // 4, i % 4)
             self.buttons[name] = b
+        for c in range(4):
+            grid.setColumnStretch(c, 1)
+            grid.setColumnMinimumWidth(c, 10)
         self.buttons["trajectory"].setCheckable(True)
         lay.addLayout(grid)
 
