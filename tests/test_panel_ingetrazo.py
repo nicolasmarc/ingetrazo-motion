@@ -127,7 +127,10 @@ def test_drop_leaf_built_from_the_model():
     tip = body.world_point(m.pose(panel.x, body), (0.6, 0, 0))
     assert abs(tip[0] - 0.6 * math.cos(math.pi / 4)) < 1e-6
     assert abs(abs(tip[2]) - 0.6 * math.sin(math.pi / 4)) < 1e-6
-    # each edit was one undo step
+    # each edit was one undo step: the steps (19) stored by Valider, then
+    # the motor
+    win._on_undo()
+    assert panel.app.document_data()["pas"] == 51
     win._on_undo()
     assert panel.app.document_data()["driver"] is None
     win._on_redo()
