@@ -13,7 +13,9 @@ One JSON-safe dict (``app.set_document_data``), metres and radians::
                  "ja": "<joint>", "jb": "<joint>", "ratio": -0.5}],  # jb = ratio x ja
      "drivers": [{"joint": "<name>", "lo": 0.0, "hi": 1.57}, ...],
      "driver": <the first of "drivers"> | null,      # kept for 0.1-0.5 files
-     "jeu_min": 0.005, "pas": 51}
+     "jeu_min": 0.005, "pas": 51,
+     "materiau": {"<uid>": "chene", ...},           # material of each group
+     "matieres": {"<key>": {"name": ..., "density": ...}}}   # the document's own
 
 A body is one or more IngeTrazo groups moving together; every body marked
 ``fixed`` is merged into the frame. Its collision boxes are fitted to the
@@ -28,7 +30,7 @@ FORMAT = 1
 
 def empty():
     return {"format": FORMAT, "bodies": [], "joints": [], "drivers": [],
-            "driver": None, "jeu_min": 0.005, "pas": 51}
+            "driver": None, "jeu_min": 0.005, "pas": 51, "materiau": {}, "matieres": {}}
 
 
 def normalized(data):
@@ -162,6 +164,57 @@ def apply_detection(data, parts, frame, proposals):
         d, cn = add_coupling(d, ja, jb, r, name=unique_name(d, "engrenage "))
         made.append(cn)
     return d, made
+
+
+def set_material(data, uids, key):
+    """Groups ``uids`` are made of material ``key`` (None: forget it)."""
+    d = normalized(data)
+    for u in uids:
+        if key is None:
+            d["materiau"].pop(str(u), None)
+        else:
+            d["materiau"][str(u)] = key
+    return d
+
+
+def add_material(data, key, props):
+    """A material of the document's own (or a library one overridden)."""
+    from .materials import FIELDS
+    d = normalized(data)
+    d["matieres"][key] = {f: props[f] for f in FIELDS if f in props and props[f] is not None}
+    return d
+
+
+def mass_properties(data, triangles_of_group):
+    """{body name: dict(mass, com, inertia, volume, materials, missing)}
+    from each group's closed triangles (world, reference pose) and its
+    material; groups without a material are listed in ``missing`` and left
+    out of the mass."""
+    from . import massprops, materials
+    d = normalized(data)
+    lib = materials.library(d)
+    out = {}
+    for b in d["bodies"]:
+        pieces, mats, missing, vol = [], set(), [], 0.0
+        for u in b["groups"]:
+            T = triangles_of_group(u)
+            if T is None or not len(T):
+                continue
+            key = d["materiau"].get(u)
+            rec = lib.get(key) if key else None
+            m, c, I, v = massprops.of_triangles(T, rec["density"] if rec else 1.0)
+            vol += abs(v)
+            if rec is None:
+                missing.append(u)
+                continue
+            mats.add(rec["name"])
+            if m < 0:                         # faces turned inward
+                m, I = -m, -I
+            pieces.append((m, c, I))
+        m, c, I = massprops.combine(pieces) if pieces else (0.0, None, None)
+        out[b["name"]] = dict(mass=m, com=c, inertia=I, volume=vol,
+                              materials=sorted(mats), missing=missing)
+    return out
 
 
 def set_driver(data, joint, lo, hi):
@@ -327,9 +380,12 @@ def body_boxes(data, points_of_group):
     return out
 
 
-def build(data, points_of_group=lambda uid: None, names_of_group=None):
+def build(data, points_of_group=lambda uid: None, names_of_group=None,
+          triangles_of_group=None):
     """(Mechanism, problems). ``points_of_group(uid)`` gives the world
-    points of a group (None when the group is gone)."""
+    points of a group (None when the group is gone); with
+    ``triangles_of_group`` the parts get their mass, centre of gravity and
+    inertia from the materials."""
     d = normalized(data)
     problems = []
     m = Mechanism()
@@ -388,6 +444,13 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None):
             problems.append(f"moteur {drv['joint']} : liaison inconnue")
     if not m.drivers and m.bodies:
         problems.append("aucun moteur : choisir une liaison et « Moteur 0–100 % »")
+    m.masses = {}
+    if triangles_of_group is not None:
+        m.masses = mass_properties(d, triangles_of_group)
+        for name, body in bodies.items():
+            mp = m.masses.get(name)
+            if mp and mp["mass"] > 0 and body is not m.ground:
+                body.mass, body.com, body.inertia = mp["mass"], mp["com"], mp["inertia"]
     return m, problems
 
 

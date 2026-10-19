@@ -34,7 +34,7 @@ socle = cq.Workplane("XY").center(100, 0).rect(260, 40).extrude(10)
 socle = hole(hole(socle, A, 10.2, 0, 10), D, 10.2, 0, 10)
 crank = pin(hole(bar(A, B, 10, 8), B, 10.2, 10, 8), A, 10, 0, 10)
 rocker = pin(hole(bar(D, C, 10, 8), C, 10.2, 10, 8), D, 10, 0, 10)
-coupler = pin(pin(bar(B, C, 18, 8), B, 10, 10, 8), C, 10, 10, 8)
+coupler = pin(pin(bar(B, C, 18, 8), B, 10, 11, 7), C, 10, 11, 7)   # pins end 1 mm above the base
 asm = cq.Assembly(name="Quadrilatere")
 for name, s, col in (("Socle", socle, (0.4, 0.4, 0.45)), ("Manivelle", crank, (0.9, 0.5, 0.2)),
                      ("Bielle", coupler, (0.3, 0.5, 0.9)), ("Balancier", rocker, (0.2, 0.7, 0.3))):

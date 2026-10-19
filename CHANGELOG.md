@@ -42,6 +42,19 @@
   hinge with a separate pin): joints in place, the four-bar's rocker swing against its
   closed form, the gear ratio, one degree of freedom each.
 - Document: `coupling` joints (gears) are stored and rebuilt.
+- **Materials** (`motion.materials`, the panel's «Matériau» row): a library of woods
+  (chêne, hêtre, frêne, noyer, pin, épicéa, douglas, contreplaqué, MDF, OSB), metals
+  (acier, inox, aluminium, laiton, bronze, fonte) and plastics (POM, PA 6, PEHD, ABS,
+  PMMA), glass — density, Young's modulus, dry friction, restitution (reference averages);
+  «Nouveau…» adds or corrects one for the document. A material is set per group, saved in
+  the .igz, and guessed from the part's or its paint's name («Pied chêne», «Steel»).
+- **Mass, centre of gravity, inertia** (`motion.massprops`) of every part from
+  IngeTrazo's own faces (holes cut) and its materials: shown in the list and for the
+  chosen part, centres of gravity drawn in the view (the usual quartered circle), masses
+  and total in the validation report, groups without a material reported. Checked on a
+  box (closed form) and on solids whose volume, centre and inertia OpenCascade computed:
+  exact for flat faces, within 0.3 % for curved ones at 0.02 mm facets (an import at the
+  default 0.2 mm reads small round parts about 1 % light).
 
 ## 0.6.1 — 2026-10-18
 - STEP reader: several named solids in one product become several parts (as the STEP export

@@ -84,6 +84,41 @@ def group_points(group):
     return np.vstack(out) if out else np.zeros((0, 3))
 
 
+def group_triangles(group):
+    """World triangles (n, 3, 3) of a group's faces, holes cut (IngeTrazo's
+    own triangulation), nested placements included."""
+    out = []
+    for mesh, aff in _placements(group):
+        tri = []
+        for f in mesh.faces:
+            try:
+                for a, b, c in f.triangulate():
+                    tri.append((_xyz(a), _xyz(b), _xyz(c)))
+            except Exception:
+                continue
+        if tri:
+            T = np.array(tri)
+            if aff is not None:
+                T = T @ aff[0].T + aff[1]
+            out.append(T)
+    return np.concatenate(out) if out else np.zeros((0, 3, 3))
+
+
+def group_material_names(group):
+    """Names that may say what a group is made of: its own name, its paint,
+    the paints of its faces."""
+    names = [getattr(group, "name", "")]
+    mat = getattr(group, "material", None) or {}
+    names += [mat.get("mat", ""), mat.get("name", "")]
+    seen = set()
+    for f in list(getattr(group.mesh, "faces", []))[:400]:
+        n = (getattr(f, "attrs", None) or {}).get("mat")
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+    return names
+
+
 def group_segments(group):
     out = []
     for mesh, aff in _placements(group):
@@ -205,6 +240,24 @@ class MotionPanel(QWidget):
         row.addWidget(self.delete_btn)
         row.addStretch(1)
         lay.addLayout(row)
+
+        mrow = QHBoxLayout()
+        mrow.addWidget(QLabel("Matériau"))
+        self.mat_combo = QComboBox()
+        self.mat_combo.setToolTip("Matériau de la pièce choisie dans la liste (ou des groupes "
+                                  "sélectionnés) : masse, centre de gravité et inertie en "
+                                  "découlent.")
+        self.mat_combo.activated.connect(self._material_chosen)
+        mrow.addWidget(self.mat_combo, 1)
+        self.mat_new = QToolButton()
+        self.mat_new.setText("Nouveau…")
+        self.mat_new.setToolTip("Ajouter un matériau (ou corriger une valeur) pour ce document.")
+        self.mat_new.clicked.connect(self._material_dialog)
+        mrow.addWidget(self.mat_new)
+        lay.addLayout(mrow)
+        self.mass_label = QLabel("")
+        self.mass_label.setWordWrap(True)
+        lay.addWidget(self.mass_label)
 
         box = QGroupBox("Liaison choisie")
         form = QFormLayout(box)
@@ -355,7 +408,8 @@ class MotionPanel(QWidget):
             by = groups_by_uid(self._scene())
             self.mech, self.problems = doc.build(
                 self.data, lambda u: group_points(by[u]) if u in by else None,
-                lambda u: getattr(by.get(u), "name", None))
+                lambda u: getattr(by.get(u), "name", None),
+                triangles_of_group=lambda u: self._triangles(by, u))
             self.body_segments = {}
             for b in self.data["bodies"]:
                 segs = [group_segments(by[u]) for u in b["groups"] if u in by]
@@ -365,6 +419,39 @@ class MotionPanel(QWidget):
         if self.source != "model":
             self.body_segments = {}
         return self.mech
+
+    def _triangles(self, by, uid):
+        """A group's triangles, cached while its geometry is unchanged."""
+        g = by.get(uid)
+        if g is None:
+            return None
+        cache = self.__dict__.setdefault("_tri_cache", {})
+        faces = getattr(g.mesh, "faces", [])
+        try:
+            v0 = faces[0].vertices[0] if faces else None
+            key = (id(g.mesh), len(faces), None if v0 is None else (v0.x(), v0.y(), v0.z()),
+                   repr(getattr(g, "xform", None)))
+        except Exception:
+            key = None
+        hit = cache.get(uid)
+        if hit is not None and key is not None and hit[0] == key:
+            return hit[1]
+        T = group_triangles(g)
+        cache[uid] = (key, T)
+        return T
+
+    def _guess_materials(self, data, uids):
+        """Groups named after their matter ('Pied chêne', 'Steel') get it,
+        unless they already have one."""
+        from . import materials
+        by = groups_by_uid(self._scene())
+        for u in uids:
+            if str(u) in data.get("materiau", {}) or u not in by:
+                continue
+            key = materials.guess(*group_material_names(by[u]))
+            if key:
+                data = doc.set_material(data, [u], key)
+        return data
 
     def _fill_tree(self):
         self.tree.blockSignals(True)
@@ -381,6 +468,14 @@ class MotionPanel(QWidget):
                                                        for b in m.bodies]
             joints = [(j.name, j.kind, f"{j.a.name} ↔ {j.b.name}") for j in m.joints]
             motors = [d[0].name for d in m.drivers]
+        masses = {}
+        if self.source == "model" and self.data["bodies"]:
+            try:
+                masses = getattr(self.mechanism(), "masses", {}) or {}
+            except Exception:
+                masses = {}
+        if masses:
+            bodies = [(n, k, self._mass_text(masses.get(n)) or dt) for n, k, dt in bodies]
         kinds = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot",
                  "slider": "Glissière", "guide": "Guide / rail",
                  "coupling": "Couplage"}
@@ -399,6 +494,9 @@ class MotionPanel(QWidget):
         for n in ("fixed", "moving", "pivot", "slider", "guide"):
             self.buttons[n].setEnabled(editable)
         self.delete_btn.setEnabled(editable)
+        self._fill_materials()
+        self.mat_combo.setEnabled(editable)
+        self.mat_new.setEnabled(editable)
         self.apply_btn.setEnabled(editable)
         names = [b["name"] for b in self.data["bodies"]] if editable else []
         for c in (self.combo_a, self.combo_b, self.lim_on, self.lim_lo, self.lim_hi):
@@ -412,6 +510,141 @@ class MotionPanel(QWidget):
             hit = self.tree.findItems(motors[0], Qt.MatchExactly)
             if hit:
                 self.tree.setCurrentItem(hit[0])
+
+    # ---- materials ------------------------------------------------------------------
+    def _fill_materials(self):
+        from . import materials
+        lib = materials.library(self.data if self.source == "model" else None)
+        self.mat_combo.blockSignals(True)
+        self.mat_combo.clear()
+        self.mat_combo.addItem("— non défini —", None)
+        order = {"bois": 0, "métal": 1, "plastique": 2, "autre": 3}
+        for k in sorted(lib, key=lambda k: (order.get(lib[k].get("family"), 9), lib[k]["name"])):
+            r = lib[k]
+            self.mat_combo.addItem(f"{r['name']} — {r['density']:g} kg/m³", k)
+        self.mat_combo.blockSignals(False)
+        self._show_material(self._chosen())
+
+    def _body_record(self, name):
+        return next((b for b in self.data["bodies"] if b["name"] == name), None)
+
+    def _show_material(self, name):
+        """Combo and mass line for the body ``name`` (if it is one)."""
+        if self.source != "model":
+            self.mass_label.setText("")
+            return
+        b = self._body_record(name) if name else None
+        if b is None:
+            self.mass_label.setText("")
+            return
+        keys = {self.data["materiau"].get(u) for u in b["groups"]}
+        self.mat_combo.blockSignals(True)
+        if len(keys) == 1:
+            i = self.mat_combo.findData(keys.pop())
+            self.mat_combo.setCurrentIndex(max(i, 0))
+        else:
+            self.mat_combo.setCurrentIndex(-1)
+        self.mat_combo.blockSignals(False)
+        mp = (getattr(self.mechanism(), "masses", {}) or {}).get(name)
+        if not mp:
+            self.mass_label.setText("")
+            return
+        if mp["mass"] > 0:
+            c = mp["com"] * 1000
+            txt = (f"{name} : {mp['mass']:.3g} kg, volume {mp['volume'] * 1e6:.4g} cm³ — "
+                   f"centre de gravité ({c[0]:.1f} ; {c[1]:.1f} ; {c[2]:.1f}) mm")
+        else:
+            txt = f"{name} : volume {mp['volume'] * 1e6:.4g} cm³ — choisir un matériau"
+        if mp["missing"] and mp["mass"] > 0:
+            txt += f" ; {len(mp['missing'])} groupe(s) sans matériau"
+        self.mass_label.setText(txt)
+
+    def _material_chosen(self, _i=None):
+        if self.source != "model":
+            return
+        key = self.mat_combo.currentData()
+        name = self._chosen()
+        b = self._body_record(name) if name else None
+        if b is not None:
+            uids = b["groups"]
+        else:
+            groups, _ = selection(self._scene())
+            uids = [g.uid for g in groups]
+        if not uids:
+            self.say("Choisir une pièce dans la liste, ou sélectionner des groupes.")
+            return
+        d = doc.set_material(self.data, uids, key)
+        label = self.mat_combo.currentText().split(" — ")[0]
+        self._store(d, f"{label} : {len(uids)} groupe(s).")
+        if name:
+            hit = self.tree.findItems(name, Qt.MatchExactly)
+            if hit:
+                self.tree.setCurrentItem(hit[0])
+
+    def _material_dialog(self):
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit
+        from . import materials
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Matériau du document")
+        form = QFormLayout(dlg)
+        name = QLineEdit()
+        base = QComboBox()
+        lib = materials.library(self.data)
+        base.addItem("(nouveau)", None)
+        for k in sorted(lib, key=lambda k: lib[k]["name"]):
+            base.addItem(lib[k]["name"], k)
+        rho, E, mu, e = QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox()
+        for w, lo, hi, dec, suf in ((rho, 1, 25000, 0, " kg/m³"), (E, 0, 1000, 2, " GPa"),
+                                    (mu, 0, 2, 2, ""), (e, 0, 1, 2, "")):
+            w.setRange(lo, hi)
+            w.setDecimals(dec)
+            w.setSuffix(suf)
+        rho.setValue(700)
+
+        def load(_i=None):
+            k = base.currentData()
+            if k is None:
+                return
+            r = lib[k]
+            name.setText(r["name"])
+            rho.setValue(r["density"])
+            E.setValue(r.get("young") or 0)
+            mu.setValue(r.get("friction") or 0)
+            e.setValue(r.get("restitution") or 0)
+        base.currentIndexChanged.connect(load)
+        form.addRow("Partir de", base)
+        form.addRow("Nom", name)
+        form.addRow("Masse volumique", rho)
+        form.addRow("Module d'Young", E)
+        form.addRow("Frottement (sec)", mu)
+        form.addRow("Restitution (chocs)", e)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Cancel).setText("Annuler")
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        if dlg.exec() != QDialog.Accepted or not name.text().strip():
+            return
+        key = base.currentData()
+        if key is None or lib[key]["name"] != name.text().strip():
+            key = "doc:" + materials._plain(name.text().strip()).replace(" ", "-")
+        fam = lib[base.currentData()]["family"] if base.currentData() else "autre"
+        d = doc.add_material(self.data, key, dict(
+            name=name.text().strip(), family=fam, density=rho.value(),
+            young=E.value() or None, friction=mu.value(), restitution=e.value()))
+        self._store(d, f"Matériau « {name.text().strip()} » : {rho.value():g} kg/m³.")
+
+    @staticmethod
+    def _mass_text(mp):
+        if not mp:
+            return ""
+        mats = " + ".join(mp["materials"]) if mp["materials"] else ""
+        if mp["missing"] and not mp["materials"]:
+            return "matériau ?"
+        txt = f"{mats} · {mp['mass']:.3g} kg" if mats else f"{mp['mass']:.3g} kg"
+        if mp["missing"]:
+            txt += f" (+{len(mp['missing'])} sans matériau)"
+        return txt
 
     def _chosen(self):
         it = self.tree.currentItem()
@@ -434,6 +667,7 @@ class MotionPanel(QWidget):
 
     def _item_selected(self):
         name = self._chosen()
+        self._show_material(name)
         if self.source != "model":
             j = next((j for j in self.mechanism().joints if j.name == name), None)
             if j is not None:
@@ -489,6 +723,7 @@ class MotionPanel(QWidget):
             self.say("Sélectionner un ou plusieurs groupes.")
             return
         d, name = doc.add_body(self.data, [g.uid for g in groups], fixed)
+        d = self._guess_materials(d, [g.uid for g in groups])
         self._store(d, f"{name} : {len(groups)} groupe(s).")
 
     def _do_moving(self):
@@ -626,6 +861,16 @@ class MotionPanel(QWidget):
                   for f in (0.1, 0.3, 0.5, 0.7, 0.9)]
         dof = max(set(counts), key=lambda c: (counts.count(c), -c))
         lines.append(f"Degrés de liberté (sans moteur) : {dof}")
+        ms = getattr(m, "masses", {}) or {}
+        if ms:
+            known = {n: mp for n, mp in ms.items() if mp["mass"] > 0}
+            if known:
+                tot = sum(mp["mass"] for mp in known.values())
+                lines.append(f"Masse totale : {tot:.3g} kg — "
+                             + ", ".join(f"{n} {mp['mass']:.3g} kg" for n, mp in known.items()))
+            miss = sum(len(mp["missing"]) for mp in ms.values())
+            if miss:
+                lines.append(f"ⓘ {miss} groupe(s) sans matériau : masse non comptée.")
         self.out.setPlainText("\n".join(lines))
 
     def _do_trajectory(self):
@@ -751,6 +996,7 @@ class MotionPanel(QWidget):
         if self.source != "model":
             self.set_source("model")
         d, made = doc.apply_detection(self.data, parts, frame, proposals)
+        d = self._guess_materials(d, [u for b in d["bodies"] for u in b["groups"]])
         n = {k: sum(1 for x in proposals if x.kind == k) for k in ("pivot", "slider", "gears")}
         msg = (f"Détection : {n['pivot']} pivot(s), {n['slider']} glissière(s), "
                f"{n['gears']} engrenage(s) ; pièce fixe : {parts[frame][0]}.")
@@ -942,6 +1188,14 @@ class MotionPanel(QWidget):
             for X, Y, o in zip(px, py, ok):
                 if o:
                     painter.drawEllipse(QPointF(X, Y), 3.5, 3.5)
+        # centres of gravity
+        cg = [(b, b.world_point(m.pose(x, b), b.com)) for b in m.bodies
+              if getattr(b, "com", None) is not None]
+        if cg:
+            px, py, ok = self.app.world_to_pixels(np.array([w for _, w in cg]))
+            for X, Y, o in zip(px, py, ok):
+                if o:
+                    _draw_cog(painter, QPointF(X, Y), 6.0)
         # trajectories
         pen = QPen(acc, 1.4, Qt.DashLine)
         for tr in self.trace_pts:
@@ -1284,6 +1538,19 @@ class MotionPanel(QWidget):
         for i in range(0, len(pts) - 1, 2):
             if ok[i] and ok[i + 1]:
                 painter.drawLine(QPointF(px[i], py[i]), QPointF(px[i + 1], py[i + 1]))
+
+
+def _draw_cog(painter, c, r):
+    """The usual centre-of-gravity mark: a circle in quarters, two filled."""
+    from PySide6.QtCore import QRectF
+    painter.setPen(QPen(QColor(30, 30, 30), 1.2))
+    painter.setBrush(QColor(255, 255, 255))
+    painter.drawEllipse(c, r, r)
+    painter.setBrush(QColor(30, 30, 30))
+    rect = QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r)
+    painter.drawPie(rect, 0, 90 * 16)
+    painter.drawPie(rect, 180 * 16, 90 * 16)
+    painter.setBrush(Qt.NoBrush)
 
 
 _BOX_EDGES = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7),

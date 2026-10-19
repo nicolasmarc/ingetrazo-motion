@@ -44,6 +44,11 @@ meshing gears (ratio from the teeth), separate pins kept with the part they
 are pressed in — with the frame; tick the ones to keep, they are created in
 one undo step. Then pick a motor.
 
+**Matériau**: pick the material of the part chosen in the list (woods,
+metals, plastics; «Nouveau…» for your own); its mass, volume and centre of
+gravity follow, the centres are drawn in the view and the masses listed in
+the validation report — the ground for the dynamics to come.
+
 **Importer STEP…** brings a STEP assembly (AP203/214/242) into the model,
 one group per part, named and coloured, in one undo step — then select
 groups to make them fixed or moving parts.
@@ -91,6 +96,7 @@ python tests/test_handcar.py     # rail car over three crank turns
 python tests/test_multidriver.py # two motors, speed and phase
 python tests/test_chain.py       # chain: pitch, tangency, catenary, teeth, tensioner
 python tests/test_detect.py      # automatic joints on independent STEP assemblies
+python tests/test_mass.py        # masses and inertia vs closed forms and OpenCascade
 python tests/test_stepread.py    # STEP reader vs an independent CAD kernel
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)
@@ -99,7 +105,7 @@ python tests/test_panel_ingetrazo.py   # the panel in a real IngeTrazo
                                        # IngeTrazo checkout: INGETRAZO_SRC)
 ```
 STEP fixtures: `tests/data/` (regenerate with `tools/make_step_fixtures.py` and
-`tools/make_detect_fixtures.py`,
+`tools/make_detect_fixtures.py`, `tools/make_mass_fixtures.py`,
 which needs CadQuery — a test-data tool only, nothing of it is shipped).
 All are pytest-compatible. Build the package: `python tools/build_zip.py`
 (prints the sha256 for `catalog/motion.toml`).

@@ -470,6 +470,46 @@ def test_detection_finds_the_joints_of_imported_assemblies():
     assert results["coulisse"] == ("Rail", ["slider"])
 
 
+def test_materials_give_masses_from_ingetrazo_faces():
+    """Mass of imported solids, from IngeTrazo's own faces (planar faces
+    with holes included) and the material picked in the panel, against
+    OpenCascade's values."""
+    if SKIP:
+        print("skip:", SKIP); return
+    import json
+    sys.path.insert(0, str(REPO))
+    facts = json.load(open(HERE / "data" / "masse_facts.json"))
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    got = {}
+    for name, key, rho, tol in (("equerre", "chene", 710, 1e-6), ("tube", "acier", 7850, 0.015)):   # float32 positions
+        asm, groups = panel.import_step(str(HERE / "data" / f"masse_{name}.step"))
+        scene.selection.clear()
+        scene.selection.update(groups)
+        panel._do_fixed(name == "equerre")
+        body = panel.data["bodies"][-1]["name"]
+        hit = panel.tree.findItems(body, Qt_MatchExactly())
+        panel.tree.setCurrentItem(hit[0])
+        panel.mat_combo.setCurrentIndex(panel.mat_combo.findData(key))
+        panel._material_chosen()
+        mp = panel.mechanism().masses[body]
+        f = facts[name]
+        assert abs(mp["mass"] / (rho * f["volume"]) - 1) < tol, (name, mp["mass"], rho * f["volume"])
+        assert np.linalg.norm(mp["com"] - f["centre"]) < 1e-6, name
+        got[name] = mp
+    assert "kg" in panel.mass_label.text() and "centre de gravité" in panel.mass_label.text()
+    # undo takes the material back
+    win._on_undo()
+    assert panel.data["materiau"].get(panel.data["bodies"][-1]["groups"][0]) is None
+
+
+def Qt_MatchExactly():
+    from PySide6.QtCore import Qt
+    return Qt.MatchExactly
+
+
 def doc_add_driver(data, joint, lo, hi):
     from motion import document
     return document.add_driver(data, joint, lo, hi)

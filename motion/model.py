@@ -79,6 +79,9 @@ class Body:
     fixed: bool = False
     index: int = -1            # slot in the pose vector (-1 for ground)
     color: tuple = None        # (r, g, b) for drawings; None = automatic
+    mass: float = None         # kg (from the materials), None = unknown
+    com: np.ndarray = None     # centre of gravity, reference pose
+    inertia: np.ndarray = None # 3x3 about ``com``, world axes, kg m^2
 
     def world_point(self, q, p):
         """World position of the body-fixed reference point ``p``."""
