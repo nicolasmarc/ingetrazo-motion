@@ -119,7 +119,7 @@ class Dynamics:
                     I += bx.R @ Il @ bx.R.T + mb * (d @ d * np.eye(3) - np.outer(d, d))
                 self.mass[id(b)], self.com[id(b)], self.Iref[id(b)] = m, c, I
                 self.assumed.append(b.name)
-        self.joints = [j for j in mech.joints]
+        self.joints = [j for j in mech.joints]   # elastic ones act as springs only
         self.n = 6 * len(self.bodies)
 
     # -- pose <-> centre-of-gravity coordinates ----------------------------
@@ -152,7 +152,9 @@ class Dynamics:
         rows = []
         for j in self.joints:
             mot = self.motors.get(j.name)
-            n = {"guide": 3, "coupling": 1}.get(j.kind, 6)
+            if j.kind == "elastic":               # springs, not a constraint
+                continue
+            n = _solver.rows_of(j)
             rows.append((j, n, False))
             if mot is not None and mot[0] == "vitesse":
                 rows.append((j, 1, True))
@@ -185,37 +187,104 @@ class Dynamics:
             F[6 * k + 3: 6 * k + 6] -= np.cross(w, Iw @ w)
         idx = {id(b): k for k, b in enumerate(self.bodies)}
         for j in self.joints:
-            mot = self.motors.get(j.name)
-            tau = mot[1](t) if (mot is not None and mot[0] == "couple") else 0.0
-            c = self.damping.get(j.name, 0.0)
-            if not tau and not c:
-                continue
-            if j.kind not in ("pivot", "slider"):
-                continue
-            Ra = j.a.rot(self.m.pose(x, j.a))
-            ax = Ra @ j.axis
-            ka, kb = idx.get(id(j.a)), idx.get(id(j.b))
-            if j.kind == "pivot":
-                wa = u[6 * ka + 3: 6 * ka + 6] if ka is not None else np.zeros(3)
-                wb = u[6 * kb + 3: 6 * kb + 6] if kb is not None else np.zeros(3)
-                tq = (tau - c * float((wb - wa) @ ax)) * ax
-                if kb is not None:
-                    F[6 * kb + 3: 6 * kb + 6] += tq
-                if ka is not None:
-                    F[6 * ka + 3: 6 * ka + 6] -= tq
-            else:                                   # force along the slide, at the joint point
-                pa = j.a.world_point(self.m.pose(x, j.a), j.point)
-                va = self._point_velocity(x, u, j.a, pa, idx)
-                vb = self._point_velocity(x, u, j.b, pa, idx)
-                f = (tau - c * float((vb - va) @ ax)) * ax
-                for body, s in ((j.b, 1.0), (j.a, -1.0)):
-                    k = idx.get(id(body))
-                    if k is None:
-                        continue
-                    r = pa - self.cog(x, body)
-                    F[6 * k: 6 * k + 3] += s * f
-                    F[6 * k + 3: 6 * k + 6] += s * np.cross(r, f)
+            self._joint_efforts(j, x, u, t, F, idx)
         return M, F
+
+    # -- efforts in the joints: torque motors, springs, dampers, stops --------
+    def _stop(self, v, rate, lim, inertia):
+        """Effort pushing back a joint past one of its stops: a stiff spring
+        (about 40 Hz on the part behind it) with near-critical damping."""
+        if not lim or inertia <= 0:
+            return 0.0
+        lo, hi = lim
+        k = inertia * (2 * math.pi * 40.0) ** 2
+        c = 2 * 0.8 * math.sqrt(k * inertia)
+        if lo is not None and v < lo:
+            return k * (lo - v) - c * min(rate, 0.0)
+        if hi is not None and v > hi:
+            return -k * (v - hi) - c * max(rate, 0.0)
+        return 0.0
+
+    def _inertia_about(self, x, body, point, axis):
+        if id(body) not in self.mass:
+            return 0.0
+        R = self._R(x, body)
+        Iw = R @ self.Iref[id(body)] @ R.T
+        r = self.cog(x, body) - point
+        r_perp = r - (r @ axis) * axis
+        return float(axis @ Iw @ axis + self.mass[id(body)] * r_perp @ r_perp)
+
+    def _torque(self, F, idx, j, tq):
+        for body, s in ((j.b, 1.0), (j.a, -1.0)):
+            k = idx.get(id(body))
+            if k is not None:
+                F[6 * k + 3: 6 * k + 6] += s * tq
+
+    def _force_at(self, F, idx, x, j, point, f):
+        for body, s in ((j.b, 1.0), (j.a, -1.0)):
+            k = idx.get(id(body))
+            if k is None:
+                continue
+            F[6 * k: 6 * k + 3] += s * f
+            F[6 * k + 3: 6 * k + 6] += s * np.cross(point - self.cog(x, body), f)
+
+    def _joint_efforts(self, j, x, u, t, F, idx):
+        if j.kind not in ("pivot", "slider", "cylindrical", "ball", "elastic"):
+            return
+        mot = self.motors.get(j.name)
+        motor = mot[1](t) if (mot is not None and mot[0] == "couple") else 0.0
+        extra_c = self.damping.get(j.name, 0.0)
+        qa = self.m.pose(x, j.a)
+        Ra = j.a.rot(qa)
+        ka, kb = idx.get(id(j.a)), idx.get(id(j.b))
+        wa = u[6 * ka + 3: 6 * ka + 6] if ka is not None else np.zeros(3)
+        wb = u[6 * kb + 3: 6 * kb + 6] if kb is not None else np.zeros(3)
+        pa = j.a.world_point(qa, j.point)
+        if j.kind == "ball":
+            c = getattr(j, "damper", 0.0) + extra_c
+            if c:
+                self._torque(F, idx, j, -c * (wb - wa))
+            return
+        if j.kind == "elastic":
+            pb = j.b.world_point(self.m.pose(x, j.b), j.point)
+            va = self._point_velocity(x, u, j.a, pa, idx)
+            vb = self._point_velocity(x, u, j.b, pb, idx)
+            f = -j.k_lin * (pb - pa) - j.c_lin * (vb - va)
+            self._force_at(F, idx, x, j, pb, f)
+            phi = Ra @ log_rotation(Ra.T @ j.b.rot(self.m.pose(x, j.b)))
+            self._torque(F, idx, j, -j.k_rot * phi - j.c_rot * (wb - wa))
+            return
+        ax = Ra @ j.axis
+        if j.kind in ("pivot", "cylindrical"):
+            th = self.m.continuous_value(j, x)
+            rate = float((wb - wa) @ ax)
+            tau = motor - (getattr(j, "damper", 0.0) + extra_c) * rate
+            if getattr(j, "spring", None):
+                k, rest = j.spring
+                tau -= k * (th - rest)
+            if j.limits:
+                tau += self._stop(self.m.joint_value(j, x), rate, j.limits,
+                                  self._inertia_about(x, j.b, pa, ax)
+                                  or self._inertia_about(x, j.a, pa, ax))
+            if tau:
+                self._torque(F, idx, j, tau * ax)
+        if j.kind in ("slider", "cylindrical"):
+            s_ = self.m.slide_value(j, x)
+            va = self._point_velocity(x, u, j.a, pa, idx)
+            vb = self._point_velocity(x, u, j.b, pa, idx)
+            rate = float((vb - va) @ ax)
+            if j.kind == "slider":
+                f, spring, damper, lim = motor, j.spring, j.damper + extra_c, j.limits
+            else:
+                f, spring, damper, lim = 0.0, j.slide_spring, j.slide_damper, j.slide_limits
+            f -= damper * rate
+            if spring:
+                f -= spring[0] * (s_ - spring[1])
+            if lim:
+                mb = self.mass.get(id(j.b)) or self.mass.get(id(j.a)) or 0.0
+                f += self._stop(s_, rate, lim, mb)
+            if f:
+                self._force_at(F, idx, x, j, pa, f * ax)
 
     def _point_velocity(self, x, u, b, p, idx):
         k = idx.get(id(b))

@@ -7,6 +7,13 @@ import numpy as np
 from .model import perp_basis
 
 
+ROWS = {"guide": 3, "coupling": 1, "ball": 3}      # residual rows (default 6)
+
+
+def rows_of(j):
+    return ROWS.get(j.kind, 6)
+
+
 def _joint_residual(mech, j, x):
     if j.kind == "coupling":
         return np.array([mech.continuous_value(j.jb, x)
@@ -18,10 +25,18 @@ def _joint_residual(mech, j, x):
     Ra, Rb = j.a.rot(qa), j.b.rot(qb)
     pa = j.a.world_point(qa, j.point)
     pb = j.b.world_point(qb, j.point)
+    if j.kind == "ball":
+        return pa - pb                                       # same point
+    if j.kind in ("lock", "elastic"):                        # one piece (kinematics)
+        Rr = Ra.T @ Rb
+        return np.concatenate([pb - pa, [Rr[2, 1] - Rr[1, 2], Rr[0, 2] - Rr[2, 0],
+                                         Rr[1, 0] - Rr[0, 1]]])
     ua, ub = Ra @ j.axis, Rb @ j.axis
     if j.kind == "pivot":
         return np.concatenate([pa - pb, np.cross(ua, ub)])   # same point, axis
     d = pb - pa
+    if j.kind == "cylindrical":                              # on the axis, parallel
+        return np.concatenate([d - ua * (ua @ d), np.cross(ua, ub)])
     Rr = Ra.T @ Rb                            # no relative rotation
     return np.concatenate([d - ua * (ua @ d),                # stays on the line
                            [Rr[2, 1] - Rr[1, 2], Rr[0, 2] - Rr[2, 0],
@@ -36,7 +51,7 @@ def _driver_residual(mech, x, driver_value, k=0, targets=None):
     if mech.multi_turn(drv):                  # several turns: count them
         return mech.continuous_value(j, x) - target
     d = mech.joint_value(j, x) - target
-    if j.kind == "pivot":                     # angles: a full turn is no error
+    if j.kind in ("pivot", "cylindrical"):    # angles: a full turn is no error
         d = math.atan2(math.sin(d), math.cos(d))
     return d
 
@@ -59,7 +74,7 @@ def jacobian(mech, x, driver_value=None, eps=1e-7):
     joints (and motors) that body takes part in."""
     rows, at = [], 0
     for j in mech.joints:
-        n = {"guide": 3, "coupling": 1}.get(j.kind, 6)
+        n = rows_of(j)
         rows.append((j, slice(at, at + n)))
         at += n
     nd = len(mech.drivers) if driver_value is not None else 0
@@ -157,7 +172,7 @@ def sweep(mech, steps=51):
     sub = 1
     if steps > 1:
         for jj, l_, h_ in mech.drivers:
-            if jj.kind == "pivot":
+            if jj.kind in ("pivot", "cylindrical"):
                 sub = max(sub, int(math.ceil(abs(h_ - l_) / (steps - 1) / 0.4)))
     v_prev = lo
     for i in range(steps):

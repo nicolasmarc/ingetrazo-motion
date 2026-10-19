@@ -196,6 +196,8 @@ class Pivot:
     limits: tuple = None       # (min, max) radians, relative angle b w.r.t. a
     name: str = ""
     kind: str = "pivot"
+    spring: tuple = None       # (stiffness N m/rad, rest angle) — dynamics
+    damper: float = 0.0        # N m s/rad — dynamics
 
 
 @dataclass
@@ -207,6 +209,69 @@ class Slider:
     limits: tuple = None       # (min, max) travel along axis
     name: str = ""
     kind: str = "slider"
+    spring: tuple = None       # (stiffness N/m, rest travel) — dynamics
+    damper: float = 0.0        # N s/m — dynamics
+
+
+@dataclass
+class Cylindrical:
+    """Pivot glissant: b turns about and slides along the axis through
+    ``point``. Its value is the angle (motors, couplings, ``limits``);
+    ``slide_limits`` bound the travel."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    axis: np.ndarray
+    limits: tuple = None
+    name: str = ""
+    kind: str = "cylindrical"
+    spring: tuple = None       # on the angle
+    damper: float = 0.0
+    slide_limits: tuple = None
+    slide_spring: tuple = None # (N/m, rest travel)
+    slide_damper: float = 0.0
+
+
+@dataclass
+class Ball:
+    """Rotule: the point ``point`` of a and of b stay together; every
+    rotation is free."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    limits: tuple = None
+    name: str = ""
+    kind: str = "ball"
+    damper: float = 0.0        # N m s/rad, on the relative rotation
+
+
+@dataclass
+class Lock:
+    """Encastrement: a and b move as one."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    limits: tuple = None
+    name: str = ""
+    kind: str = "lock"
+
+
+@dataclass
+class Elastic:
+    """Liaison élastique (a silent-block, a flexible mount): rigid for the
+    kinematics; in the dynamics the point ``point`` of b is held to a's
+    by springs and dampers in every direction (translations: N/m, N s/m;
+    rotations: N m/rad, N m s/rad)."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    k_lin: float = 1e5
+    k_rot: float = 1e3
+    c_lin: float = 50.0
+    c_rot: float = 1.0
+    limits: tuple = None
+    name: str = ""
+    kind: str = "elastic"
 
 
 @dataclass
@@ -288,6 +353,29 @@ class Mechanism:
         self.joints.append(j)
         return j
 
+    def cylindrical(self, a, b, point, axis, limits=None, name="", slide_limits=None):
+        j = Cylindrical(a, b, np.asarray(point, float), unit(axis), limits,
+                        name or f"pivot glissant{len(self.joints)}", slide_limits=slide_limits)
+        self.joints.append(j)
+        return j
+
+    def ball(self, a, b, point, name=""):
+        j = Ball(a, b, np.asarray(point, float), name=name or f"rotule{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
+    def lock(self, a, b, point=None, name=""):
+        p = np.asarray(point if point is not None else b.center, float)
+        j = Lock(a, b, p, name=name or f"encastrement{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
+    def elastic(self, a, b, point, k_lin=1e5, k_rot=1e3, c_lin=50.0, c_rot=1.0, name=""):
+        j = Elastic(a, b, np.asarray(point, float), k_lin, k_rot, c_lin, c_rot,
+                    name=name or f"liaison élastique{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
     def couple(self, ja, jb, ratio, name=""):
         """``jb`` follows ``ja`` at ``ratio`` (see :class:`Coupling`)."""
         j = Coupling(ja, jb, float(ratio), name or f"couplage{len(self.joints)}")
@@ -341,10 +429,16 @@ class Mechanism:
             return np.zeros(6)
         return x[6 * body.index: 6 * body.index + 6]
 
+    def slide_value(self, j, x):
+        """Travel along the axis (slider, pivot glissant)."""
+        qa, qb = self.pose(x, j.a), self.pose(x, j.b)
+        d = j.b.world_point(qb, j.point) - j.a.world_point(qa, j.point)
+        return float((j.a.rot(qa) @ j.axis) @ d)
+
     def continuous_value(self, j, x):
         """Like :meth:`joint_value`, but a pivot's angle keeps counting
         past +-180 deg (from the rotation vectors: planar mechanisms)."""
-        if j.kind == "pivot":
+        if j.kind in ("pivot", "cylindrical"):
             qa, qb = self.pose(x, j.a), self.pose(x, j.b)
             return float((qb[3:] - qa[3:]) @ j.axis)
         return self.joint_value(j, x)
@@ -353,7 +447,7 @@ class Mechanism:
         """The (leading, or given) motor is a pivot turning more than one
         revolution."""
         drv = drv if drv is not None else self.driver
-        return (drv is not None and drv[0].kind == "pivot"
+        return (drv is not None and drv[0].kind in ("pivot", "cylindrical")
                 and abs(drv[2] - drv[1]) > 2 * np.pi + 1e-9)
 
     def joint_value(self, j, x):
@@ -366,7 +460,9 @@ class Mechanism:
             p = j.a.local_point(qa, j.b.world_point(qb, j.point))
             return float(j.path.closest(p)[0])
         Ra, Rb = j.a.rot(qa), j.b.rot(qb)
-        if j.kind == "pivot":
+        if j.kind in ("ball", "lock", "elastic"):
+            return 0.0
+        if j.kind in ("pivot", "cylindrical"):
             n1, n2 = perp_basis(j.axis)
             v = Ra.T @ (Rb @ n1)
             return float(np.arctan2(n2 @ v, n1 @ v))

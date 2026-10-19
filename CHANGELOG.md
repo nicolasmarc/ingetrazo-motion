@@ -70,6 +70,24 @@
   validation, playback and the split-screen video follow the simulation in real time,
   with the energy read out. A validation can take poses computed elsewhere
   (`collide.validate(poses=...)`).
+- **The other standard joints** («Autres liaisons» in the panel): *pivot glissant*
+  (cylindrical: turns and slides, its angle motorised, its slide with its own stops and
+  spring), *rotule* (ball), *encastrement* (lock: two parts as one), *liaison élastique*
+  (a silent-block: rigid for the kinematics, springs and dampers in every direction in
+  the dynamics).
+- **Joint modifiers** in «Liaison choisie»: *ressort* (stiffness, at rest in the drawn
+  pose), *amortisseur*, *moteur en couple* (a constant torque or force); stops now act in
+  the dynamics (a stiff, damped stop at about 40 Hz), reported as «en butée» there.
+- **«Dynamique» in the panel** for your own models (with a duration): validation,
+  playback and video follow the simulation; speed motors run their travel in that time
+  and the report gives each one's maximum and mean torque; parts without a material get
+  a mass from their boxes and are listed.
+- Checked: degrees of freedom of each joint, a body falling along a cylindrical joint
+  while spinning, the conical pendulum on a ball joint (w² = 3g / 2L cos θ, height kept),
+  a lid locked on a falling box, a torsion spring's period, a mass on a vertical spring,
+  a mass on an elastic mount (sag m g / k, frequency sqrt(k/m)), a block caught by a stop
+  on a slope, a flap caught by its stay; a drawn drop leaf in oak falling onto its 60°
+  stay in a real IngeTrazo window.
 
 ## 0.6.1 — 2026-10-18
 - STEP reader: several named solids in one product become several parts (as the STEP export

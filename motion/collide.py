@@ -260,8 +260,9 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
             problems.append(f"{pct} % : position non atteinte (résidu {st['res']:.2e})")
         for a, b in row["hits"]:
             problems.append(f"{pct} % : collision {a} / {b}")
-        for name, v, lim in row["limits"]:
-            problems.append(f"{pct} % : butée dépassée {name} = {v:.4g}")
+        if poses is None:                 # in a simulation the stops act: not a fault
+            for name, v, lim in row["limits"]:
+                problems.append(f"{pct} % : butée dépassée {name} = {v:.4g}")
         if cl:
             c = cl[0]
             if worst is None or c["distance"] < worst["distance"]:

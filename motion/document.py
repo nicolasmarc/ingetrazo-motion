@@ -14,6 +14,8 @@ One JSON-safe dict (``app.set_document_data``), metres and radians::
      "drivers": [{"joint": "<name>", "lo": 0.0, "hi": 1.57}, ...],
      "driver": <the first of "drivers"> | null,      # kept for 0.1-0.5 files
      "jeu_min": 0.005, "pas": 51,
+     "couples": {"<joint>": 1.5},                   # torque motors (N m or N), dynamics
+     "simulation": {"active": false, "duree": 4.0}, # dynamics in validate / video
      "materiau": {"<uid>": "chene", ...},           # material of each group
      "matieres": {"<key>": {"name": ..., "density": ...}}}   # the document's own
 
@@ -30,7 +32,8 @@ FORMAT = 1
 
 def empty():
     return {"format": FORMAT, "bodies": [], "joints": [], "drivers": [],
-            "driver": None, "jeu_min": 0.005, "pas": 51, "materiau": {}, "matieres": {}}
+            "driver": None, "jeu_min": 0.005, "pas": 51, "materiau": {}, "matieres": {},
+            "couples": {}, "simulation": {"active": False, "duree": 4.0}}
 
 
 def normalized(data):
@@ -72,12 +75,18 @@ def add_body(data, uids, fixed, name=None):
 def add_joint(data, kind, a, b, point=None, axis=None, rail=None,
               limits=None, name=None):
     d = normalized(data)
-    stem = {"pivot": "pivot", "slider": "glissière", "guide": "galet"}[kind]
+    stem = {"pivot": "pivot", "slider": "glissière", "guide": "galet",
+            "cylindrical": "pivot glissant", "ball": "rotule", "lock": "encastrement",
+            "elastic": "élastique"}[kind]
     j = {"kind": kind, "name": name or unique_name(d, stem), "a": a, "b": b,
          "limits": list(limits) if limits is not None else None}
     if kind == "guide":
         j["rail"] = [list(map(float, p)) for p in rail]
         j["point"] = list(map(float, point))
+    elif kind in ("ball", "lock", "elastic"):
+        j["point"] = list(map(float, point))
+        if kind == "elastic":
+            j.update(k_lin=1e5, k_rot=1e3, c_lin=50.0, c_rot=1.0)
     else:
         j["point"] = list(map(float, point))
         j["axis"] = list(map(float, unit(axis)))
@@ -164,6 +173,43 @@ def apply_detection(data, parts, frame, proposals):
         d, cn = add_coupling(d, ja, jb, r, name=unique_name(d, "engrenage "))
         made.append(cn)
     return d, made
+
+
+PARAMS = ("spring", "damper", "slide_limits", "k_lin", "k_rot", "c_lin", "c_rot")
+
+
+def set_joint_params(data, name, **params):
+    """Spring [stiffness, rest], damper, stops of the slide, elastic
+    stiffness/damping of joint ``name`` (None removes a value)."""
+    d = normalized(data)
+    rec = next(j for j in d["joints"] if j["name"] == name)
+    for k, v in params.items():
+        if k not in PARAMS:
+            raise KeyError(k)
+        if v is None:
+            rec.pop(k, None)
+        else:
+            rec[k] = list(map(float, v)) if isinstance(v, (list, tuple)) else float(v)
+    return d
+
+
+def set_torque(data, joint, value):
+    """Torque motor (dynamics): ``value`` N m (pivot) or N (slider); None
+    removes it."""
+    d = normalized(data)
+    if value is None:
+        d["couples"].pop(joint, None)
+    else:
+        d["couples"][joint] = float(value)
+    return d
+
+
+def set_simulation(data, active, duree=None):
+    d = normalized(data)
+    d["simulation"]["active"] = bool(active)
+    if duree is not None:
+        d["simulation"]["duree"] = float(duree)
+    return d
 
 
 def set_material(data, uids, key):
@@ -422,13 +468,28 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
         lim = tuple(j["limits"]) if j.get("limits") else None
         if j["kind"] == "coupling":
             continue                      # after every other joint
-        if j["kind"] == "pivot":
-            joints[j["name"]] = m.pivot(a, b, j["point"], j["axis"], lim, j["name"])
-        elif j["kind"] == "slider":
-            joints[j["name"]] = m.slider(a, b, j["point"], j["axis"], lim, j["name"])
+        k = j["kind"]
+        if k == "pivot":
+            mj = m.pivot(a, b, j["point"], j["axis"], lim, j["name"])
+        elif k == "slider":
+            mj = m.slider(a, b, j["point"], j["axis"], lim, j["name"])
+        elif k == "cylindrical":
+            mj = m.cylindrical(a, b, j["point"], j["axis"], lim, j["name"],
+                               slide_limits=tuple(j["slide_limits"]) if j.get("slide_limits") else None)
+        elif k == "ball":
+            mj = m.ball(a, b, j["point"], j["name"])
+        elif k == "lock":
+            mj = m.lock(a, b, j["point"], j["name"])
+        elif k == "elastic":
+            mj = m.elastic(a, b, j["point"], j.get("k_lin", 1e5), j.get("k_rot", 1e3),
+                           j.get("c_lin", 50.0), j.get("c_rot", 1.0), j["name"])
         else:
-            joints[j["name"]] = m.guide(a, b, j["point"], path_from_points(j["rail"]),
-                                        lim, j["name"])
+            mj = m.guide(a, b, j["point"], path_from_points(j["rail"]), lim, j["name"])
+        if j.get("spring") and hasattr(mj, "spring"):
+            mj.spring = tuple(j["spring"])
+        if j.get("damper") and hasattr(mj, "damper"):
+            mj.damper = float(j["damper"])
+        joints[j["name"]] = mj
     for j in d["joints"]:
         if j["kind"] != "coupling":
             continue
@@ -442,7 +503,9 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             m.add_driver(joints[drv["joint"]], drv["lo"], drv["hi"])
         else:
             problems.append(f"moteur {drv['joint']} : liaison inconnue")
-    if not m.drivers and m.bodies:
+    m.torques = {n: v for n, v in d["couples"].items() if n in joints}
+    m.simulation = dict(d["simulation"])
+    if not m.drivers and m.bodies and not (m.simulation.get("active")):
         problems.append("aucun moteur : choisir une liaison et « Moteur 0–100 % »")
     m.masses = {}
     if triangles_of_group is not None:

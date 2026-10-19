@@ -44,6 +44,12 @@ meshing gears (ratio from the teeth), separate pins kept with the part they
 are pressed in — with the frame; tick the ones to keep, they are created in
 one undo step. Then pick a motor.
 
+**Autres liaisons**: pivot glissant (one edge on the axis), rotule,
+encastrement, liaison élastique (edges around the joint point). On any
+joint: ressort, amortisseur, moteur en couple. Tick **Dynamique** (and a
+duration) to run your model in time: weight, springs, dampers, stops; the
+report gives the motors' torques.
+
 **Matériau**: pick the material of the part chosen in the list (woods,
 metals, plastics; «Nouveau…» for your own); its mass, volume and centre of
 gravity follow, the centres are drawn in the view and the masses listed in
@@ -101,6 +107,7 @@ python tests/test_chain.py       # chain: pitch, tangency, catenary, teeth, tens
 python tests/test_detect.py      # automatic joints on independent STEP assemblies
 python tests/test_mass.py        # masses and inertia vs closed forms and OpenCascade
 python tests/test_dynamics.py    # free fall, pendulums, slope, flywheel, motor torque
+python tests/test_joints.py      # cylindrical, ball, lock, elastic, springs, stops
 python tests/test_stepread.py    # STEP reader vs an independent CAD kernel
 python tests/test_document.py    # what the panel stores
 python tests/test_video.py       # video writers (AVI checked byte by byte)

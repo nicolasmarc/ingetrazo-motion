@@ -510,6 +510,59 @@ def Qt_MatchExactly():
     return Qt.MatchExactly
 
 
+def test_dynamics_of_a_drop_leaf_from_the_model():
+    """The drop leaf in oak, let go: it falls on its pivot, is caught by a
+    stop at 60° with a damper, the report gives the energy; the panel's
+    new joints and fields go into the document."""
+    if SKIP:
+        print("skip:", SKIP); return
+    from PySide6.QtGui import QVector3D as V
+    sys.path.insert(0, str(REPO))
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    table = _box_group("Plateau chêne", (-0.4, -0.2, -0.009), (0, 0.2, 0.009))
+    leaf = _box_group("Abattant chêne", (0.0, -0.2, -0.009), (0.6, 0.2, 0.009))
+    scene.groups += [table, leaf]
+    hinge = scene.mesh.add_edge(V(0, -0.2, 0), V(0, 0.2, 0))
+    win.viewport.notify_scene_changed()
+    _select(win, table); panel._action("fixed")
+    _select(win, leaf); panel._action("moving")
+    _select(win, hinge); panel._action("pivot")
+    d = panel.app.document_data()
+    assert set(d["materiau"].values()) == {"chene"}            # guessed from the names
+    it = panel.tree.findItems("pivot1", Qt_MatchExactly())[0]
+    panel.tree.setCurrentItem(it)
+    panel.lim_on.setChecked(True)
+    panel.lim_lo.setValue(-60)                                 # a stay at 60°
+    panel.lim_hi.setValue(60)                                  # either way down
+    panel.c_spin.setValue(0.5)
+    panel._apply_joint()
+    j = panel.app.document_data()["joints"][0]
+    assert j["damper"] == 0.5 and j["limits"][0] == pytest_approx(-math.pi / 3)
+    panel.dur.setValue(2.0)
+    panel.dyn_on.setChecked(True)                               # one undo step
+    assert panel.app.document_data()["simulation"]["active"]
+    panel._action("validate")
+    txt = panel.out.toPlainText()
+    assert "Simulation dynamique de 2.0 s" in txt, txt
+    m = panel.mechanism()
+    x = panel.report["steps"][-1]["x"]
+    pv = m.joints[0]
+    th = m.joint_value(pv, x)
+    assert abs(abs(th) - math.pi / 3) < 0.01, th                # resting on its stay
+    # a ball joint from the «Autres liaisons» menu: around a small circle
+    ring = [scene.mesh.add_edge(V(0.6 + 0.01 * math.cos(a), 0.01 * math.sin(a), 0),
+                                V(0.6 + 0.01 * math.cos(a + 0.5), 0.01 * math.sin(a + 0.5), 0))
+            for a in np.arange(0, 2 * math.pi, 0.5)]
+    win.viewport.notify_scene_changed()
+    _select(win, *ring)
+    panel._other_joint("ball")
+    kinds = [k["kind"] for k in panel.app.document_data()["joints"]]
+    assert kinds == ["pivot", "ball"], kinds
+
+
 def doc_add_driver(data, joint, lo, hi):
     from motion import document
     return document.add_driver(data, joint, lo, hi)

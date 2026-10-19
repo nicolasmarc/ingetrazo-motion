@@ -227,6 +227,24 @@ class MotionPanel(QWidget):
             self.buttons[name] = b
         self.buttons["trajectory"].setCheckable(True)
         lay.addLayout(grid)
+        from PySide6.QtWidgets import QMenu
+        self.more_btn = QToolButton()
+        self.more_btn.setText("Autres liaisons")
+        self.more_btn.setPopupMode(QToolButton.InstantPopup)
+        self.more_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.more_btn.setIcon(icons.icon("ball", self, 20))
+        menu = QMenu(self.more_btn)
+        for kind, tip in (("cylindrical", "UNE arête sur l'axe : tourne et coulisse"),
+                          ("ball", "arêtes autour du centre (un cercle) : toutes les rotations"),
+                          ("lock", "arêtes au point de liaison : les deux pièces n'en font qu'une"),
+                          ("elastic", "arêtes au point de liaison : silentbloc (dynamique)")):
+            act = menu.addAction(icons.icon(kind, self, 18), f"{icons.LABELS[kind][0]} — {tip}")
+            act.triggered.connect(lambda _c=False, k=kind: self._other_joint(k))
+        self.more_btn.setMenu(menu)
+        mrow0 = QHBoxLayout()
+        mrow0.addWidget(self.more_btn)
+        mrow0.addStretch(1)
+        lay.addLayout(mrow0)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Nom", "Type", "Détail"])
@@ -285,6 +303,26 @@ class MotionPanel(QWidget):
         self.motor_on.setToolTip("Coché : cette liaison est un moteur. Vitesse = course ; "
                                  "déphasage = valeur de départ.")
         form.addRow(self.motor_on)
+        self.k_spin, self.c_spin, self.tq_spin = QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox()
+        for w_, hi_ in ((self.k_spin, 1e9), (self.c_spin, 1e7), (self.tq_spin, 1e6)):
+            w_.setRange(-hi_ if w_ is self.tq_spin else 0.0, hi_)
+            w_.setDecimals(3)
+        kr = QHBoxLayout()
+        kr.addWidget(QLabel("Ressort"))
+        kr.addWidget(self.k_spin)
+        kr.addWidget(QLabel("Amort."))
+        kr.addWidget(self.c_spin)
+        form.addRow(kr)
+        self.k_spin.setToolTip("Raideur (N·m/rad pour un pivot, N/m pour une glissière ou une "
+                               "liaison élastique), au repos dans la position dessinée. 0 : aucun.")
+        self.c_spin.setToolTip("Amortissement visqueux (N·m·s/rad ou N·s/m). Dynamique seulement.")
+        tr = QHBoxLayout()
+        self.tq_on = QCheckBox("Moteur en couple")
+        self.tq_on.setToolTip("Dynamique : un couple (N·m) ou une force (N) constant ; le "
+                              "mécanisme répond (au lieu d'imposer la course).")
+        tr.addWidget(self.tq_on)
+        tr.addWidget(self.tq_spin)
+        form.addRow(tr)
         self.apply_btn = QToolButton()
         self.apply_btn.setText("Appliquer")
         self.apply_btn.clicked.connect(self._apply_joint)
@@ -333,6 +371,24 @@ class MotionPanel(QWidget):
         self.pas.setValue(51)
         val.addWidget(self.pas)
         lay.addLayout(val)
+        drow = QHBoxLayout()
+        self.dyn_on = QCheckBox("Dynamique")
+        self.dyn_on.setToolTip("Masses (matériaux), pesanteur, ressorts, amortisseurs, butées, "
+                               "moteurs en couple : Valider, la lecture et la vidéo suivent la "
+                               "simulation dans le temps ; les moteurs en vitesse font leur "
+                               "course en « durée » et le rapport donne leur couple.")
+        self.dyn_on.toggled.connect(self._dynamics_toggled)
+        drow.addWidget(self.dyn_on)
+        drow.addWidget(QLabel("durée"))
+        self.dur = QDoubleSpinBox()
+        self.dur.setRange(0.1, 600)
+        self.dur.setDecimals(1)
+        self.dur.setSuffix(" s")
+        self.dur.setValue(4.0)
+        self.dur.editingFinished.connect(lambda: self._dynamics_toggled(self.dyn_on.isChecked()))
+        drow.addWidget(self.dur)
+        drow.addStretch(1)
+        lay.addLayout(drow)
 
         self.out = QPlainTextEdit()
         self.out.setReadOnly(True)
@@ -368,6 +424,13 @@ class MotionPanel(QWidget):
             self.jeu.setValue(1000 * self.data.get("jeu_min", 0.005))
             self.jeu.blockSignals(False)
             self.pas.setValue(int(self.data.get("pas", 51)))
+            sim = self.data.get("simulation") or {}
+            for w_ in (self.dyn_on, self.dur):
+                w_.blockSignals(True)
+            self.dyn_on.setChecked(bool(sim.get("active")))
+            self.dur.setValue(float(sim.get("duree", 4.0)))
+            for w_ in (self.dyn_on, self.dur):
+                w_.blockSignals(False)
         self._invalidate()
         self._fill_tree()
 
@@ -481,6 +544,8 @@ class MotionPanel(QWidget):
             bodies = [(n, k, self._mass_text(masses.get(n)) or dt) for n, k, dt in bodies]
         kinds = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot",
                  "slider": "Glissière", "guide": "Guide / rail",
+                 "cylindrical": "Pivot glissant", "ball": "Rotule", "lock": "Encastrement",
+                 "elastic": "Liaison élastique",
                  "coupling": "Couplage"}
         for name, kind, detail in bodies + joints:
             it = QTreeWidgetItem([name, kinds[kind], detail])
@@ -660,7 +725,7 @@ class MotionPanel(QWidget):
         return None
 
     def _is_angle(self, kind):
-        return kind == "pivot"
+        return kind in ("pivot", "cylindrical")
 
     def _to_ui(self, kind, v):
         return math.degrees(v) if self._is_angle(kind) else 1000 * v
@@ -688,6 +753,15 @@ class MotionPanel(QWidget):
             self.lim_hi.setValue(self._to_ui(j["kind"], lim[1]))
         mj = next((k for k in self.mechanism().joints if k.name == name), None)
         self._show_travel(j["kind"], mj, j)
+        if j["kind"] == "elastic":
+            self.k_spin.setValue(j.get("k_lin", 1e5))
+            self.c_spin.setValue(j.get("c_lin", 50.0))
+        else:
+            self.k_spin.setValue((j.get("spring") or [0.0])[0])
+            self.c_spin.setValue(j.get("damper") or 0.0)
+        tq = self.data.get("couples", {}).get(j["name"])
+        self.tq_on.setChecked(tq is not None)
+        self.tq_spin.setValue(tq or 0.0)
 
     def _show_travel(self, kind, mj, rec):
         self.unit.setText("°" if self._is_angle(kind) else "mm")
@@ -749,6 +823,30 @@ class MotionPanel(QWidget):
         if np.linalg.norm(p1 - p0) < 1e-9:
             raise ValueError("arête de longueur nulle")
         return p0, p1
+
+    def _other_joint(self, kind):
+        try:
+            if kind == "cylindrical":
+                self._do_pivot("cylindrical")
+            else:
+                _, segs = selection(self._scene())
+                if not segs:
+                    raise ValueError("sélectionner des arêtes au point de liaison "
+                                     "(un cercle autour du centre, ou une arête)")
+                P = np.array([p for sg in segs for p in sg])
+                c = 0.5 * (P.min(axis=0) + P.max(axis=0))
+                a, b = self._two_bodies(c)
+                d, name = doc.add_joint(self.data, kind, a, b, point=c)
+                self._store(d, f"{name} : {a} ↔ {b}.")
+        except Exception as exc:
+            self.say(f"{icons.LABELS[kind][0]} : {exc}")
+        self.app.viewport.update()
+
+    def _dynamics_toggled(self, on):
+        if self.source != "model":
+            return
+        d = doc.set_simulation(self.data, on, self.dur.value())
+        self._store(d, "Dynamique : " + ("simulation dans le temps." if on else "arrêtée."))
 
     def _do_pivot(self, kind="pivot"):
         p0, p1 = self._one_segment()
@@ -819,6 +917,14 @@ class MotionPanel(QWidget):
                                self._from_ui(j["kind"], self.drv_hi.value()))
         else:
             d = doc.remove_driver(d, j["name"])
+        k, c = self.k_spin.value(), self.c_spin.value()
+        if j["kind"] == "elastic":
+            d = doc.set_joint_params(d, j["name"], k_lin=k or 1e5, k_rot=(k or 1e5) * 0.01,
+                                     c_lin=c, c_rot=c * 0.01)
+        elif j["kind"] in ("pivot", "slider", "cylindrical", "ball"):
+            d = doc.set_joint_params(d, j["name"], spring=[k, 0.0] if k else None,
+                                     damper=c or None)
+        d = doc.set_torque(d, j["name"], self.tq_spin.value() if self.tq_on.isChecked() else None)
         self._store(d, f"{j['name']} mis à jour.")
 
     def _delete(self):
@@ -830,6 +936,17 @@ class MotionPanel(QWidget):
         """The example's dynamic simulation (weight, inertia; no motor
         needed), as poses at 30 per second; None for a kinematic one."""
         sim = (self.sample_info or {}).get("simulation")
+        if not sim and self.source == "model":
+            ms = getattr(self.mechanism(), "simulation", {}) or {}
+            if ms.get("active"):
+                m = self.mechanism()
+                T = float(ms.get("duree", 4.0))
+                motors = {jj.name: ("vitesse", (lambda t, lo=lo, hi=hi:
+                                                 lo + (hi - lo) * min(max(t / T, 0.0), 1.0)))
+                          for jj, lo, hi in m.drivers}
+                for name, v in (getattr(m, "torques", {}) or {}).items():
+                    motors[name] = ("couple", (lambda t, v=v: v))
+                sim = dict(duree=T, dt=0.002, params=dict(motors=motors))
         if not sim:
             return None
         if getattr(self, "_sim_cache", (None,))[0] is not self.mech:
@@ -840,10 +957,22 @@ class MotionPanel(QWidget):
             every = max(1, int(round(1.0 / (30 * dt))))
             rows = dyn.run(sim["duree"], dt=dt, every=every)
             n = len(rows)
+            motor_rows = [nm for nm, (kind, _f) in dyn.motors.items() if kind == "vitesse"]
+
+            def torques(r):
+                if "lam" not in r:
+                    return {}
+                rx = dyn.reactions(r["lam"])
+                return {nm: float(rx[nm + " (moteur)"][0]) for nm in motor_rows
+                        if nm + " (moteur)" in rx}
             poses = [dict(t=i / max(n - 1, 1), value=r["t"], x=r["x"], ok=True,
                           res=float(np.linalg.norm(dyn.C(r["x"], r["t"]))),
-                          ke=r["ke"], pe=r["pe"]) for i, r in enumerate(rows)]
+                          ke=r["ke"], pe=r["pe"], couples=torques(r))
+                     for i, r in enumerate(rows)]
+            if len(poses) > 1 and not poses[-1]["couples"]:
+                poses[-1]["couples"] = poses[-2]["couples"]
             self._sim_cache = (self.mech, poses)
+            self._sim_assumed = list(dyn.assumed)
         return self._sim_cache[1]
 
     def _do_validate(self):
@@ -890,7 +1019,23 @@ class MotionPanel(QWidget):
         if st and "ke" in st[0]:
             e0, e1 = st[0]["ke"] + st[0]["pe"], st[-1]["ke"] + st[-1]["pe"]
             lines.append(f"Simulation dynamique de {st[-1]['value']:.1f} s : énergie "
-                         f"{1000 * e0:.0f} → {1000 * e1:.0f} mJ (frottement dans les liaisons).")
+                         f"{1000 * e0:.0f} → {1000 * e1:.0f} mJ.")
+            names = sorted({k for r in st for k in (r.get("couples") or {})})
+            for nm in names:
+                vals = [r["couples"][nm] for r in st if nm in (r.get("couples") or {})]
+                k = int(np.argmax(np.abs(vals)))
+                lines.append(f"Couple moteur {nm} : maxi {abs(vals[k]):.3g} N·m "
+                             f"(à {st[k]['value']:.2f} s), moyen {np.mean(np.abs(vals)):.3g} N·m.")
+            on_stop = {}
+            for r in st:
+                for name, v, lim in r.get("limits") or []:
+                    on_stop.setdefault(name, r["value"])
+            for name, t0 in on_stop.items():
+                lines.append(f"{name} : en butée à partir de {t0:.2f} s.")
+            assumed = getattr(self, "_sim_assumed", [])
+            if assumed:
+                lines.append("ⓘ sans matériau, masse estimée (boîtes, 700 kg/m³) : "
+                             + ", ".join(assumed) + ".")
         ms = getattr(m, "masses", {}) or {}
         if ms:
             known = {n: mp for n, mp in ms.items() if mp["mass"] > 0}
@@ -1532,6 +1677,8 @@ class MotionPanel(QWidget):
                 cl = [near["clearance"]] if near.get("clearance") else []
                 shown = lo + t * (hi - lo)
                 info = [f"temps {near['value']:.2f} s"] if poses is not None else []
+                for nm, v in (near.get("couples") or {}).items():
+                    info.append(f"couple {nm} {v:+.3g} N·m")
                 for (jj, l_, h_), v in zip(m.drivers, m.driver_targets(shown) if m.drivers else []):
                     if jj.kind == "pivot":
                         txt = (f"{v / (2 * math.pi):.2f} tr" if m.multi_turn((jj, l_, h_))

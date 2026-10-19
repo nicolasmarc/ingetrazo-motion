@@ -22,6 +22,11 @@ LABELS = {
     "trajectory": ("Trajectoire", "Trajectory"),
     "coupling": ("Couplage", "Coupling"),
     "scan": ("Détecter", "Detect"),
+    "cylindrical": ("Pivot glissant", "Cylindrical"),
+    "ball": ("Rotule", "Ball"),
+    "lock": ("Encastrement", "Lock"),
+    "elastic": ("Liaison élastique", "Elastic"),
+    "spring": ("Ressort", "Spring"),
 }
 
 FALLBACK_ACCENT = QColor(232, 115, 12)       # orange
@@ -235,7 +240,82 @@ def _scan(p, ink, acc):
     p.setBrush(Qt.NoBrush)
 
 
-_DRAW = dict(scan=_scan, coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
+def _cylindrical(p, ink, acc):
+    """A shaft through a sleeve, turning and sliding (arrows both ways)."""
+    p.setPen(_pen(ink, 1.4))
+    p.drawLine(QPointF(3, 12), QPointF(21, 12))                 # the shaft
+    p.setBrush(_soft(acc, 255))
+    p.drawRect(QRectF(8.5, 8, 7, 8))                           # the sleeve
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.4))
+    p.drawArc(QRectF(7, 4, 10, 6), 20 * 16, 140 * 16)          # turns
+    _arrow_head(p, QPointF(8.2, 6.0), math.radians(200), acc, 2.6)
+    p.drawLine(QPointF(4, 19.5), QPointF(20, 19.5))            # slides
+    _arrow_head(p, QPointF(20, 19.5), 0.0, acc, 2.6)
+    _arrow_head(p, QPointF(4, 19.5), math.pi, acc, 2.6)
+
+
+def _ball(p, ink, acc):
+    """A ball in its socket, with a stem."""
+    p.setPen(_pen(ink, 1.4))
+    p.drawArc(QRectF(4.5, 7.5, 15, 15), 200 * 16, 140 * 16)   # the socket
+    p.setBrush(_soft(acc, 255))
+    p.drawEllipse(QPointF(12, 15), 4.6, 4.6)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(12, 10.4), QPointF(16.5, 3))            # the stem
+
+
+def _lock(p, ink, acc):
+    """Two parts bolted together."""
+    p.setPen(_pen(ink, 1.3))
+    p.drawRect(QRectF(3, 8, 9, 10))
+    p.setBrush(_soft(acc, 255))
+    p.drawRect(QRectF(12, 8, 9, 10))
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(ink, 1.8))
+    for y in (10.5, 15.5):
+        p.drawLine(QPointF(8, y), QPointF(16, y))              # the bolts
+
+
+def _zigzag(p, x0, x1, y, n, h):
+    pts = [QPointF(x0, y)]
+    for i in range(1, 2 * n):
+        pts.append(QPointF(x0 + (x1 - x0) * i / (2 * n), y + (h if i % 2 else -h)))
+    pts.append(QPointF(x1, y))
+    for a, b in zip(pts, pts[1:]):
+        p.drawLine(a, b)
+
+
+def _elastic(p, ink, acc):
+    """Two plates held by springs (a flexible mount)."""
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(4, 4), QPointF(4, 20))
+    p.setPen(_pen(ink, 1.3))
+    p.setBrush(_soft(acc, 255))
+    p.drawRect(QRectF(16, 6, 5, 12))
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.3))
+    _zigzag(p, 4, 16, 9, 3, 2.0)
+    _zigzag(p, 4, 16, 15, 3, 2.0)
+
+
+def _spring(p, ink, acc):
+    """A coil spring between two plates."""
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(5, 3), QPointF(19, 3))
+    p.drawLine(QPointF(5, 21), QPointF(19, 21))
+    p.setPen(_pen(acc, 1.4))
+    pts = [QPointF(12, 3)]
+    for i in range(1, 8):
+        pts.append(QPointF(12 + (5 if i % 2 else -5), 3 + 18 * i / 8))
+    pts.append(QPointF(12, 21))
+    for a, b in zip(pts, pts[1:]):
+        p.drawLine(a, b)
+
+
+_DRAW = dict(cylindrical=_cylindrical, ball=_ball, lock=_lock, elastic=_elastic,
+             spring=_spring, scan=_scan, coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
              guide=_guide, driver=_driver, validate=_validate,
              trajectory=_trajectory)
 
