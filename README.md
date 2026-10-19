@@ -29,6 +29,10 @@ tab appears in the side tray, and Extensions ▸ Motion has the examples.
 | Moving part | one or more groups | they move together |
 | Pivot | ONE edge or construction line on the axis | hinge between the two nearest parts |
 | Slider | ONE edge along the travel | slide between the two nearest parts |
+| Pivot glissant | ONE edge on the axis | turns and slides |
+| Rotule | edges around the joint centre (a small circle) | ball joint |
+| Encastrement | edges at the joint point | the two parts move as one |
+| Élastique | edges at the joint point | silent-block (springs in the dynamics) |
 | Guide/rail | the rail's edges (lines + arc segments) and a short stroke across the rail at each roller | one roller joint per stroke, on the nearest moving part |
 | Driver 0–100 % | a joint in the list, and its travel (° or mm) | that joint drives the motion |
 | Validate | — | 0 → 100 %: convergence, collisions, stops, gaps under *Jeu mini* |
@@ -44,9 +48,8 @@ meshing gears (ratio from the teeth), separate pins kept with the part they
 are pressed in — with the frame; tick the ones to keep, they are created in
 one undo step. Then pick a motor.
 
-**Autres liaisons**: pivot glissant (one edge on the axis), rotule,
-encastrement, liaison élastique (edges around the joint point). On any
-joint: ressort, amortisseur, moteur en couple. Tick **Dynamique** (and a
+The twelve tools sit in one grid: parts and pivot/slider, the other
+standard joints, then rail, motor, validation, trajectory. On any joint: ressort, amortisseur, moteur en couple. Tick **Dynamique** (and a
 duration) to run your model in time: weight, springs, dampers, stops; the
 report gives the motors' torques.
 

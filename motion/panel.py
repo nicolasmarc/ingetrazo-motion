@@ -56,6 +56,11 @@ TIPS = {
     "driver": "Moteur 0–100 % (Driver) — la liaison choisie dans la liste, avec la course indiquée.",
     "validate": "Valider (Validate) — de 0 à 100 % : collisions, butées, jeu minimal.",
     "trajectory": "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.",
+    "cylindrical": "Pivot glissant (Cylindrical) — UNE arête sur l'axe : la pièce tourne et coulisse.",
+    "ball": "Rotule (Ball) — des arêtes autour du centre (un petit cercle) : toutes les rotations.",
+    "lock": "Encastrement (Lock) — des arêtes au point de liaison : les deux pièces n'en font qu'une.",
+    "elastic": "Liaison élastique (Elastic) — des arêtes au point de liaison : un silentbloc, "
+               "rigide en cinématique, ressorts et amortisseurs en dynamique.",
 }
 
 
@@ -227,24 +232,6 @@ class MotionPanel(QWidget):
             self.buttons[name] = b
         self.buttons["trajectory"].setCheckable(True)
         lay.addLayout(grid)
-        from PySide6.QtWidgets import QMenu
-        self.more_btn = QToolButton()
-        self.more_btn.setText("Autres liaisons")
-        self.more_btn.setPopupMode(QToolButton.InstantPopup)
-        self.more_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.more_btn.setIcon(icons.icon("ball", self, 20))
-        menu = QMenu(self.more_btn)
-        for kind, tip in (("cylindrical", "UNE arête sur l'axe : tourne et coulisse"),
-                          ("ball", "arêtes autour du centre (un cercle) : toutes les rotations"),
-                          ("lock", "arêtes au point de liaison : les deux pièces n'en font qu'une"),
-                          ("elastic", "arêtes au point de liaison : silentbloc (dynamique)")):
-            act = menu.addAction(icons.icon(kind, self, 18), f"{icons.LABELS[kind][0]} — {tip}")
-            act.triggered.connect(lambda _c=False, k=kind: self._other_joint(k))
-        self.more_btn.setMenu(menu)
-        mrow0 = QHBoxLayout()
-        mrow0.addWidget(self.more_btn)
-        mrow0.addStretch(1)
-        lay.addLayout(mrow0)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Nom", "Type", "Détail"])
@@ -559,7 +546,8 @@ class MotionPanel(QWidget):
             self.tree.resizeColumnToContents(c)
         self.tree.blockSignals(False)
         editable = self.source == "model"
-        for n in ("fixed", "moving", "pivot", "slider", "guide"):
+        for n in ("fixed", "moving", "pivot", "slider", "guide",
+                  "cylindrical", "ball", "lock", "elastic"):
             self.buttons[n].setEnabled(editable)
         self.delete_btn.setEnabled(editable)
         self._fill_materials()
@@ -825,22 +813,30 @@ class MotionPanel(QWidget):
         return p0, p1
 
     def _other_joint(self, kind):
-        try:
-            if kind == "cylindrical":
-                self._do_pivot("cylindrical")
-            else:
-                _, segs = selection(self._scene())
-                if not segs:
-                    raise ValueError("sélectionner des arêtes au point de liaison "
-                                     "(un cercle autour du centre, ou une arête)")
-                P = np.array([p for sg in segs for p in sg])
-                c = 0.5 * (P.min(axis=0) + P.max(axis=0))
-                a, b = self._two_bodies(c)
-                d, name = doc.add_joint(self.data, kind, a, b, point=c)
-                self._store(d, f"{name} : {a} ↔ {b}.")
-        except Exception as exc:
-            self.say(f"{icons.LABELS[kind][0]} : {exc}")
-        self.app.viewport.update()
+        self._action(kind)
+
+    def _do_cylindrical(self):
+        self._do_pivot("cylindrical")
+
+    def _point_joint(self, kind):
+        _, segs = selection(self._scene())
+        if not segs:
+            raise ValueError("sélectionner des arêtes au point de liaison "
+                             "(un cercle autour du centre, ou une arête)")
+        P = np.array([p for sg in segs for p in sg])
+        c = 0.5 * (P.min(axis=0) + P.max(axis=0))
+        a, b = self._two_bodies(c)
+        d, name = doc.add_joint(self.data, kind, a, b, point=c)
+        self._store(d, f"{name} : {a} ↔ {b}.")
+
+    def _do_ball(self):
+        self._point_joint("ball")
+
+    def _do_lock(self):
+        self._point_joint("lock")
+
+    def _do_elastic(self):
+        self._point_joint("elastic")
 
     def _dynamics_toggled(self, on):
         if self.source != "model":

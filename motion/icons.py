@@ -8,8 +8,11 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPainterPath,
                            QPen, QPixmap, QPolygonF)
 
-NAMES = ("fixed", "moving", "pivot", "slider", "guide", "driver",
-         "validate", "trajectory")
+# the panel's tools, four per row: parts and the simple joints, the other
+# standard joints, then rail, motor, validation, trajectory
+NAMES = ("fixed", "moving", "pivot", "slider",
+         "cylindrical", "ball", "lock", "elastic",
+         "guide", "driver", "validate", "trajectory")
 
 LABELS = {
     "fixed": ("Pièce fixe", "Fixed part"),
@@ -25,7 +28,7 @@ LABELS = {
     "cylindrical": ("Pivot glissant", "Cylindrical"),
     "ball": ("Rotule", "Ball"),
     "lock": ("Encastrement", "Lock"),
-    "elastic": ("Liaison élastique", "Elastic"),
+    "elastic": ("Élastique", "Elastic"),
     "spring": ("Ressort", "Spring"),
 }
 

@@ -70,7 +70,8 @@
   validation, playback and the split-screen video follow the simulation in real time,
   with the energy read out. A validation can take poses computed elsewhere
   (`collide.validate(poses=...)`).
-- **The other standard joints** («Autres liaisons» in the panel): *pivot glissant*
+- **The other standard joints**, in the panel's tool grid with the others (twelve
+  tools, four per row, each with its icon drawn in code): *pivot glissant*
   (cylindrical: turns and slides, its angle motorised, its slide with its own stops and
   spring), *rotule* (ball), *encastrement* (lock: two parts as one), *liaison élastique*
   (a silent-block: rigid for the kinematics, springs and dampers in every direction in
