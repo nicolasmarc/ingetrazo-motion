@@ -52,7 +52,10 @@ def _window():
     win.resize(1400, 900)
     win.show()
     dock = next(d for d in win._extension_docks if d.objectName() == "extension_motion")
-    _state.update(win=win, panel=dock.widget(), dock=dock)
+    panel = dock.widget()
+    if hasattr(panel, "setWidgetResizable"):     # 0.5.9+: a scroll area on short screens
+        panel = panel.widget()
+    _state.update(win=win, panel=panel, dock=dock)
     return win
 
 
