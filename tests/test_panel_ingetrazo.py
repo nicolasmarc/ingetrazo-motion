@@ -98,7 +98,10 @@ def test_drop_leaf_built_from_the_model():
     table = _box_group("Plateau", (-0.4, -0.2, -0.009), (0, 0.2, 0.009))
     leaf = _box_group("Abattant", (0.0, -0.2, -0.009), (0.6, 0.2, 0.009))
     scene.groups += [table, leaf]
-    hinge = scene.mesh.add_edge(V(0, -0.2, 0), V(0, 0.2, 0))
+    # the hinge on the top face, the leaf folds up: a hinge at mid-thickness
+    # would swing the leaf's lower corner into the table (the check on the
+    # real surfaces sees it)
+    hinge = scene.mesh.add_edge(V(0, -0.2, 0.009), V(0, 0.2, 0.009))
     win.viewport.notify_scene_changed()
 
     _select(win, table); panel._action("fixed")
@@ -124,9 +127,9 @@ def test_drop_leaf_built_from_the_model():
     panel.slider.setValue(500)
     m = panel.mechanism()
     body = m.bodies[0]
-    tip = body.world_point(m.pose(panel.x, body), (0.6, 0, 0))
+    tip = body.world_point(m.pose(panel.x, body), (0.6, 0, 0.009))
     assert abs(tip[0] - 0.6 * math.cos(math.pi / 4)) < 1e-6
-    assert abs(abs(tip[2]) - 0.6 * math.sin(math.pi / 4)) < 1e-6
+    assert abs(abs(tip[2] - 0.009) - 0.6 * math.sin(math.pi / 4)) < 1e-6
     # each edit was one undo step: the steps (19) stored by Valider, then
     # the motor
     win._on_undo()
@@ -151,8 +154,8 @@ def test_two_motors_from_the_panel():
     table2 = _box_group("Plateau2", (-0.4, 1.0, -0.009), (0, 1.4, 0.009))
     leaf2 = _box_group("Abattant2", (0.0, 1.0, -0.009), (0.6, 1.4, 0.009))
     scene.groups += [table, leaf1, table2, leaf2]
-    h1 = scene.mesh.add_edge(V(0, -0.2, 0), V(0, 0.2, 0))
-    h2 = scene.mesh.add_edge(V(0, 1.0, 0), V(0, 1.4, 0))
+    h1 = scene.mesh.add_edge(V(0, -0.2, 0.009), V(0, 0.2, 0.009))   # on the top face
+    h2 = scene.mesh.add_edge(V(0, 1.0, 0.009), V(0, 1.4, 0.009))
     win.viewport.notify_scene_changed()
     _select(win, table, table2); panel._action("fixed")
     _select(win, leaf1); panel._action("moving")
@@ -172,8 +175,8 @@ def test_two_motors_from_the_panel():
     panel.slider.setValue(500)
     m = panel.mechanism()
     for body, deg in ((m.bodies[0], 45), (m.bodies[1], 22.5)):
-        tip = body.world_point(m.pose(panel.x, body), (0.6, body.center[1], 0))
-        assert abs(math.degrees(math.atan2(abs(tip[2]), tip[0])) - deg) < 1e-5
+        tip = body.world_point(m.pose(panel.x, body), (0.6, body.center[1], 0.009))
+        assert abs(math.degrees(math.atan2(abs(tip[2] - 0.009), tip[0])) - deg) < 1e-5
     # untick «Moteur» on the second one: back to one motor (one undo step)
     panel.tree.setCurrentItem(panel.tree.findItems("pivot2", Qt_MatchExactly())[0])
     assert panel.motor_on.isChecked()
@@ -230,7 +233,7 @@ def test_panel_on_two_curved_rails_built_from_edges():
     # at 100 % the top roller reaches the start of the curve: the panel's
     # outer top corner sits right under the lintel's corner, 10 mm apart
     assert (w_["box_a"], w_["box_b"], w_["t"]) == ("Linteau", "Panneau", 1.0)
-    assert abs(w_["distance"] - 0.01) < 1e-7
+    assert abs(w_["distance"] - 0.01) < 1e-6           # float32 positions
 
 
 def test_video_export_split_screen():

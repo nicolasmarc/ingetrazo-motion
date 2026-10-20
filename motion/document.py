@@ -526,7 +526,48 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             mp = m.masses.get(name)
             if mp and mp["mass"] > 0 and body is not m.ground:
                 body.mass, body.com, body.inertia = mp["mass"], mp["com"], mp["inertia"]
+        m.surfaces = _surfaces(m, d, bodies, triangles_of_group, names_of_group)
     return m, problems
+
+
+_CLOUDS = {}
+
+
+def _surfaces(m, d, bodies, triangles_of_group, names_of_group=None):
+    """The parts' sampled surfaces, for collisions on the real shapes."""
+    from . import contact
+    if not contact.available():
+        return None
+    tris = {}
+    for b in d["bodies"]:
+        for uid in b["groups"]:
+            T = triangles_of_group(uid)
+            if T is not None and len(T):
+                T = np.asarray(T, float).reshape(-1, 3, 3)
+                o = T.reshape(-1, 3).mean(axis=0)
+                vol = np.einsum("ij,ij->i", T[:, 0] - o, np.cross(T[:, 1] - o, T[:, 2] - o)).sum()
+                tris[uid] = T[:, ::-1] if vol < 0 else T     # faces turned outward
+    if not tris:
+        return None
+    allp = np.concatenate([T.reshape(-1, 3) for T in tris.values()])
+    h = contact.spacing(float(np.linalg.norm(allp.max(0) - allp.min(0))) * 0.75)
+    clouds = {}
+    for b in d["bodies"]:
+        body = bodies.get(b["name"])
+        if body is None:
+            continue
+        items = clouds.setdefault(body.name, [])
+        for uid in b["groups"]:
+            T = tris.get(uid)
+            if T is None:
+                continue
+            key = (uid, h, T.shape, float(T.sum()))
+            if key not in _CLOUDS:
+                if len(_CLOUDS) > 2000:
+                    _CLOUDS.clear()
+                _CLOUDS[key] = contact.surface_points(T, h)
+            items.append(((names_of_group and names_of_group(uid)) or uid, _CLOUDS[key], T))
+    return contact.Surfaces(m, clouds, h)
 
 
 def trajectory(mech, rows, body, point):

@@ -173,11 +173,56 @@ def _aabb_gap(a, b):
     return float(np.linalg.norm(np.maximum(0.0, np.maximum(b[1] - a[2], a[1] - b[2]))))
 
 
+def _surfaces(mech):
+    S = getattr(mech, "surfaces", None)
+    return S if S is not None and S.data else None
+
+
+def _mesh_pairs(mech, x, reach):
+    """Pairs checked on their real surfaces: [(a, b, record or None)]."""
+    S = _surfaces(mech)
+    if S is None:
+        return []
+    out = []
+    fb = {id(b) for b in getattr(mech, "follower_bodies", lambda: [])()}
+    nc = getattr(mech, "no_contact", set())
+    bodies = [mech.ground] + mech.bodies
+    joined = _joined(mech)
+    for i, a in enumerate(bodies):
+        if not S.has(a):
+            continue
+        for b in bodies[i + 1:]:
+            if not S.has(b) or frozenset((id(a), id(b))) in nc or (a.fixed and b.fixed):
+                continue
+            if id(a) in fb and id(b) in fb:
+                continue
+            r = S.pair(a, b, mech.pose(x, a), mech.pose(x, b), reach)
+            if r is not None:
+                d, pa, pb, ga, gb = r
+                out.append(dict(a=a.name, b=b.name, box_a=ga, box_b=gb, pa=pa, pb=pb,
+                                distance=d if d < -S.tol else max(d, 0.0), mesh=True,
+                                joined=frozenset((a.name, b.name)) in joined))
+    return out
+
+
+def _mesh_reach(mech, jeu_min=0.0):
+    S = _surfaces(mech)
+    return max(jeu_min + S.h, 6 * S.h) if S is not None else 0.0
+
+
+def _box_only(mech, a, b):
+    S = _surfaces(mech)
+    return S is None or not (S.has(a) and S.has(b))
+
+
 def interferences(mech, x, margin=1e-6, ignore_joined=True):
     """List of (body_a, body_b) pairs that overlap at configuration ``x``."""
-    hits = []
+    hits = [(c["a"], c["b"]) for c in _mesh_pairs(mech, x, _mesh_reach(mech))
+            if c["distance"] < 0]
     cache = {}
     for a, b, skip in _pairs(mech, ignore_joined):
+        if not _box_only(mech, a, b):
+            continue
         for body in (a, b):
             if id(body) not in cache:
                 cache[id(body)] = _world_boxes(body, mech.pose(x, body))
@@ -189,15 +234,17 @@ def interferences(mech, x, margin=1e-6, ignore_joined=True):
     return hits
 
 
-def clearances(mech, x, ignore_joined=True):
+def clearances(mech, x, ignore_joined=True, reach=None):
     """Smallest gap for every pair of bodies at configuration ``x``:
     list of dicts (a, b, box_a, box_b, distance, pa, pb), smallest first.
     distance < 0 means the boxes overlap (by about -distance).
     Box pairs are taken nearest first by their axis-aligned bounds, and the
     exact distance is only computed while it can still beat the best."""
-    out = []
+    out = list(_mesh_pairs(mech, x, reach if reach is not None else _mesh_reach(mech)))
     cache = {}
     for a, b, skip in _pairs(mech, ignore_joined):
+        if not _box_only(mech, a, b):
+            continue
         for body in (a, b):
             if id(body) not in cache:
                 cache[id(body)] = _world_boxes(body, mech.pose(x, body))
@@ -215,6 +262,22 @@ def clearances(mech, x, ignore_joined=True):
         if best is not None:
             out.append(best)
     return sorted(out, key=lambda r: r["distance"])
+
+
+def _box_hits(mech, x, ignore_joined, margin=1e-6):
+    hits, cache = [], {}
+    for a, b, skip in _pairs(mech, ignore_joined):
+        if not _box_only(mech, a, b):
+            continue
+        for body in (a, b):
+            if id(body) not in cache:
+                cache[id(body)] = _world_boxes(body, mech.pose(x, body))
+        WA, WB = cache[id(a)], cache[id(b)]
+        if any(_aabb_gap(A, B) <= 0 and obb_overlap(A[0], B[0], margin)
+               for i, A in enumerate(WA) for k, B in enumerate(WB)
+               if (i, k) not in skip):
+            hits.append((a.name, b.name))
+    return hits
 
 
 def clearance_violations(mech, x, jeu_min, ignore_joined=True):
@@ -248,10 +311,15 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
     rows, worst, problems = [], None, []
     for st in (poses if poses is not None else sweep(mech, steps)):
         x = st["x"]
-        cl = clearances(mech, x, ignore_joined)
+        cl = clearances(mech, x, ignore_joined, reach=_mesh_reach(mech, jeu_min))
+        hits = [(c["a"], c["b"]) for c in cl if c.get("mesh") and c["distance"] < 0]
+        if _surfaces(mech) is None:
+            hits = interferences(mech, x, ignore_joined=ignore_joined)
+        else:
+            hits += [h for h in _box_hits(mech, x, ignore_joined)]
         row = dict({k: v for k, v in st.items() if k not in ("x",)},
                    t=st["t"], value=st["value"], x=x, ok=st["ok"], res=st["res"],
-                   hits=interferences(mech, x, ignore_joined=ignore_joined),
+                   hits=hits,
                    limits=limit_violations(mech, x),
                    clearance=cl[0] if cl else None)
         rows.append(row)
@@ -263,6 +331,14 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
         if poses is None:                 # in a simulation the stops act: not a fault
             for name, v, lim in row["limits"]:
                 problems.append(f"{pct} % : butée dépassée {name} = {v:.4g}")
+        # parts joined together: right next to their joint (within 2 sampling
+        # steps) the gap means nothing — a pin in its bore; their collisions
+        # and their gaps further off count
+        if _surfaces(mech) is not None:
+            near = 2 * _surfaces(mech).h
+            cl = [c for c in cl if not c.get("joined") or c["distance"] < 0
+                  or c["distance"] >= near]
+        row["clearance"] = cl[0] if cl else None
         if cl:
             c = cl[0]
             if worst is None or c["distance"] < worst["distance"]:
