@@ -20,6 +20,8 @@
   wall, a 3 mm gap read exactly.
 
 ### Changed
+- Videos of big models keep their largest faces when thinned (every n-th
+  face left holes).
 - Groups whose faces are turned inward are turned outward for the collision
   check (signed volume).
 - The panel tests' hinges sit on the top face: at mid-thickness the leaf's

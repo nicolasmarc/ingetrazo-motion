@@ -64,12 +64,26 @@ class Shaded:
                 k += 1
             self.items.append([body, V, idx, col, fcols])
         total = sum(len(i[2]) for i in self.items)
-        if total > max_faces:                     # keep it drawable
-            step = int(math.ceil(total / max_faces))
+        if total > max_faces:                     # keep it drawable: the
+            # largest faces (the small ones are the fine facets of curved
+            # surfaces, hardly seen); every n-th face would leave holes
+            areas = []
             for it in self.items:
-                it[2] = it[2][::step]
+                V = it[1]
+                for f in it[2]:
+                    P = V[f]
+                    areas.append(0.5 * float(np.linalg.norm(
+                        np.cross(P[1:-1] - P[0], P[2:] - P[0]).sum(axis=0))) if len(P) >= 3 else 0.0)
+            areas = np.array(areas)
+            cut = np.sort(areas)[::-1][max_faces - 1]
+            k = 0
+            for it in self.items:
+                n = len(it[2])
+                keep = np.nonzero(areas[k:k + n] >= cut)[0]
+                k += n
+                it[2] = [it[2][i] for i in keep]
                 if it[4] is not None:
-                    it[4] = it[4][::step]
+                    it[4] = [it[4][i] for i in keep]
 
     @staticmethod
     def _boxes(body):
