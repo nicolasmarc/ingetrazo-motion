@@ -587,3 +587,51 @@ if __name__ == "__main__":
         if k.startswith("test_"):
             f(); print("ok", k)
     teardown_module()
+
+
+def test_screw_and_the_other_new_tools_from_the_panel():
+    # a nut on a vertical screw (pitch 2 mm) turned two turns rises 4 mm;
+    # the other three new tools make their joints from the same kind of
+    # selection
+    if SKIP:
+        print("skip:", SKIP); return
+    from PySide6.QtGui import QVector3D as V
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    assert len(panel.buttons) == 16
+    for n in ("annular", "pointplane", "planar", "screw"):
+        assert panel.buttons[n].isEnabled() and panel.buttons[n].text()
+    scene = win.viewport.scene
+    frame = _box_group("Bâti", (-0.1, -0.1, -0.02), (0.1, 0.1, 0.0))
+    nut = _box_group("Écrou", (-0.01, -0.01, 0.05), (0.01, 0.01, 0.06))
+    scene.groups += [frame, nut]
+    axis = scene.mesh.add_edge(V(0, 0, 0.04), V(0, 0, 0.07))
+    win.viewport.notify_scene_changed()
+    _select(win, frame); panel._action("fixed")
+    _select(win, nut); panel._action("moving")
+    panel.ask_pitch = lambda: 0.002
+    _select(win, axis); panel._action("screw")
+    j = panel.app.document_data()["joints"][0]
+    assert j["kind"] == "screw" and abs(j["pitch"] - 0.002) < 1e-12
+    it = panel.tree.findItems(j["name"], Qt_MatchExactly())[0]
+    panel.tree.setCurrentItem(it)
+    panel.drv_lo.setValue(0)
+    panel.drv_hi.setValue(720)
+    panel._action("driver")
+    panel._action("validate")
+    assert panel.report["ok"], panel.report["problems"]
+    panel.slider.setValue(1000)
+    m = panel.mechanism()
+    b = m.bodies[0]
+    assert abs(m.slide_value(m.joints[0], panel.x) - 0.004) < 1e-7
+    # the three others, each replacing the last
+    for kind in ("annular", "pointplane", "planar"):
+        panel.app.set_document_data(dict(panel.app.document_data(), joints=[], driver=None,
+                                         drivers=[]))
+        panel.set_source("model")
+        _select(win, axis); panel._action(kind)
+        js = panel.app.document_data()["joints"]
+        assert [x["kind"] for x in js] == [kind], (kind, panel.out.toPlainText())
+        from motion import solver
+        assert solver.dof(panel.mechanism()) == {"annular": 4, "pointplane": 5, "planar": 3}[kind]

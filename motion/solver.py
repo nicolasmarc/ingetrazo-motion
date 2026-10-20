@@ -7,7 +7,8 @@ import numpy as np
 from .model import perp_basis
 
 
-ROWS = {"guide": 3, "coupling": 1, "ball": 3}      # residual rows (default 6)
+ROWS = {"guide": 3, "coupling": 1, "ball": 3,      # residual rows (default 6)
+        "annular": 3, "pointplane": 1, "planar": 4, "screw": 7}
 
 
 def rows_of(j):
@@ -32,6 +33,18 @@ def _joint_residual(mech, j, x):
         return np.concatenate([pb - pa, [Rr[2, 1] - Rr[1, 2], Rr[0, 2] - Rr[2, 0],
                                          Rr[1, 0] - Rr[0, 1]]])
     ua, ub = Ra @ j.axis, Rb @ j.axis
+    if j.kind == "annular":                                  # ball centre on the bore's axis
+        d = pb - pa
+        return d - ua * (ua @ d)
+    if j.kind == "pointplane":                               # point on the plane
+        return np.array([ua @ (pb - pa)])
+    if j.kind == "planar":                                   # on the plane, normals together
+        return np.concatenate([[ua @ (pb - pa)], np.cross(ua, ub)])
+    if j.kind == "screw":                                    # cylindrical + advance per turn
+        d = pb - pa
+        ang = float((mech.pose(x, j.b)[3:] - mech.pose(x, j.a)[3:]) @ j.axis)
+        return np.concatenate([d - ua * (ua @ d), np.cross(ua, ub),
+                               [ua @ d - j.pitch * ang / (2 * np.pi)]])
     if j.kind == "pivot":
         return np.concatenate([pa - pb, np.cross(ua, ub)])   # same point, axis
     d = pb - pa
@@ -51,7 +64,7 @@ def _driver_residual(mech, x, driver_value, k=0, targets=None):
     if mech.multi_turn(drv):                  # several turns: count them
         return mech.continuous_value(j, x) - target
     d = mech.joint_value(j, x) - target
-    if j.kind in ("pivot", "cylindrical"):    # angles: a full turn is no error
+    if j.kind in ("pivot", "cylindrical", "screw"):   # angles: a full turn is no error
         d = math.atan2(math.sin(d), math.cos(d))
     return d
 
@@ -172,7 +185,7 @@ def sweep(mech, steps=51):
     sub = 1
     if steps > 1:
         for jj, l_, h_ in mech.drivers:
-            if jj.kind in ("pivot", "cylindrical"):
+            if jj.kind in ("pivot", "cylindrical", "screw"):
                 sub = max(sub, int(math.ceil(abs(h_ - l_) / (steps - 1) / 0.4)))
     v_prev = lo
     for i in range(steps):

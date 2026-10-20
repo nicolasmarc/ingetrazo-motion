@@ -73,11 +73,13 @@ def add_body(data, uids, fixed, name=None):
 
 
 def add_joint(data, kind, a, b, point=None, axis=None, rail=None,
-              limits=None, name=None):
+              limits=None, name=None, pitch=0.001):
     d = normalized(data)
     stem = {"pivot": "pivot", "slider": "glissière", "guide": "galet",
             "cylindrical": "pivot glissant", "ball": "rotule", "lock": "encastrement",
-            "elastic": "élastique"}[kind]
+            "elastic": "élastique", "annular": "linéaire annulaire",
+            "pointplane": "ponctuelle", "planar": "appui plan",
+            "screw": "hélicoïdale"}[kind]
     j = {"kind": kind, "name": name or unique_name(d, stem), "a": a, "b": b,
          "limits": list(limits) if limits is not None else None}
     if kind == "guide":
@@ -90,6 +92,8 @@ def add_joint(data, kind, a, b, point=None, axis=None, rail=None,
     else:
         j["point"] = list(map(float, point))
         j["axis"] = list(map(float, unit(axis)))
+        if kind == "screw":
+            j["pitch"] = float(pitch)
     d["joints"].append(j)
     return d, j["name"]
 
@@ -175,7 +179,7 @@ def apply_detection(data, parts, frame, proposals):
     return d, made
 
 
-PARAMS = ("spring", "damper", "slide_limits", "k_lin", "k_rot", "c_lin", "c_rot")
+PARAMS = ("spring", "damper", "slide_limits", "k_lin", "k_rot", "c_lin", "c_rot", "pitch")
 
 
 def set_joint_params(data, name, **params):
@@ -480,6 +484,14 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             mj = m.ball(a, b, j["point"], j["name"])
         elif k == "lock":
             mj = m.lock(a, b, j["point"], j["name"])
+        elif k == "annular":
+            mj = m.annular(a, b, j["point"], j["axis"], j["name"])
+        elif k == "pointplane":
+            mj = m.point_plane(a, b, j["point"], j["axis"], j["name"])
+        elif k == "planar":
+            mj = m.planar(a, b, j["point"], j["axis"], j["name"])
+        elif k == "screw":
+            mj = m.screw(a, b, j["point"], j["axis"], j.get("pitch", 0.001), lim, j["name"])
         elif k == "elastic":
             mj = m.elastic(a, b, j["point"], j.get("k_lin", 1e5), j.get("k_rot", 1e3),
                            j.get("c_lin", 50.0), j.get("c_rot", 1.0), j["name"])

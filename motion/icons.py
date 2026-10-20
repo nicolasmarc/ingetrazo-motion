@@ -12,6 +12,7 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPainterPath,
 # standard joints, then rail, motor, validation, trajectory
 NAMES = ("fixed", "moving", "pivot", "slider",
          "cylindrical", "ball", "lock", "elastic",
+         "annular", "pointplane", "planar", "screw",
          "guide", "driver", "validate", "trajectory")
 
 LABELS = {
@@ -30,6 +31,10 @@ LABELS = {
     "lock": ("Encastrement", "Lock"),
     "elastic": ("Élastique", "Elastic"),
     "spring": ("Ressort", "Spring"),
+    "annular": ("Lin. annulaire", "Annular"),
+    "pointplane": ("Ponctuelle", "Point–plane"),
+    "planar": ("Appui plan", "Planar"),
+    "screw": ("Hélicoïdale", "Screw"),
 }
 
 FALLBACK_ACCENT = QColor(232, 115, 12)       # orange
@@ -317,7 +322,68 @@ def _spring(p, ink, acc):
         p.drawLine(a, b)
 
 
-_DRAW = dict(cylindrical=_cylindrical, ball=_ball, lock=_lock, elastic=_elastic,
+def _annular(p, ink, acc):
+    """A ball in a bore (cut open), free to slide along it."""
+    p.setPen(_pen(ink, 1.4))
+    p.drawLine(QPointF(3, 8), QPointF(21, 8))                   # the bore's walls
+    p.drawLine(QPointF(3, 16), QPointF(21, 16))
+    p.setBrush(_soft(acc, 255))
+    p.drawEllipse(QPointF(12, 12), 3.8, 3.8)                   # the ball
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.4))
+    p.drawLine(QPointF(5, 20.5), QPointF(19, 20.5))
+    _arrow_head(p, QPointF(19, 20.5), 0.0, acc, 2.6)
+    _arrow_head(p, QPointF(5, 20.5), math.pi, acc, 2.6)
+
+
+def _pointplane(p, ink, acc):
+    """A ball touching a plane at one point."""
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(3, 18), QPointF(21, 18))                 # the plane
+    p.setPen(_pen(ink, 1.0))
+    for x in (5, 9, 13, 17, 21):
+        p.drawLine(QPointF(x, 18), QPointF(x - 3, 21.5))
+    p.setPen(_pen(ink, 1.4))
+    p.setBrush(_soft(acc, 255))
+    p.drawEllipse(QPointF(12, 12.5), 5.2, 5.2)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(12, 7.3), QPointF(12, 3))                # the stem
+
+
+def _planar(p, ink, acc):
+    """A block lying on a plane, sliding and turning on it."""
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(3, 17), QPointF(21, 17))
+    p.setPen(_pen(ink, 1.0))
+    for x in (5, 9, 13, 17, 21):
+        p.drawLine(QPointF(x, 17), QPointF(x - 3, 20.5))
+    p.setPen(_pen(ink, 1.4))
+    p.setBrush(_soft(acc, 255))
+    p.drawRect(QRectF(6.5, 10.5, 11, 6.5))
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.4))
+    p.drawArc(QRectF(7, 3.5, 10, 6), 20 * 16, 140 * 16)        # turns about the normal
+    _arrow_head(p, QPointF(8.2, 5.5), math.radians(200), acc, 2.6)
+
+
+def _screw(p, ink, acc):
+    """A threaded rod through a nut."""
+    p.setPen(_pen(ink, 1.3))
+    p.drawLine(QPointF(3, 9.5), QPointF(21, 9.5))
+    p.drawLine(QPointF(3, 14.5), QPointF(21, 14.5))
+    for x in (4, 7, 16, 19):                                    # the thread
+        p.drawLine(QPointF(x, 14.5), QPointF(x + 2, 9.5))
+    p.setBrush(_soft(acc, 255))
+    p.drawRect(QRectF(9, 6.5, 6, 11))                          # the nut
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.4))
+    p.drawArc(QRectF(7, 17, 10, 5), 200 * 16, 140 * 16)
+    _arrow_head(p, QPointF(15.8, 20.6), math.radians(-20), acc, 2.6)
+
+
+_DRAW = dict(annular=_annular, pointplane=_pointplane, planar=_planar, screw=_screw,
+             cylindrical=_cylindrical, ball=_ball, lock=_lock, elastic=_elastic,
              spring=_spring, scan=_scan, coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
              guide=_guide, driver=_driver, validate=_validate,
              trajectory=_trajectory)

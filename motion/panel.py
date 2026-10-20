@@ -61,6 +61,14 @@ TIPS = {
     "lock": "Encastrement (Lock) — des arêtes au point de liaison : les deux pièces n'en font qu'une.",
     "elastic": "Liaison élastique (Elastic) — des arêtes au point de liaison : un silentbloc, "
                "rigide en cinématique, ressorts et amortisseurs en dynamique.",
+    "annular": "Linéaire annulaire (Annular) — UNE arête sur l'axe de l'alésage, plus un cercle "
+               "de la sphère : la sphère glisse dans l'alésage et tourne en tous sens.",
+    "pointplane": "Ponctuelle (Point–plane) — UNE arête le long de la normale, partant du point "
+                  "de contact : le point reste sur le plan.",
+    "planar": "Appui plan (Planar) — UNE arête le long de la normale au plan : la pièce glisse "
+              "sur le plan et tourne autour de la normale.",
+    "screw": "Hélicoïdale (Screw) — UNE arête sur l'axe, puis le pas : la pièce avance d'un pas "
+             "par tour (pas négatif : filet à gauche).",
 }
 
 
@@ -540,7 +548,8 @@ class MotionPanel(QWidget):
         kinds = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot",
                  "slider": "Glissière", "guide": "Guide / rail",
                  "cylindrical": "Pivot glissant", "ball": "Rotule", "lock": "Encastrement",
-                 "elastic": "Liaison élastique",
+                 "elastic": "Liaison élastique", "annular": "Linéaire annulaire",
+                 "pointplane": "Ponctuelle", "planar": "Appui plan", "screw": "Hélicoïdale",
                  "coupling": "Couplage"}
         for name, kind, detail in bodies + joints:
             it = QTreeWidgetItem([name, kinds[kind], detail])
@@ -555,7 +564,8 @@ class MotionPanel(QWidget):
         self.tree.blockSignals(False)
         editable = self.source == "model"
         for n in ("fixed", "moving", "pivot", "slider", "guide",
-                  "cylindrical", "ball", "lock", "elastic"):
+                  "cylindrical", "ball", "lock", "elastic",
+                  "annular", "pointplane", "planar", "screw"):
             self.buttons[n].setEnabled(editable)
         self.delete_btn.setEnabled(editable)
         self._fill_materials()
@@ -721,7 +731,7 @@ class MotionPanel(QWidget):
         return None
 
     def _is_angle(self, kind):
-        return kind in ("pivot", "cylindrical")
+        return kind in ("pivot", "cylindrical", "screw")
 
     def _to_ui(self, kind, v):
         return math.degrees(v) if self._is_angle(kind) else 1000 * v
@@ -846,6 +856,48 @@ class MotionPanel(QWidget):
     def _do_elastic(self):
         self._point_joint("elastic")
 
+    def _do_annular(self):
+        _, segs = selection(self._scene())
+        if not segs:
+            raise ValueError("sélectionner UNE arête sur l'axe de l'alésage "
+                             "(et un cercle de la sphère)")
+        lens = [np.linalg.norm(q - p) for p, q in segs]
+        k = int(np.argmax(lens)) if len(segs) > 1 else 0
+        p0, p1 = segs[k]
+        ax = (p1 - p0) / max(lens[k], 1e-12)
+        rest = [p for i, sg in enumerate(segs) if i != k for p in sg]
+        if rest:                       # the ball's centre, from its circle
+            P = np.array(rest)
+            c = 0.5 * (P.min(axis=0) + P.max(axis=0))
+        else:
+            c = 0.5 * (p0 + p1)
+        a, b = self._two_bodies(c)
+        d, name = doc.add_joint(self.data, "annular", a, b, point=c, axis=ax)
+        self._store(d, f"{name} : {a} ↔ {b}.")
+
+    def _do_pointplane(self):
+        self._do_pivot("pointplane")
+
+    def _do_planar(self):
+        self._do_pivot("planar")
+
+    def ask_pitch(self):
+        """Pitch of a new hélicoïdale (mm per turn)."""
+        from PySide6.QtWidgets import QInputDialog
+        v, ok = QInputDialog.getDouble(self, "Hélicoïdale", "Pas (mm par tour) :",
+                                       1.0, -1000.0, 1000.0, 3)
+        return v / 1000 if ok and v else None
+
+    def _do_screw(self):
+        p0, p1 = self._one_segment()
+        pitch = self.ask_pitch()
+        if not pitch:
+            return
+        a, b = self._two_bodies((p0 + p1) / 2)
+        d, name = doc.add_joint(self.data, "screw", a, b, point=(p0 + p1) / 2,
+                                axis=p1 - p0, pitch=pitch)
+        self._store(d, f"{name} : {a} ↔ {b}, pas {1000 * pitch:g} mm.")
+
     def _dynamics_toggled(self, on):
         if self.source != "model":
             return
@@ -855,7 +907,8 @@ class MotionPanel(QWidget):
     def _do_pivot(self, kind="pivot"):
         p0, p1 = self._one_segment()
         a, b = self._two_bodies((p0 + p1) / 2)
-        d, name = doc.add_joint(self.data, kind, a, b, point=p0 if kind == "slider"
+        d, name = doc.add_joint(self.data, kind, a, b,
+                                point=p0 if kind in ("slider", "pointplane", "planar")
                                 else (p0 + p1) / 2, axis=p1 - p0)
         self._store(d, f"{name} : {a} ↔ {b}.")
 
@@ -925,7 +978,7 @@ class MotionPanel(QWidget):
         if j["kind"] == "elastic":
             d = doc.set_joint_params(d, j["name"], k_lin=k or 1e5, k_rot=(k or 1e5) * 0.01,
                                      c_lin=c, c_rot=c * 0.01)
-        elif j["kind"] in ("pivot", "slider", "cylindrical", "ball"):
+        elif j["kind"] in ("pivot", "slider", "cylindrical", "ball", "screw"):
             d = doc.set_joint_params(d, j["name"], spring=[k, 0.0] if k else None,
                                      damper=c or None)
         d = doc.set_torque(d, j["name"], self.tq_spin.value() if self.tq_on.isChecked() else None)

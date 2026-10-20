@@ -257,6 +257,63 @@ class Lock:
 
 
 @dataclass
+class Annular:
+    """Linéaire annulaire: the point ``point`` of b (a ball's centre) stays
+    on the line through ``point`` along ``axis`` of a (a bore's axis): it
+    slides along it and every rotation is free."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    axis: np.ndarray
+    limits: tuple = None
+    name: str = ""
+    kind: str = "annular"
+
+
+@dataclass
+class PointPlane:
+    """Ponctuelle: the point ``point`` of b stays on the plane through
+    ``point`` square to ``axis`` (the normal) of a."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    axis: np.ndarray
+    limits: tuple = None
+    name: str = ""
+    kind: str = "pointplane"
+
+
+@dataclass
+class Planar:
+    """Appui plan: b slides on a's plane (through ``point``, normal
+    ``axis``) and turns about the normal."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    axis: np.ndarray
+    limits: tuple = None
+    name: str = ""
+    kind: str = "planar"
+
+
+@dataclass
+class Screw:
+    """Hélicoïdale (vis-écrou): b turns about the axis and advances
+    ``pitch`` (m) per turn, positive with the angle. Its value is the
+    angle (motors, couplings)."""
+    a: Body
+    b: Body
+    point: np.ndarray
+    axis: np.ndarray
+    pitch: float = 0.001
+    limits: tuple = None
+    name: str = ""
+    kind: str = "screw"
+    spring: tuple = None
+    damper: float = 0.0
+
+
+@dataclass
 class Elastic:
     """Liaison élastique (a silent-block, a flexible mount): rigid for the
     kinematics; in the dynamics the point ``point`` of b is held to a's
@@ -370,6 +427,30 @@ class Mechanism:
         self.joints.append(j)
         return j
 
+    def annular(self, a, b, point, axis, name=""):
+        j = Annular(a, b, np.asarray(point, float), unit(axis),
+                    name=name or f"linéaire annulaire{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
+    def point_plane(self, a, b, point, normal, name=""):
+        j = PointPlane(a, b, np.asarray(point, float), unit(normal),
+                       name=name or f"ponctuelle{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
+    def planar(self, a, b, point, normal, name=""):
+        j = Planar(a, b, np.asarray(point, float), unit(normal),
+                   name=name or f"appui plan{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
+    def screw(self, a, b, point, axis, pitch, limits=None, name=""):
+        j = Screw(a, b, np.asarray(point, float), unit(axis), float(pitch), limits,
+                  name or f"hélicoïdale{len(self.joints)}")
+        self.joints.append(j)
+        return j
+
     def elastic(self, a, b, point, k_lin=1e5, k_rot=1e3, c_lin=50.0, c_rot=1.0, name=""):
         j = Elastic(a, b, np.asarray(point, float), k_lin, k_rot, c_lin, c_rot,
                     name=name or f"liaison élastique{len(self.joints)}")
@@ -438,7 +519,7 @@ class Mechanism:
     def continuous_value(self, j, x):
         """Like :meth:`joint_value`, but a pivot's angle keeps counting
         past +-180 deg (from the rotation vectors: planar mechanisms)."""
-        if j.kind in ("pivot", "cylindrical"):
+        if j.kind in ("pivot", "cylindrical", "screw"):
             qa, qb = self.pose(x, j.a), self.pose(x, j.b)
             return float((qb[3:] - qa[3:]) @ j.axis)
         return self.joint_value(j, x)
@@ -447,7 +528,7 @@ class Mechanism:
         """The (leading, or given) motor is a pivot turning more than one
         revolution."""
         drv = drv if drv is not None else self.driver
-        return (drv is not None and drv[0].kind in ("pivot", "cylindrical")
+        return (drv is not None and drv[0].kind in ("pivot", "cylindrical", "screw")
                 and abs(drv[2] - drv[1]) > 2 * np.pi + 1e-9)
 
     def joint_value(self, j, x):
@@ -460,9 +541,9 @@ class Mechanism:
             p = j.a.local_point(qa, j.b.world_point(qb, j.point))
             return float(j.path.closest(p)[0])
         Ra, Rb = j.a.rot(qa), j.b.rot(qb)
-        if j.kind in ("ball", "lock", "elastic"):
+        if j.kind in ("ball", "lock", "elastic", "annular", "pointplane", "planar"):
             return 0.0
-        if j.kind in ("pivot", "cylindrical"):
+        if j.kind in ("pivot", "cylindrical", "screw"):
             n1, n2 = perp_basis(j.axis)
             v = Ra.T @ (Rb @ n1)
             return float(np.arctan2(n2 @ v, n1 @ v))

@@ -229,7 +229,7 @@ class Dynamics:
             F[6 * k + 3: 6 * k + 6] += s * np.cross(point - self.cog(x, body), f)
 
     def _joint_efforts(self, j, x, u, t, F, idx):
-        if j.kind not in ("pivot", "slider", "cylindrical", "ball", "elastic"):
+        if j.kind not in ("pivot", "slider", "cylindrical", "ball", "elastic", "screw"):
             return
         mot = self.motors.get(j.name)
         motor = mot[1](t) if (mot is not None and mot[0] == "couple") else 0.0
@@ -255,7 +255,7 @@ class Dynamics:
             self._torque(F, idx, j, -j.k_rot * phi - j.c_rot * (wb - wa))
             return
         ax = Ra @ j.axis
-        if j.kind in ("pivot", "cylindrical"):
+        if j.kind in ("pivot", "cylindrical", "screw"):
             th = self.m.continuous_value(j, x)
             rate = float((wb - wa) @ ax)
             tau = motor - (getattr(j, "damper", 0.0) + extra_c) * rate
