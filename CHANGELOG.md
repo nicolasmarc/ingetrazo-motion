@@ -48,6 +48,9 @@
   within the chord tolerance. Faster b-spline evaluation.
 
 ### Changed
+- Video colours: the frame in light grey, each family of moving parts
+  («Patte 1»…«Patte 8», «Roue …») in its own clear colour (a part's own
+  colour still wins). `render.colours(mech)` gives them.
 - Videos of big models keep their largest faces when thinned (every n-th
   face left holes).
 - Groups whose faces are turned inward are turned outward for the collision

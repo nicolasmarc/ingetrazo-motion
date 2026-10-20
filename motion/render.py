@@ -8,6 +8,7 @@ Camera convention = IngeTrazo's: the eye sits at
 target + d (cos p cos y, cos p sin y, sin p) for yaw y and pitch p.
 """
 import math
+import re
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QImage, QLinearGradient,
@@ -16,9 +17,34 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QImage, QLinearGradient,
 from . import collide
 
 ACCENT = QColor(232, 115, 12)
-FIXED = QColor(168, 156, 142)
-MOVING = [QColor(214, 160, 100), QColor(232, 196, 140), QColor(176, 122, 72),
-          QColor(120, 150, 170), QColor(160, 120, 160), QColor(120, 160, 120)]
+# the frame in a light neutral grey, the moving parts in clear, distinct
+# colours: one colour per family of parts (« Patte 1 » … « Patte 8 » alike)
+FIXED = QColor(196, 198, 202)
+MOVING = [QColor(38, 110, 200), QColor(232, 120, 20), QColor(40, 160, 90),
+          QColor(205, 50, 60), QColor(140, 80, 190), QColor(20, 160, 170),
+          QColor(220, 180, 30), QColor(150, 100, 60)]
+
+
+def family(name):
+    """« Patte 3 », « Patte4 », « Roue 12 » -> « patte », « roue »."""
+    return re.sub(r"[\s_\-]*\d+$", "", (name or "").strip()).lower() or name
+
+
+def colours(mech):
+    """{body name: (r, g, b)}: the body's own colour if it has one, else
+    grey for the frame and one palette colour per family."""
+    out, fam = {}, {}
+    for body in [mech.ground] + mech.bodies:
+        if getattr(body, "color", None):
+            out[body.name] = tuple(body.color)
+        elif body.fixed:
+            out[body.name] = FIXED.getRgb()[:3]
+        else:
+            k = fam.setdefault(family(body.name), len(fam))
+            out[body.name] = MOVING[k % len(MOVING)].getRgb()[:3]
+    return out
+
+
 HIT = QColor(220, 50, 50)
 _BOX_FACES = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
 
@@ -43,6 +69,7 @@ class Shaded:
         self.items = []                           # (body, V, faces, colour)
         polys = polys or {}
         k = 0
+        cols = colours(mech)
         for body in [mech.ground] + mech.bodies:
             faces = polys.get(body.name)
             fcols = None
@@ -56,10 +83,7 @@ class Shaded:
                 V, idx, fcols = self._boxes(body)
             if not len(V):
                 continue
-            if getattr(body, "color", None):
-                col = QColor(*body.color)
-            else:
-                col = FIXED if body.fixed else MOVING[k % len(MOVING)]
+            col = QColor(*cols[body.name])
             if not body.fixed:
                 k += 1
             self.items.append([body, V, idx, col, fcols])
