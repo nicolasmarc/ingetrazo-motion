@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("MOTION_LANG", "fr")        # the texts these tests read
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 REPO = HERE.parent
@@ -638,3 +639,50 @@ def test_screw_and_the_other_new_tools_from_the_panel():
         assert [x["kind"] for x in js] == [kind], (kind, panel.out.toPlainText())
         from motion import solver
         assert solver.dof(panel.mechanism()) == {"annular": 4, "pointplane": 5, "planar": 3}[kind]
+
+
+def test_english_panel_and_fields_per_joint_kind():
+    """With IngeTrazo in English, Motion speaks English; the joint box shows
+    only the fields the chosen joint uses."""
+    if SKIP:
+        print("skip:", SKIP); return
+    import importlib
+    win = _window()
+    panel = _state["panel"]
+    pkg = type(panel).__module__.rsplit(".", 1)[0]
+    lang = importlib.import_module(pkg + ".lang")
+    lang.set_language("en")
+    try:
+        other = type(panel)(panel.app)
+        texts = {n: b.text() for n, b in other.buttons.items()}
+        assert texts["fixed"] == "Fixed part" and texts["annular"] == "Annular"
+        assert texts["driver"].startswith("Driver") and texts["validate"] == "Validate"
+        assert other.tree.headerItem().text(0) == "Name"
+        assert other.step_btn.text() == "Import STEP…"
+        assert "shafts in bores" in other.scan_btn.toolTip()
+        other.deleteLater()
+        rep = importlib.import_module(pkg + ".collide")
+        assert "between" in lang.T("{p} % : jeu {d} mm < {j} mm entre {a} ({ga}) et {b} ({gb})",
+                                   p=1, d=2, j=3, a="a", ga="g", b="b", gb="h")
+    finally:
+        lang.set_language(None)
+    # fields per kind (French panel)
+    test_screw_and_the_other_new_tools_from_the_panel()      # leaves a planar joint
+    form = panel.joint_form
+    def shown(w):
+        return form.isRowVisible(w)
+    j = panel.app.document_data()["joints"][0]
+    panel.tree.setCurrentItem(panel.tree.findItems(j["name"], Qt_MatchExactly())[0])
+    assert j["kind"] == "planar"
+    assert not shown(panel.lim_row) and not shown(panel.drv_row) and not shown(panel.tq_row)
+    assert not shown(panel.k_row) and shown(panel.combo_a)
+    # a part: nothing of the joint box
+    b = panel.app.document_data()["bodies"][0]["name"]
+    panel.tree.setCurrentItem(panel.tree.findItems(b, Qt_MatchExactly())[0])
+    assert not shown(panel.combo_a) and not shown(panel.apply_btn)
+    # a pivot: everything
+    test_drop_leaf_built_from_the_model()
+    panel.tree.setCurrentItem(panel.tree.findItems("pivot1", Qt_MatchExactly())[0])
+    for w in (panel.lim_row, panel.drv_row, panel.motor_on, panel.k_row, panel.tq_row):
+        assert shown(w)
+    assert panel.k_spin.isVisibleTo(panel) and panel.c_spin.isVisibleTo(panel)

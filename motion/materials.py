@@ -41,6 +41,8 @@ LIBRARY = {
     "pa": dict(name="PA 6 (nylon)", family="plastique", density=1140, young=2.8, friction=0.30,
                restitution=0.50),
     "pehd": dict(name="PEHD", family="plastique", density=950, young=1.0, friction=0.20, restitution=0.45),
+    "pla": dict(name="PLA (impression 3D)", family="plastique", density=1240, young=3.5, friction=0.35,
+                restitution=0.40),
     "abs": dict(name="ABS", family="plastique", density=1050, young=2.2, friction=0.35, restitution=0.45),
     "pmma": dict(name="PMMA (acrylique)", family="plastique", density=1190, young=3.0, friction=0.40,
                  restitution=0.45),
@@ -72,6 +74,7 @@ _WORDS = [
     ("pa", ("nylon", "polyamide", "pa6", "pa 6")),
     ("pehd", ("pehd", "hdpe", "polyethylene")),
     ("abs", ("abs",)),
+    ("pla", ("pla",)),
     ("pmma", ("pmma", "plexi", "acrylique", "acrylic")),
     ("verre", ("verre", "glass")),
 ]

@@ -10,6 +10,7 @@ axes run along y (across the piece of furniture).
 import math
 import numpy as np
 from .model import Mechanism, Box, bar, unit
+from .lang import T as _T
 
 Y = np.array([0, 1.0, 0])
 CCW = (0, -1.0, 0)        # pivot axis: positive angle turns x towards z
@@ -122,7 +123,7 @@ def chaise_pliante(hauteur=0.45, profondeur=0.40, largeur=0.40,
                 bodies=dict(pied_dossier=g, pied_assise=pa, assise=seat,
                             coulisseau=pin))
     info["mesures"] = lambda mech, x: [
-        f"course dans la lumière {1000 * mech.joint_value(slot, x):.1f} mm"]
+        _T("course dans la lumière {d} mm", d=f"{1000 * mech.joint_value(slot, x):.1f}")]
     return m, info
 
 
@@ -355,7 +356,8 @@ def oiseau(manivelle=0.03, bielle=0.09, ecart_biellettes=0.018,
         T_ = w["hand"].world_point(mech.pose(x, w["hand"]), w["tip"])
         a = math.degrees(math.atan2(E[2] - w["S"][2], E[0] - w["S"][0]))
         h = math.degrees(math.atan2(T_[2] - E[2], T_[0] - E[0]))
-        return [f"bras {a:+.1f}°", f"main {h:+.1f}°", f"pliage {h - a:+.1f}°"]
+        return [_T("bras {v}°", v=f"{a:+.1f}"), _T("main {v}°", v=f"{h:+.1f}"),
+                _T("pliage {v}°", v=f"{h - a:+.1f}")]
 
     info["mesures"] = mesures
     info["vue"] = (90.0, 8.0)          # face on: the plane of the beat
@@ -581,8 +583,8 @@ def draisine(rayon_roue=0.25, empattement=1.10, voie=1.0, hauteur_pivot=1.45,
     def mesures(mech, x):
         b = math.degrees(mech.continuous_value(pb, x))
         s = mech.continuous_value(track, x)
-        return [f"balancier {b:+.1f}°", f"avance {s:.2f} m",
-                f"roues {math.degrees(-mech.continuous_value(pr, x)) / 360:.2f} tr"]
+        return [_T("balancier {v}°", v=f"{b:+.1f}"), _T("avance {v} m", v=f"{s:.2f}"),
+                _T("roues {v} tr", v=f"{math.degrees(-mech.continuous_value(pr, x)) / 360:.2f}")]
 
     info["mesures"] = mesures
     return m, info
@@ -746,7 +748,7 @@ def chaine(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entraxe=0.42
     def mesures(mech, x):
         ch.place(mech, x)
         out = ch.measures()
-        out.append(f"pignon mené {math.degrees(mech.continuous_value(j2, x)) / 360:.2f} tr")
+        out.append(_T("pignon mené {v} tr", v=f"{math.degrees(mech.continuous_value(j2, x)) / 360:.2f}"))
         return out
 
     info["mesures"] = mesures
@@ -787,7 +789,7 @@ def chaine_souple(pas=0.0127, dents_menant=17, dents_mene=25, maillons=88, entra
 
     def mesures(mech, x):
         out = ch.measures()
-        out.append(f"dynamique, amortissement {ch.damping:g}/s")
+        out.append(_T("dynamique, amortissement {v}/s", v=f"{ch.damping:g}"))
         return out
     info["mesures"] = mesures
     return m, info
@@ -843,10 +845,10 @@ def pendule_double(bras1=0.30, bras2=0.25, angle1=120.0, angle2=150.0, duree=12.
     def mesures(mech, x, row=None):
         a = math.degrees(mech.continuous_value(j1, x)) + angle1
         b = math.degrees(mech.continuous_value(j2, x)) + angle2 - angle1
-        out = [f"bras supérieur {a:+.0f}°", f"bras inférieur {b:+.0f}° (relatif)"]
+        out = [_T("bras supérieur {v}°", v=f"{a:+.0f}"), _T("bras inférieur {v}° (relatif)", v=f"{b:+.0f}")]
         if row is not None and "ke" in row:
-            out.append(f"énergie {1000 * (row['ke'] + row['pe']):.0f} mJ "
-                       f"(cinétique {1000 * row['ke']:.0f})")
+            out.append(_T("énergie {e} mJ (cinétique {k})", e=f"{1000 * (row['ke'] + row['pe']):.0f}",
+                         k=f"{1000 * row['ke']:.0f}"))
         return out
     info["mesures"] = mesures
     return m, info

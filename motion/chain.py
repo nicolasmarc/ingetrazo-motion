@@ -18,6 +18,7 @@ clearance with the rest of the model like any part.
 """
 import math
 import numpy as np
+from .lang import T as _T
 
 AXIS = np.array([0.0, -1.0, 0.0])          # positive angle turns x towards z
 
@@ -418,6 +419,7 @@ class Chain:
     def measures(self):
         g = self.state or self.ref
         if g["taut"]:
-            return ["chaîne tendue (pas de mou)"]
-        return [f"flèche {g['sag'] * 1000:.1f} mm ({100 * g['sag'] / g['span']:.1f} % de l'entraxe)",
-                f"entraxe {g['span'] * 1000:.0f} mm"]
+            return [_T("chaîne tendue (pas de mou)")]
+        return [_T("flèche {s} mm ({p} % de l'entraxe)", s=f"{g['sag'] * 1000:.1f}",
+                  p=f"{100 * g['sag'] / g['span']:.1f}"),
+                _T("entraxe {c} mm", c=f"{g['span'] * 1000:.0f}")]

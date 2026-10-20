@@ -47,6 +47,16 @@
   faces off by more than 3 % to 20, all of them thin tubes and small circles
   within the chord tolerance. Faster b-spline evaluation.
 
+### Added (interface)
+- **English**: Motion follows IngeTrazo's language (Window ▸ Language): French
+  when IngeTrazo is in French, English otherwise (`MOTION_LANG=fr|en` forces
+  one). Panel, tool names and tips, messages, validation report, video
+  readings, examples, materials and default joint names.
+- The «Selected joint» box shows only what the chosen joint uses (a ball
+  joint: its damper; a lock or an annular joint: its two parts; a part:
+  nothing).
+- PLA in the materials (3D printing).
+
 ### Changed
 - Video colours: the frame in light grey, each family of moving parts
   («Patte 1»…«Patte 8», «Roue …») in its own clear colour (a part's own

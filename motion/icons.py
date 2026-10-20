@@ -37,6 +37,13 @@ LABELS = {
     "screw": ("Hélicoïdale", "Screw"),
 }
 
+def label(name):
+    """The tool's name in the panel's language."""
+    from .lang import english
+    fr, en = LABELS[name]
+    return en if english() else fr
+
+
 FALLBACK_ACCENT = QColor(232, 115, 12)       # orange
 
 

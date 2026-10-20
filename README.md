@@ -21,6 +21,12 @@ IngeTrazo ▸ Extensions ▸ Manage extensions… ▸ **Motion**, or unzip
 which gives `plugins\motion\__init__.py`. Restart IngeTrazo; the **Motion**
 tab appears in the side tray, and Extensions ▸ Motion has the examples.
 
+## Language
+
+Motion follows IngeTrazo's language (Window ▸ Language): French when
+IngeTrazo is in French, English otherwise. `MOTION_LANG=fr` or `en` forces
+one.
+
 ## Use
 
 | Icon | Select first | Result |

@@ -266,7 +266,7 @@ def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255):
 
 
 def compose(width, height, left, draw_right, title, info_lines, t,
-            left_label="IngeTrazo", right_label="Animation Motion"):
+            left_label="IngeTrazo", right_label=None):
     """Split-screen frame: ``left`` (a QImage, the IngeTrazo view) and
     ``draw_right(painter, rect)`` side by side, a title band and a
     progress band."""
@@ -299,6 +299,9 @@ def compose(width, height, left, draw_right, title, info_lines, t,
     p.setFont(f_title)
     p.drawText(QRectF(gap, 0, width - 2 * gap, top - 30 * u), Qt.AlignLeft | Qt.AlignVCenter, title)
 
+    if right_label is None:
+        from .lang import T
+        right_label = T("Animation Motion")
     for rect, label in ((lrect, left_label), (rrect, right_label)):
         p.setPen(QPen(QColor(200, 200, 196), 1))
         p.setBrush(QColor(255, 255, 255))

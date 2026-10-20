@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from . import collide, document as doc, icons, samples, solver
+from .lang import T as _T
 
 SOURCES = (("model", "Modèle (document)"),
            ("chaise", "Exemple : chaise pliante"),
@@ -46,6 +47,28 @@ SAMPLE_NAMES = {"chaise": "Chaise pliante en X", "porte": "Porte sectionnelle",
                 "chaine": "Chaîne détendue et tendeur",
                 "chaine_souple": "Chaîne souple (dynamique)",
                 "pendule_double": "Pendule double (dynamique)"}
+
+KIND_NAMES = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot",
+              "slider": "Glissière", "guide": "Guide / rail",
+              "cylindrical": "Pivot glissant", "ball": "Rotule", "lock": "Encastrement",
+              "elastic": "Liaison élastique", "annular": "Linéaire annulaire",
+              "pointplane": "Ponctuelle", "planar": "Appui plan", "screw": "Hélicoïdale",
+              "coupling": "Couplage"}
+
+
+def _detail(text):
+    """A detection's detail line in the panel's language."""
+    import re
+    from .lang import english
+    if not text or not english():
+        return text
+    for fr, en in ((r"\bjeu\b", "gap"), (r"\bportée\b", "bearing length"),
+                   (r"\bappuis plans\b", "flat contacts"), (r"\bappuis\b", "contacts"),
+                   (r"\bdents\b", "teeth"), (r"\brapport\b", "ratio"), (r"\bet\b", "and"),
+                   (r"— axe « (.*?) » avec « (.*?) »", r"— pin « \1 » with « \2 »")):
+        text = re.sub(fr, en, text)
+    return text
+
 
 TIPS = {
     "fixed": "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.",
@@ -201,24 +224,24 @@ class MotionPanel(QWidget):
         lay.setContentsMargins(6, 6, 6, 6)
         self.src = QComboBox()
         for key, text in SOURCES:
-            self.src.addItem(text, key)
+            self.src.addItem(_T(text), key)
         self.src.currentIndexChanged.connect(self._source_changed)
         srow = QHBoxLayout()
         srow.addWidget(self.src, 1)
         self.step_btn = QToolButton()
-        self.step_btn.setText("Importer STEP…")
-        self.step_btn.setToolTip("Assemblage STEP (AP203/214/242) : une pièce = un groupe, "
-                                 "en une seule étape d'annulation.")
+        self.step_btn.setText(_T("Importer STEP…"))
+        self.step_btn.setToolTip(_T("Assemblage STEP (AP203/214/242) : une pièce = un groupe, "
+                                   "en une seule étape d'annulation."))
         self.step_btn.clicked.connect(self._import_step_dialog)
         srow.addWidget(self.step_btn)
         self.scan_btn = QToolButton()
         self.scan_btn.setIcon(icons.icon("scan", self, 20))
-        self.scan_btn.setText("Détecter…")
+        self.scan_btn.setText(_T("Détecter…"))
         self.scan_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.scan_btn.setToolTip("Analyse les pièces (la sélection, sinon tout le modèle) et "
-                                 "propose les liaisons : arbres dans des alésages (pivots), "
-                                 "appuis plans (glissières), engrenages. Rien n'est appliqué "
-                                 "avant validation.")
+        self.scan_btn.setToolTip(_T("Analyse les pièces (la sélection, sinon tout le modèle) et "
+                                   "propose les liaisons : arbres dans des alésages (pivots), "
+                                   "appuis plans (glissières), engrenages. Rien n'est appliqué "
+                                   "avant validation."))
         self.scan_btn.clicked.connect(self._scan_dialog)
         srow.addWidget(self.scan_btn)
         lay.addLayout(srow)
@@ -232,8 +255,8 @@ class MotionPanel(QWidget):
             b.setIcon(icons.icon(name, self, 24))
             b.setIconSize(QSize(24, 24))
             b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            b.setText(icons.LABELS[name][0])
-            b.setToolTip(TIPS[name])
+            b.setText(icons.label(name))
+            b.setToolTip(_T(TIPS[name]))
             b.setAutoRaise(True)
             b.setMinimumWidth(10)
             b.setFixedHeight(52)
@@ -250,7 +273,7 @@ class MotionPanel(QWidget):
         lay.addLayout(grid)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Nom", "Type", "Détail"])
+        self.tree.setHeaderLabels([_T("Nom"), _T("Type"), _T("Détail")])
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.itemSelectionChanged.connect(self._item_selected)
@@ -258,23 +281,23 @@ class MotionPanel(QWidget):
 
         row = QHBoxLayout()
         self.delete_btn = QToolButton()
-        self.delete_btn.setText("Supprimer")
+        self.delete_btn.setText(_T("Supprimer"))
         self.delete_btn.clicked.connect(self._delete)
         row.addWidget(self.delete_btn)
         row.addStretch(1)
         lay.addLayout(row)
 
         mrow = QHBoxLayout()
-        mrow.addWidget(QLabel("Matériau"))
+        mrow.addWidget(QLabel(_T("Matériau")))
         self.mat_combo = QComboBox()
-        self.mat_combo.setToolTip("Matériau de la pièce choisie dans la liste (ou des groupes "
-                                  "sélectionnés) : masse, centre de gravité et inertie en "
-                                  "découlent.")
+        self.mat_combo.setToolTip(_T("Matériau de la pièce choisie dans la liste (ou des groupes "
+                                    "sélectionnés) : masse, centre de gravité et inertie en "
+                                    "découlent."))
         self.mat_combo.activated.connect(self._material_chosen)
         mrow.addWidget(self.mat_combo, 1)
         self.mat_new = QToolButton()
-        self.mat_new.setText("Nouveau…")
-        self.mat_new.setToolTip("Ajouter un matériau (ou corriger une valeur) pour ce document.")
+        self.mat_new.setText(_T("Nouveau…"))
+        self.mat_new.setToolTip(_T("Ajouter un matériau (ou corriger une valeur) pour ce document."))
         self.mat_new.clicked.connect(self._material_dialog)
         mrow.addWidget(self.mat_new)
         lay.addLayout(mrow)
@@ -282,18 +305,20 @@ class MotionPanel(QWidget):
         self.mass_label.setWordWrap(True)
         lay.addWidget(self.mass_label)
 
-        box = QGroupBox("Liaison choisie")
+        box = QGroupBox(_T("Liaison choisie"))
         form = QFormLayout(box)
+        self.joint_form = form
         self.combo_a, self.combo_b = QComboBox(), QComboBox()
-        form.addRow("Pièce A", self.combo_a)
-        form.addRow("Pièce B", self.combo_b)
-        self.lim_on = QCheckBox("Butées")
+        form.addRow(_T("Pièce A"), self.combo_a)
+        form.addRow(_T("Pièce B"), self.combo_b)
+        self.lim_on = QCheckBox(_T("Butées"))
         self.lim_lo, self.lim_hi = self._spin(), self._spin()
         lr = QHBoxLayout()
         lr.addWidget(self.lim_on)
         lr.addWidget(self.lim_lo)
         lr.addWidget(self.lim_hi)
         form.addRow(lr)
+        self.lim_row = lr
         self.drv_lo, self.drv_hi = self._spin(), self._spin()
         dr = QHBoxLayout()
         dr.addWidget(self.drv_lo)
@@ -301,33 +326,37 @@ class MotionPanel(QWidget):
         dr.addWidget(self.drv_hi)
         self.unit = QLabel("")
         dr.addWidget(self.unit)
-        form.addRow("Course moteur", dr)
-        self.motor_on = QCheckBox("Moteur (plusieurs possibles : même 0–100 %, chacun sa course)")
-        self.motor_on.setToolTip("Coché : cette liaison est un moteur. Vitesse = course ; "
-                                 "déphasage = valeur de départ.")
+        form.addRow(_T("Course moteur"), dr)
+        self.drv_row = dr
+        self.motor_on = QCheckBox(_T("Moteur (plusieurs possibles : même 0–100 %, chacun sa course)"))
+        self.motor_on.setToolTip(_T("Coché : cette liaison est un moteur. Vitesse = course ; "
+                                   "déphasage = valeur de départ."))
         form.addRow(self.motor_on)
         self.k_spin, self.c_spin, self.tq_spin = QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox()
         for w_, hi_ in ((self.k_spin, 1e9), (self.c_spin, 1e7), (self.tq_spin, 1e6)):
             w_.setRange(-hi_ if w_ is self.tq_spin else 0.0, hi_)
             w_.setDecimals(3)
         kr = QHBoxLayout()
-        kr.addWidget(QLabel("Ressort"))
+        self.k_label, self.c_label = QLabel(_T("Ressort")), QLabel(_T("Amort."))
+        kr.addWidget(self.k_label)
         kr.addWidget(self.k_spin)
-        kr.addWidget(QLabel("Amort."))
+        kr.addWidget(self.c_label)
         kr.addWidget(self.c_spin)
         form.addRow(kr)
-        self.k_spin.setToolTip("Raideur (N·m/rad pour un pivot, N/m pour une glissière ou une "
-                               "liaison élastique), au repos dans la position dessinée. 0 : aucun.")
-        self.c_spin.setToolTip("Amortissement visqueux (N·m·s/rad ou N·s/m). Dynamique seulement.")
+        self.k_row = kr
+        self.k_spin.setToolTip(_T("Raideur (N·m/rad pour un pivot, N/m pour une glissière ou une "
+                                 "liaison élastique), au repos dans la position dessinée. 0 : aucun."))
+        self.c_spin.setToolTip(_T("Amortissement visqueux (N·m·s/rad ou N·s/m). Dynamique seulement."))
         tr = QHBoxLayout()
-        self.tq_on = QCheckBox("Moteur en couple")
-        self.tq_on.setToolTip("Dynamique : un couple (N·m) ou une force (N) constant ; le "
-                              "mécanisme répond (au lieu d'imposer la course).")
+        self.tq_on = QCheckBox(_T("Moteur en couple"))
+        self.tq_on.setToolTip(_T("Dynamique : un couple (N·m) ou une force (N) constant ; le "
+                                "mécanisme répond (au lieu d'imposer la course)."))
         tr.addWidget(self.tq_on)
         tr.addWidget(self.tq_spin)
         form.addRow(tr)
+        self.tq_row = tr
         self.apply_btn = QToolButton()
-        self.apply_btn.setText("Appliquer")
+        self.apply_btn.setText(_T("Appliquer"))
         self.apply_btn.clicked.connect(self._apply_joint)
         form.addRow(self.apply_btn)
         lay.addWidget(box)
@@ -335,7 +364,7 @@ class MotionPanel(QWidget):
         play = QHBoxLayout()
         self.play_btn = QToolButton()
         self.play_btn.setText("▶")
-        self.play_btn.setToolTip("Lecture / pause")
+        self.play_btn.setToolTip(_T("Lecture / pause"))
         self.play_btn.setCheckable(True)
         self.play_btn.toggled.connect(self._play)
         play.addWidget(self.play_btn)
@@ -347,42 +376,42 @@ class MotionPanel(QWidget):
         self.pct.setMinimumWidth(42)
         play.addWidget(self.pct)
         lay.addLayout(play)
-        self.loop = QCheckBox("Aller-retour")
+        self.loop = QCheckBox(_T("Aller-retour"))
         self.loop.setChecked(True)
         prow = QHBoxLayout()
         prow.addWidget(self.loop)
         prow.addStretch(1)
         self.video_btn = QToolButton()
-        self.video_btn.setText("Exporter la vidéo…")
-        self.video_btn.setToolTip("Vidéo en écran partagé : la vue IngeTrazo à gauche, "
-                                  "l'animation ombrée et les mesures à droite.")
+        self.video_btn.setText(_T("Exporter la vidéo…"))
+        self.video_btn.setToolTip(_T("Vidéo en écran partagé : la vue IngeTrazo à gauche, "
+                                    "l'animation ombrée et les mesures à droite."))
         self.video_btn.clicked.connect(self._export_dialog)
         prow.addWidget(self.video_btn)
         lay.addLayout(prow)
 
         val = QHBoxLayout()
-        val.addWidget(QLabel("Jeu mini"))
+        val.addWidget(QLabel(_T("Jeu mini")))
         self.jeu = QDoubleSpinBox()
         self.jeu.setRange(0, 100)
         self.jeu.setDecimals(1)
         self.jeu.setSuffix(" mm")
         self.jeu.setValue(5.0)
         val.addWidget(self.jeu)
-        val.addWidget(QLabel("Pas"))
+        val.addWidget(QLabel(_T("Pas")))
         self.pas = QSpinBox()
         self.pas.setRange(3, 401)
         self.pas.setValue(51)
         val.addWidget(self.pas)
         lay.addLayout(val)
         drow = QHBoxLayout()
-        self.dyn_on = QCheckBox("Dynamique")
-        self.dyn_on.setToolTip("Masses (matériaux), pesanteur, ressorts, amortisseurs, butées, "
-                               "moteurs en couple : Valider, la lecture et la vidéo suivent la "
-                               "simulation dans le temps ; les moteurs en vitesse font leur "
-                               "course en « durée » et le rapport donne leur couple.")
+        self.dyn_on = QCheckBox(_T("Dynamique"))
+        self.dyn_on.setToolTip(_T("Masses (matériaux), pesanteur, ressorts, amortisseurs, butées, "
+                                 "moteurs en couple : Valider, la lecture et la vidéo suivent la "
+                                 "simulation dans le temps ; les moteurs en vitesse font leur "
+                                 "course en « durée » et le rapport donne leur couple."))
         self.dyn_on.toggled.connect(self._dynamics_toggled)
         drow.addWidget(self.dyn_on)
-        drow.addWidget(QLabel("durée"))
+        drow.addWidget(QLabel(_T("durée")))
         self.dur = QDoubleSpinBox()
         self.dur.setRange(0.1, 600)
         self.dur.setDecimals(1)
@@ -527,7 +556,7 @@ class MotionPanel(QWidget):
         self.tree.clear()
         if self.source == "model":
             bodies = [(b["name"], "fixed" if b["fixed"] else "moving",
-                       f"{len(b['groups'])} groupe(s)") for b in self.data["bodies"]]
+                       _T("{n} groupe(s)", n=len(b['groups']))) for b in self.data["bodies"]]
             joints = [(j["name"], j["kind"], f"{j['a']} ↔ {j['b']}")
                       for j in self.data["joints"]]
             motors = [x["joint"] for x in self.data["drivers"]]
@@ -545,19 +574,14 @@ class MotionPanel(QWidget):
                 masses = {}
         if masses:
             bodies = [(n, k, self._mass_text(masses.get(n)) or dt) for n, k, dt in bodies]
-        kinds = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot",
-                 "slider": "Glissière", "guide": "Guide / rail",
-                 "cylindrical": "Pivot glissant", "ball": "Rotule", "lock": "Encastrement",
-                 "elastic": "Liaison élastique", "annular": "Linéaire annulaire",
-                 "pointplane": "Ponctuelle", "planar": "Appui plan", "screw": "Hélicoïdale",
-                 "coupling": "Couplage"}
+        kinds = {k: _T(v) for k, v in KIND_NAMES.items()}
         for name, kind, detail in bodies + joints:
             it = QTreeWidgetItem([name, kinds[kind], detail])
             it.setIcon(0, icons.icon(kind, self.tree, 16))
             it.setData(0, Qt.UserRole, name)
             if name in motors:
                 it.setIcon(1, icons.icon("driver", self.tree, 16))
-                it.setText(1, kinds[kind] + " · moteur")
+                it.setText(1, kinds[kind] + _T(" · moteur"))
             self.tree.addTopLevelItem(it)
         for c in range(3):
             self.tree.resizeColumnToContents(c)
@@ -580,6 +604,7 @@ class MotionPanel(QWidget):
             c.clear()
             c.addItems(names)
             c.blockSignals(False)
+        self._show_fields(None)
         if motors:                               # show the first motor's travel
             hit = self.tree.findItems(motors[0], Qt.MatchExactly)
             if hit:
@@ -591,11 +616,11 @@ class MotionPanel(QWidget):
         lib = materials.library(self.data if self.source == "model" else None)
         self.mat_combo.blockSignals(True)
         self.mat_combo.clear()
-        self.mat_combo.addItem("— non défini —", None)
+        self.mat_combo.addItem(_T("— non défini —"), None)
         order = {"bois": 0, "métal": 1, "plastique": 2, "autre": 3}
         for k in sorted(lib, key=lambda k: (order.get(lib[k].get("family"), 9), lib[k]["name"])):
             r = lib[k]
-            self.mat_combo.addItem(f"{r['name']} — {r['density']:g} kg/m³", k)
+            self.mat_combo.addItem(f"{_T(r['name'])} — {r['density']:g} kg/m³", k)
         self.mat_combo.blockSignals(False)
         self._show_material(self._chosen())
 
@@ -625,12 +650,14 @@ class MotionPanel(QWidget):
             return
         if mp["mass"] > 0:
             c = mp["com"] * 1000
-            txt = (f"{name} : {mp['mass']:.3g} kg, volume {mp['volume'] * 1e6:.4g} cm³ — "
-                   f"centre de gravité ({c[0]:.1f} ; {c[1]:.1f} ; {c[2]:.1f}) mm")
+            txt = _T("{name} : {m} kg, volume {v} cm³ — centre de gravité ({x} ; {y} ; {z}) mm",
+                    name=name, m=f"{mp['mass']:.3g}", v=f"{mp['volume'] * 1e6:.4g}",
+                    x=f"{c[0]:.1f}", y=f"{c[1]:.1f}", z=f"{c[2]:.1f}")
         else:
-            txt = f"{name} : volume {mp['volume'] * 1e6:.4g} cm³ — choisir un matériau"
+            txt = _T("{name} : volume {v} cm³ — choisir un matériau",
+                    name=name, v=f"{mp['volume'] * 1e6:.4g}")
         if mp["missing"] and mp["mass"] > 0:
-            txt += f" ; {len(mp['missing'])} groupe(s) sans matériau"
+            txt += _T(" ; {n} groupe(s) sans matériau", n=len(mp['missing']))
         self.mass_label.setText(txt)
 
     def _material_chosen(self, _i=None):
@@ -645,11 +672,11 @@ class MotionPanel(QWidget):
             groups, _ = selection(self._scene())
             uids = [g.uid for g in groups]
         if not uids:
-            self.say("Choisir une pièce dans la liste, ou sélectionner des groupes.")
+            self.say(_T("Choisir une pièce dans la liste, ou sélectionner des groupes."))
             return
         d = doc.set_material(self.data, uids, key)
         label = self.mat_combo.currentText().split(" — ")[0]
-        self._store(d, f"{label} : {len(uids)} groupe(s).")
+        self._store(d, _T("{label} : {n} groupe(s).", label=label, n=len(uids)))
         if name:
             hit = self.tree.findItems(name, Qt.MatchExactly)
             if hit:
@@ -659,14 +686,14 @@ class MotionPanel(QWidget):
         from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit
         from . import materials
         dlg = QDialog(self)
-        dlg.setWindowTitle("Matériau du document")
+        dlg.setWindowTitle(_T("Matériau du document"))
         form = QFormLayout(dlg)
         name = QLineEdit()
         base = QComboBox()
         lib = materials.library(self.data)
-        base.addItem("(nouveau)", None)
-        for k in sorted(lib, key=lambda k: lib[k]["name"]):
-            base.addItem(lib[k]["name"], k)
+        base.addItem(_T("(nouveau)"), None)
+        for k in sorted(lib, key=lambda k: _T(lib[k]["name"])):
+            base.addItem(_T(lib[k]["name"]), k)
         rho, E, mu, e = QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox()
         for w, lo, hi, dec, suf in ((rho, 1, 25000, 0, " kg/m³"), (E, 0, 1000, 2, " GPa"),
                                     (mu, 0, 2, 2, ""), (e, 0, 1, 2, "")):
@@ -680,44 +707,45 @@ class MotionPanel(QWidget):
             if k is None:
                 return
             r = lib[k]
-            name.setText(r["name"])
+            name.setText(_T(r["name"]))
             rho.setValue(r["density"])
             E.setValue(r.get("young") or 0)
             mu.setValue(r.get("friction") or 0)
             e.setValue(r.get("restitution") or 0)
         base.currentIndexChanged.connect(load)
-        form.addRow("Partir de", base)
-        form.addRow("Nom", name)
-        form.addRow("Masse volumique", rho)
-        form.addRow("Module d'Young", E)
-        form.addRow("Frottement (sec)", mu)
-        form.addRow("Restitution (chocs)", e)
+        form.addRow(_T("Partir de"), base)
+        form.addRow(_T("Nom"), name)
+        form.addRow(_T("Masse volumique"), rho)
+        form.addRow(_T("Module d'Young"), E)
+        form.addRow(_T("Frottement (sec)"), mu)
+        form.addRow(_T("Restitution (chocs)"), e)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Cancel).setText("Annuler")
+        bb.button(QDialogButtonBox.Cancel).setText(_T("Annuler"))
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         form.addRow(bb)
         if dlg.exec() != QDialog.Accepted or not name.text().strip():
             return
         key = base.currentData()
-        if key is None or lib[key]["name"] != name.text().strip():
+        if key is None or _T(lib[key]["name"]) != name.text().strip():
             key = "doc:" + materials._plain(name.text().strip()).replace(" ", "-")
         fam = lib[base.currentData()]["family"] if base.currentData() else "autre"
         d = doc.add_material(self.data, key, dict(
             name=name.text().strip(), family=fam, density=rho.value(),
             young=E.value() or None, friction=mu.value(), restitution=e.value()))
-        self._store(d, f"Matériau « {name.text().strip()} » : {rho.value():g} kg/m³.")
+        self._store(d, _T("Matériau « {name} » : {rho} kg/m³.", name=name.text().strip(),
+                         rho=f"{rho.value():g}"))
 
     @staticmethod
     def _mass_text(mp):
         if not mp:
             return ""
-        mats = " + ".join(mp["materials"]) if mp["materials"] else ""
+        mats = " + ".join(_T(x) for x in mp["materials"]) if mp["materials"] else ""
         if mp["missing"] and not mp["materials"]:
-            return "matériau ?"
+            return _T("matériau ?")
         txt = f"{mats} · {mp['mass']:.3g} kg" if mats else f"{mp['mass']:.3g} kg"
         if mp["missing"]:
-            txt += f" (+{len(mp['missing'])} sans matériau)"
+            txt += _T(" (+{n} sans matériau)", n=len(mp['missing']))
         return txt
 
     def _chosen(self):
@@ -739,15 +767,47 @@ class MotionPanel(QWidget):
     def _from_ui(self, kind, v):
         return math.radians(v) if self._is_angle(kind) else v / 1000
 
+    # what each kind of joint can take: stops, motor travel, spring and
+    # damper, torque motor (the rest of the box is hidden)
+    FIELDS = {"pivot": "lmkct", "slider": "lmkct", "cylindrical": "lmkct", "screw": "lmkct",
+              "guide": "lm", "ball": "c", "elastic": "kc"}
+
+    def _show_fields(self, kind):
+        """Only the fields that mean something for this kind of joint
+        (``None``: a part, or nothing chosen)."""
+        f = self.FIELDS.get(kind, "") if kind else ""
+        form = self.joint_form
+        ab = kind is not None and kind != "coupling"
+        for w in (self.combo_a, self.combo_b):
+            form.setRowVisible(w, ab)
+        form.setRowVisible(self.lim_row, "l" in f)
+        form.setRowVisible(self.drv_row, "m" in f)
+        form.setRowVisible(self.motor_on, "m" in f)
+        form.setRowVisible(self.k_row, "k" in f or "c" in f)
+        for w in (self.k_label, self.k_spin):
+            w.setVisible("k" in f)
+        for w in (self.c_label, self.c_spin):
+            w.setVisible("c" in f)
+        form.setRowVisible(self.tq_row, "t" in f)
+        form.setRowVisible(self.apply_btn, kind is not None)
+        if kind == "elastic":
+            self.k_label.setText(_T("Raideur"))
+            self.k_spin.setToolTip(_T("Raideur en translation (N/m) ; en rotation : 1 % de cette "
+                                     "valeur en N·m/rad."))
+        else:
+            self.k_label.setText(_T("Ressort"))
+
     def _item_selected(self):
         name = self._chosen()
         self._show_material(name)
         if self.source != "model":
             j = next((j for j in self.mechanism().joints if j.name == name), None)
+            self._show_fields(j.kind if j is not None else None)
             if j is not None:
                 self._show_travel(j.kind, j, None)
             return
         j = self._joint_record(name)
+        self._show_fields(j["kind"] if j is not None else None)
         if j is None:
             return
         self.combo_a.setCurrentText(j["a"])
@@ -797,17 +857,17 @@ class MotionPanel(QWidget):
         try:
             getattr(self, "_do_" + name)()
         except Exception as exc:          # never break the app; say why
-            self.say(f"{icons.LABELS[name][0]} : {exc}")
+            self.say(f"{icons.label(name)} : {exc}")
         self.app.viewport.update()
 
     def _do_fixed(self, fixed=True):
         groups, _ = selection(self._scene())
         if not groups:
-            self.say("Sélectionner un ou plusieurs groupes.")
+            self.say(_T("Sélectionner un ou plusieurs groupes."))
             return
         d, name = doc.add_body(self.data, [g.uid for g in groups], fixed)
         d = self._guess_materials(d, [g.uid for g in groups])
-        self._store(d, f"{name} : {len(groups)} groupe(s).")
+        self._store(d, _T("{name} : {n} groupe(s).", name=name, n=len(groups)))
 
     def _do_moving(self):
         self._do_fixed(False)
@@ -815,7 +875,7 @@ class MotionPanel(QWidget):
     def _two_bodies(self, point):
         boxes = self._boxes()
         if len(boxes) < 2:
-            raise ValueError("définir d'abord au moins deux pièces")
+            raise ValueError(_T("définir d'abord au moins deux pièces"))
         b1 = doc.nearest_body(point, boxes)
         b2 = doc.nearest_body(point, boxes, exclude=(b1,))
         fixed = {b["name"] for b in self.data["bodies"] if b["fixed"]}
@@ -824,10 +884,10 @@ class MotionPanel(QWidget):
     def _one_segment(self):
         _, segs = selection(self._scene())
         if len(segs) != 1:
-            raise ValueError("sélectionner UNE arête (ou ligne de construction)")
+            raise ValueError(_T("sélectionner UNE arête (ou ligne de construction)"))
         p0, p1 = segs[0]
         if np.linalg.norm(p1 - p0) < 1e-9:
-            raise ValueError("arête de longueur nulle")
+            raise ValueError(_T("arête de longueur nulle"))
         return p0, p1
 
     def _other_joint(self, kind):
@@ -839,8 +899,8 @@ class MotionPanel(QWidget):
     def _point_joint(self, kind):
         _, segs = selection(self._scene())
         if not segs:
-            raise ValueError("sélectionner des arêtes au point de liaison "
-                             "(un cercle autour du centre, ou une arête)")
+            raise ValueError(_T("sélectionner des arêtes au point de liaison "
+                               "(un cercle autour du centre, ou une arête)"))
         P = np.array([p for sg in segs for p in sg])
         c = 0.5 * (P.min(axis=0) + P.max(axis=0))
         a, b = self._two_bodies(c)
@@ -859,8 +919,8 @@ class MotionPanel(QWidget):
     def _do_annular(self):
         _, segs = selection(self._scene())
         if not segs:
-            raise ValueError("sélectionner UNE arête sur l'axe de l'alésage "
-                             "(et un cercle de la sphère)")
+            raise ValueError(_T("sélectionner UNE arête sur l'axe de l'alésage "
+                               "(et un cercle de la sphère)"))
         lens = [np.linalg.norm(q - p) for p, q in segs]
         k = int(np.argmax(lens)) if len(segs) > 1 else 0
         p0, p1 = segs[k]
@@ -884,7 +944,7 @@ class MotionPanel(QWidget):
     def ask_pitch(self):
         """Pitch of a new hélicoïdale (mm per turn)."""
         from PySide6.QtWidgets import QInputDialog
-        v, ok = QInputDialog.getDouble(self, "Hélicoïdale", "Pas (mm par tour) :",
+        v, ok = QInputDialog.getDouble(self, _T("Hélicoïdale"), _T("Pas (mm par tour) :"),
                                        1.0, -1000.0, 1000.0, 3)
         return v / 1000 if ok and v else None
 
@@ -896,13 +956,14 @@ class MotionPanel(QWidget):
         a, b = self._two_bodies((p0 + p1) / 2)
         d, name = doc.add_joint(self.data, "screw", a, b, point=(p0 + p1) / 2,
                                 axis=p1 - p0, pitch=pitch)
-        self._store(d, f"{name} : {a} ↔ {b}, pas {1000 * pitch:g} mm.")
+        self._store(d, _T("{name} : {a} ↔ {b}, pas {p} mm.", name=name, a=a, b=b,
+                         p=f"{1000 * pitch:g}"))
 
     def _dynamics_toggled(self, on):
         if self.source != "model":
             return
         d = doc.set_simulation(self.data, on, self.dur.value())
-        self._store(d, "Dynamique : " + ("simulation dans le temps." if on else "arrêtée."))
+        self._store(d, _T("Dynamique : simulation dans le temps.") if on else _T("Dynamique : arrêtée."))
 
     def _do_pivot(self, kind="pivot"):
         p0, p1 = self._one_segment()
@@ -918,23 +979,23 @@ class MotionPanel(QWidget):
     def _do_guide(self):
         _, segs = selection(self._scene())
         if len(segs) < 2:
-            raise ValueError("sélectionner le rail et un trait par galet")
+            raise ValueError(_T("sélectionner le rail et un trait par galet"))
         rail, rollers = doc.rail_and_rollers(segs)
         if not rollers:
-            raise ValueError("aucun galet : tracer un petit trait en travers du rail")
+            raise ValueError(_T("aucun galet : tracer un petit trait en travers du rail"))
         boxes = self._boxes()
         fixed = [b["name"] for b in self.data["bodies"] if b["fixed"]]
         if not fixed:
-            raise ValueError("définir d'abord la pièce fixe qui porte le rail")
+            raise ValueError(_T("définir d'abord la pièce fixe qui porte le rail"))
         a = doc.nearest_body(np.mean(rail, axis=0), {k: boxes[k] for k in fixed}) or fixed[0]
         d, names = self.data, []
         for r in rollers:
             b = doc.nearest_body(r, boxes, exclude=fixed)
             if b is None:
-                raise ValueError("aucune pièce mobile près du galet")
+                raise ValueError(_T("aucune pièce mobile près du galet"))
             d, n = doc.add_joint(d, "guide", a, b, point=r, rail=rail)
             names.append(n)
-        self._store(d, f"{len(names)} galet(s) sur le rail de {a}.")
+        self._store(d, _T("{n} galet(s) sur le rail de {a}.", n=len(names), a=a))
 
     def _do_driver(self):
         name = self._chosen()
@@ -946,7 +1007,7 @@ class MotionPanel(QWidget):
             self.frames = None
             self.report = None
             self._fill_tree()
-            self.say(f"Moteur : {j.name} ({len(m.drivers)} moteur(s)).")
+            self.say(_T("Moteur : {j} ({n} moteur(s)).", j=j.name, n=len(m.drivers)))
             return
         j = self._joint_record(name)
         if j is None:
@@ -954,10 +1015,10 @@ class MotionPanel(QWidget):
                 j = self.data["joints"][0]
                 self._show_travel(j["kind"], None, j)
             else:
-                raise ValueError("choisir une liaison dans la liste")
+                raise ValueError(_T("choisir une liaison dans la liste"))
         d = doc.add_driver(self.data, j["name"], self._from_ui(j["kind"], self.drv_lo.value()),
                            self._from_ui(j["kind"], self.drv_hi.value()))
-        self._store(d, f"Moteur : {j['name']} ({len(d['drivers'])} moteur(s)).")
+        self._store(d, _T("Moteur : {j} ({n} moteur(s)).", j=j['name'], n=len(d['drivers'])))
 
     def _apply_joint(self):
         j = self._joint_record(self._chosen())
@@ -982,12 +1043,12 @@ class MotionPanel(QWidget):
             d = doc.set_joint_params(d, j["name"], spring=[k, 0.0] if k else None,
                                      damper=c or None)
         d = doc.set_torque(d, j["name"], self.tq_spin.value() if self.tq_on.isChecked() else None)
-        self._store(d, f"{j['name']} mis à jour.")
+        self._store(d, _T("{name} mis à jour.", name=j['name']))
 
     def _delete(self):
         name = self._chosen()
         if name and self.source == "model":
-            self._store(doc.remove(self.data, name), f"{name} supprimé.")
+            self._store(doc.remove(self.data, name), _T("{name} supprimé.", name=name))
 
     def simulation(self):
         """The example's dynamic simulation (weight, inertia; no motor
@@ -1036,7 +1097,7 @@ class MotionPanel(QWidget):
         m = self.mechanism()
         poses = self.simulation()
         if m.driver is None and poses is None:
-            raise ValueError("pas de moteur")
+            raise ValueError(_T("pas de moteur"))
         if self.source == "model" and (
                 abs(self.data.get("jeu_min", 0.005) - self.jeu.value() / 1000) > 1e-12
                 or int(self.data.get("pas", 51)) != self.pas.value()):
@@ -1058,16 +1119,16 @@ class MotionPanel(QWidget):
         lines += [f"⚠ {p}" for p in self.problems]
         w = rep["worst"]
         if rep["ok"]:
-            lines.append("✔ Mécanisme valide de 0 à 100 %.")
+            lines.append(_T("✔ Mécanisme valide de 0 à 100 %."))
         else:
-            lines.append(f"✖ {len(rep['problems'])} problème(s) :")
+            lines.append(_T("✖ {n} problème(s) :", n=len(rep['problems'])))
             lines += ["  " + p for p in rep["problems"][:60]]
             if len(rep["problems"]) > 60:
                 lines.append("  …")
         if w is not None:
-            lines.append(f"Jeu le plus faible : {w['distance'] * 1000:.1f} mm entre "
-                         f"{w['a']} ({w['box_a']}) et {w['b']} ({w['box_b']}) "
-                         f"à {round(100 * w['t'])} %.")
+            lines.append(_T("Jeu le plus faible : {d} mm entre {a} ({ga}) et {b} ({gb}) à {p} %.",
+                           d=f"{w['distance'] * 1000:.1f}", a=w['a'], ga=w['box_a'],
+                           b=w['b'], gb=w['box_b'], p=round(100 * w['t'])))
         # the most frequent count over a few poses: a single pose can mislead
         # (a roller at the very end of its rail reads 0; after whole turns of
         # a crank a part's rotation parameters reach 2π and it reads 5 or 7
@@ -1076,38 +1137,39 @@ class MotionPanel(QWidget):
         counts = [solver.dof(m, F[round(f * (len(F) - 1))]["x"])
                   for f in (0.1, 0.3, 0.5, 0.7, 0.9)]
         dof = max(set(counts), key=lambda c: (counts.count(c), -c))
-        lines.append(f"Degrés de liberté (sans moteur) : {dof}")
+        lines.append(_T("Degrés de liberté (sans moteur) : {n}", n=dof))
         st = rep["steps"]
         if st and "ke" in st[0]:
             e0, e1 = st[0]["ke"] + st[0]["pe"], st[-1]["ke"] + st[-1]["pe"]
-            lines.append(f"Simulation dynamique de {st[-1]['value']:.1f} s : énergie "
-                         f"{1000 * e0:.0f} → {1000 * e1:.0f} mJ.")
+            lines.append(_T("Simulation dynamique de {t} s : énergie {e0} → {e1} mJ.",
+                           t=f"{st[-1]['value']:.1f}", e0=f"{1000 * e0:.0f}", e1=f"{1000 * e1:.0f}"))
             names = sorted({k for r in st for k in (r.get("couples") or {})})
             for nm in names:
                 vals = [r["couples"][nm] for r in st if nm in (r.get("couples") or {})]
                 k = int(np.argmax(np.abs(vals)))
-                lines.append(f"Couple moteur {nm} : maxi {abs(vals[k]):.3g} N·m "
-                             f"(à {st[k]['value']:.2f} s), moyen {np.mean(np.abs(vals)):.3g} N·m.")
+                lines.append(_T("Couple moteur {nm} : maxi {mx} N·m (à {t} s), moyen {mean} N·m.",
+                               nm=nm, mx=f"{abs(vals[k]):.3g}", t=f"{st[k]['value']:.2f}",
+                               mean=f"{np.mean(np.abs(vals)):.3g}"))
             on_stop = {}
             for r in st:
                 for name, v, lim in r.get("limits") or []:
                     on_stop.setdefault(name, r["value"])
             for name, t0 in on_stop.items():
-                lines.append(f"{name} : en butée à partir de {t0:.2f} s.")
+                lines.append(_T("{name} : en butée à partir de {t} s.", name=name, t=f"{t0:.2f}"))
             assumed = getattr(self, "_sim_assumed", [])
             if assumed:
-                lines.append("ⓘ sans matériau, masse estimée (boîtes, 700 kg/m³) : "
-                             + ", ".join(assumed) + ".")
+                lines.append(_T("ⓘ sans matériau, masse estimée (boîtes, 700 kg/m³) : {names}.",
+                               names=", ".join(assumed)))
         ms = getattr(m, "masses", {}) or {}
         if ms:
             known = {n: mp for n, mp in ms.items() if mp["mass"] > 0}
             if known:
                 tot = sum(mp["mass"] for mp in known.values())
-                lines.append(f"Masse totale : {tot:.3g} kg — "
+                lines.append(_T("Masse totale : {m} kg — ", m=f"{tot:.3g}")
                              + ", ".join(f"{n} {mp['mass']:.3g} kg" for n, mp in known.items()))
             miss = sum(len(mp["missing"]) for mp in ms.values())
             if miss:
-                lines.append(f"ⓘ {miss} groupe(s) sans matériau : masse non comptée.")
+                lines.append(_T("ⓘ {n} groupe(s) sans matériau : masse non comptée.", n=miss))
         self.out.setPlainText("\n".join(lines))
 
     def _do_trajectory(self):
@@ -1136,7 +1198,7 @@ class MotionPanel(QWidget):
                         self.traces.append((body, np.asarray(j.point, float)))
                         break
         self._compute_traces()
-        self.say(f"Trajectoire de {len(self.traces)} point(s).")
+        self.say(_T("Trajectoire de {n} point(s).", n=len(self.traces)))
 
     def _compute_traces(self):
         m = self.mechanism()
@@ -1170,8 +1232,8 @@ class MotionPanel(QWidget):
             sel.clear()
             sel.update(groups)
         warn = "; ".join(f"{k} ×{n}" for k, n in asm.warnings.items())
-        self.say(f"STEP : {len(groups)} pièce(s) importée(s)"
-                 + (f" — non lu : {warn}" if warn else "") + ".")
+        self.say(_T("STEP : {n} pièce(s) importée(s)", n=len(groups))
+                 + (_T(" — non lu : {w}", w=warn) if warn else "") + ".")
         return asm, groups
 
     # ---- automatic joint detection ------------------------------------------------
@@ -1235,10 +1297,10 @@ class MotionPanel(QWidget):
         d, made = doc.apply_detection(self.data, parts, frame, proposals)
         d = self._guess_materials(d, [u for b in d["bodies"] for u in b["groups"]])
         n = {k: sum(1 for x in proposals if x.kind == k) for k in ("pivot", "slider", "gears")}
-        msg = (f"Détection : {n['pivot']} pivot(s), {n['slider']} glissière(s), "
-               f"{n['gears']} engrenage(s) ; pièce fixe : {parts[frame][0]}.")
+        msg = _T("Détection : {p} pivot(s), {s} glissière(s), {g} engrenage(s) ; pièce fixe : {f}.",
+                p=n['pivot'], s=n['slider'], g=n['gears'], f=parts[frame][0])
         if not d["drivers"]:
-            msg += " Choisir un moteur dans la liste."
+            msg += _T(" Choisir un moteur dans la liste.")
         self._store(d, msg)
         return made
 
@@ -1250,20 +1312,22 @@ class MotionPanel(QWidget):
             parts, props, frame = self.scan_model()
         except Exception as exc:
             QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, "Détecter les liaisons", f"{type(exc).__name__} : {exc}")
+            QMessageBox.warning(self, _T("Détecter les liaisons"), f"{type(exc).__name__} : {exc}")
             return
         QApplication.restoreOverrideCursor()
         if not props:
-            QMessageBox.information(self, "Détecter les liaisons",
-                                    f"{len(parts)} pièce(s) analysée(s) : aucune liaison "
-                                    "reconnue (arbre dans un alésage, appuis plans, engrenage).")
+            QMessageBox.information(self, _T("Détecter les liaisons"),
+                                    _T("{n} pièce(s) analysée(s) : aucune liaison reconnue "
+                                      "(arbre dans un alésage, appuis plans, engrenage).",
+                                      n=len(parts)))
             return
         dlg = QDialog(self)
-        dlg.setWindowTitle("Liaisons proposées")
+        dlg.setWindowTitle(_T("Liaisons proposées"))
         lay = QVBoxLayout(dlg)
-        lay.addWidget(QLabel(f"{len(parts)} pièce(s) analysée(s). Cocher les liaisons à créer :"))
+        lay.addWidget(QLabel(_T("{n} pièce(s) analysée(s). Cocher les liaisons à créer :",
+                               n=len(parts))))
         fr = QHBoxLayout()
-        fr.addWidget(QLabel("Pièce fixe"))
+        fr.addWidget(QLabel(_T("Pièce fixe")))
         combo = QComboBox()
         keys = sorted(parts, key=lambda k: parts[k][0])
         for k in keys:
@@ -1272,14 +1336,14 @@ class MotionPanel(QWidget):
         fr.addWidget(combo, 1)
         lay.addLayout(fr)
         tree = QTreeWidget()
-        tree.setHeaderLabels(["Liaison", "Pièces", "Détail", "Confiance"])
+        tree.setHeaderLabels([_T("Liaison"), _T("Pièces"), _T("Détail"), _T("Confiance")])
         tree.setRootIsDecorated(False)
-        label = {"pivot": "Pivot", "slider": "Glissière", "gears": "Engrenage"}
+        label = {"pivot": _T("Pivot"), "slider": _T("Glissière"), "gears": _T("Engrenage")}
         icon = {"pivot": "pivot", "slider": "slider", "gears": "coupling"}
         items = []
         for x in props:
             it = QTreeWidgetItem([label[x.kind], f"{parts[x.a][0]} ↔ {parts[x.b][0]}",
-                                  x.detail, f"{round(100 * x.score)} %"])
+                                  _detail(x.detail), f"{round(100 * x.score)} %"])
             it.setIcon(0, icons.icon(icon[x.kind], tree, 16))
             it.setCheckState(0, Qt.Checked if x.score >= 0.5 else Qt.Unchecked)
             tree.addTopLevelItem(it)
@@ -1288,8 +1352,8 @@ class MotionPanel(QWidget):
             tree.resizeColumnToContents(c)
         lay.addWidget(tree, 1)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Créer les liaisons")
-        bb.button(QDialogButtonBox.Cancel).setText("Annuler")
+        bb.button(QDialogButtonBox.Ok).setText(_T("Créer les liaisons"))
+        bb.button(QDialogButtonBox.Cancel).setText(_T("Annuler"))
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         lay.addWidget(bb)
@@ -1302,7 +1366,7 @@ class MotionPanel(QWidget):
 
     def _import_step_dialog(self):
         from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
-        path, _ = QFileDialog.getOpenFileName(self, "Importer un assemblage STEP", "",
+        path, _ = QFileDialog.getOpenFileName(self, _T("Importer un assemblage STEP"), "",
                                               "STEP (*.step *.stp *.STEP *.STP)")
         if not path:
             return
@@ -1310,7 +1374,7 @@ class MotionPanel(QWidget):
         try:
             self.import_step(path)
         except Exception as exc:
-            QMessageBox.warning(self, "Importer STEP", f"{type(exc).__name__} : {exc}")
+            QMessageBox.warning(self, _T("Importer STEP"), f"{type(exc).__name__} : {exc}")
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -1325,7 +1389,7 @@ class MotionPanel(QWidget):
             self._pose_at(self.t)
             self._dynamics(v)
         except Exception as exc:
-            self.say(f"Lecture : {exc}")
+            self.say(_T("Lecture : {e}", e=exc))
         self.app.viewport.update()
 
     def _dynamics(self, v):
@@ -1360,7 +1424,7 @@ class MotionPanel(QWidget):
         x, ok, _ = solver.solve(m, lo + t * (hi - lo), self.x)
         self.x = x
         if not ok:
-            self.say(f"{round(100 * t)} % : position non atteinte.")
+            self.say(_T("{p} % : position non atteinte.", p=round(100 * t)))
 
     def _play(self, on):
         self.play_btn.setText("⏸" if on else "▶")
@@ -1469,33 +1533,33 @@ class MotionPanel(QWidget):
         from . import video
         m = self.mechanism()
         if m.driver is None:
-            self.say("Exporter la vidéo : pas de moteur.")
+            self.say(_T("Exporter la vidéo : pas de moteur."))
             return
         dlg = QDialog(self)
-        dlg.setWindowTitle("Exporter la vidéo")
+        dlg.setWindowTitle(_T("Exporter la vidéo"))
         form = QFormLayout(dlg)
         dur = QDoubleSpinBox()
         dur.setRange(2, 120)
         dur.setValue(8)
         dur.setSuffix(" s")
-        form.addRow("Durée", dur)
+        form.addRow(_T("Durée"), dur)
         res = QComboBox()
         for text, wh in (("1920 × 1080", (1920, 1080)), ("1280 × 720", (1280, 720))):
             res.addItem(text, wh)
-        form.addRow("Résolution", res)
-        back = QCheckBox("Aller-retour (0 → 100 → 0 %)")
+        form.addRow(_T("Résolution"), res)
+        back = QCheckBox(_T("Aller-retour (0 → 100 → 0 %)"))
         back.setChecked(True)
         form.addRow(back)
         enc = QLabel()
         form.addRow("Format", enc)
         pick = QToolButton()
-        pick.setText("Indiquer ffmpeg.exe…")
+        pick.setText(_T("Indiquer ffmpeg.exe…"))
         form.addRow(pick)
 
         def refresh():
             kind, exe = video.mp4_backend(self._ffmpeg_hint())
             enc.setText({"qt": "MP4 (Qt Multimedia)", "ffmpeg": f"MP4 (ffmpeg : {exe})"}.get(
-                kind, "AVI Motion-JPEG — pour du MP4, indiquer ffmpeg.exe"))
+                kind, _T("AVI Motion-JPEG — pour du MP4, indiquer ffmpeg.exe")))
             pick.setVisible(kind != "qt")
 
         def choose():
@@ -1513,11 +1577,11 @@ class MotionPanel(QWidget):
         if dlg.exec() != QDialog.Accepted:
             return
         kind, _ = video.mp4_backend(self._ffmpeg_hint())
-        ext, filt = (".mp4", "Vidéo MP4 (*.mp4)") if kind else (".avi", "Vidéo AVI (*.avi)")
-        path, _ = QFileDialog.getSaveFileName(self, "Exporter la vidéo", "motion" + ext, filt)
+        ext, filt = (".mp4", _T("Vidéo MP4 (*.mp4)")) if kind else (".avi", _T("Vidéo AVI (*.avi)"))
+        path, _ = QFileDialog.getSaveFileName(self, _T("Exporter la vidéo"), "motion" + ext, filt)
         if not path:
             return
-        prog = QProgressDialog("Rendu de la vidéo…", "Annuler", 0, 100, self)
+        prog = QProgressDialog(_T("Rendu de la vidéo…"), _T("Annuler"), 0, 100, self)
         prog.setWindowModality(Qt.WindowModal)
         prog.setMinimumDuration(0)
 
@@ -1531,10 +1595,11 @@ class MotionPanel(QWidget):
                                            back.isChecked(), progress=step)
         except Exception as exc:
             prog.close()
-            QMessageBox.warning(self, "Exporter la vidéo", str(exc))
+            QMessageBox.warning(self, _T("Exporter la vidéo"), str(exc))
             return
         prog.close()
-        self.say(f"Vidéo enregistrée : {out} — {label}." if out else "Export annulé.")
+        self.say(_T("Vidéo enregistrée : {out} — {label}.", out=out, label=label) if out
+                 else _T("Export annulé."))
 
     def _moving_groups(self):
         """IngeTrazo groups of the moving bodies (model source)."""
@@ -1654,7 +1719,7 @@ class MotionPanel(QWidget):
         m = self.mechanism()
         poses = self.simulation()
         if m.driver is None and poses is None:
-            raise ValueError("pas de moteur")
+            raise ValueError(_T("pas de moteur"))
         # checked once, at the validation steps: the readings of a frame
         # (smallest gap, collisions) are those of its nearest step
         rows = self.report["steps"] if self.report else None
@@ -1710,8 +1775,8 @@ class MotionPanel(QWidget):
         unit = (lambda v: f"{math.degrees(v):.1f}°") if (j is not None and j.kind == "pivot") else \
             (lambda v: f"{1000 * v:.0f} mm")
         if j is not None and m.multi_turn():
-            unit = lambda v: f"{v / (2 * math.pi):.2f} tr"
-        name = SAMPLE_NAMES.get(self.source, "Mécanisme")
+            unit = lambda v: _T("{v} tr", v=f"{v / (2 * math.pi):.2f}")
+        name = _T(SAMPLE_NAMES.get(self.source, "Mécanisme"))
         writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
         saved_x, saved_t = self.x, self.t
         x = None
@@ -1738,12 +1803,12 @@ class MotionPanel(QWidget):
                 hits = {nm for pair in near.get("hits", []) for nm in pair}
                 cl = [near["clearance"]] if near.get("clearance") else []
                 shown = lo + t * (hi - lo)
-                info = [f"temps {near['value']:.2f} s"] if poses is not None else []
+                info = [_T("temps {t} s", t=f"{near['value']:.2f}")] if poses is not None else []
                 for nm, v in (near.get("couples") or {}).items():
-                    info.append(f"couple {nm} {v:+.3g} N·m")
+                    info.append(_T("couple {nm} {v} N·m", nm=nm, v=f"{v:+.3g}"))
                 for (jj, l_, h_), v in zip(m.drivers, m.driver_targets(shown) if m.drivers else []):
                     if jj.kind == "pivot":
-                        txt = (f"{v / (2 * math.pi):.2f} tr" if m.multi_turn((jj, l_, h_))
+                        txt = (_T("{v} tr", v=f"{v / (2 * math.pi):.2f}") if m.multi_turn((jj, l_, h_))
                                else f"{math.degrees(v):.1f}°")
                     else:
                         txt = f"{1000 * v:.0f} mm"
@@ -1755,10 +1820,11 @@ class MotionPanel(QWidget):
                     except TypeError:
                         info += extra(m, x)
                 if cl:
-                    info.append(f"jeu mini {1000 * max(cl[0]['distance'], 0):.1f} mm")
-                info.append("collision : " + " / ".join(sorted(hits)) if hits else "aucune collision")
+                    info.append(_T("jeu mini {d} mm", d=f"{1000 * max(cl[0]['distance'], 0):.1f}"))
+                info.append(_T("collision : ") + " / ".join(sorted(hits)) if hits
+                            else _T("aucune collision"))
                 if not ok:
-                    info.append("position non atteinte")
+                    info.append(_T("position non atteinte"))
                 shift = np.zeros(3)
                 if follow is not None:
                     shift = follow.world_point(m.pose(x, follow), follow.center) - follow.center
@@ -1840,17 +1906,12 @@ def setup(app):
 
     sub = app.add_menu("Motion")
     if sub is not None:
-        sub.addAction("Panneau Motion", lambda: show())
-        sub.addAction("Importer un assemblage STEP…",
+        sub.addAction(_T("Panneau Motion"), lambda: show())
+        sub.addAction(_T("Importer un assemblage STEP…"),
                       lambda: (show(), panel._import_step_dialog()))
-        sub.addAction("Exemple : chaise pliante", lambda: show("chaise"))
-        sub.addAction("Exemple : porte sectionnelle", lambda: show("porte"))
-        sub.addAction("Exemple : oiseau à battement d'ailes", lambda: show("oiseau"))
-        sub.addAction("Exemple : draisine à balancier", lambda: show("draisine"))
-        sub.addAction("Exemple : chaîne détendue et tendeur", lambda: show("chaine"))
-        sub.addAction("Exemple : chaîne souple (dynamique)", lambda: show("chaine_souple"))
-        sub.addAction("Exemple : pendule double (dynamique)", lambda: show("pendule_double"))
+        for key, text in SOURCES[1:]:
+            sub.addAction(_T(text), lambda _c=False, k=key: show(k))
     else:
         app.add_menu_action("Motion", lambda: show(),
-                            tip="Mécanismes : pivots, glissières, rails, validation.")
+                            tip=_T("Mécanismes : pivots, glissières, rails, validation."))
     return panel

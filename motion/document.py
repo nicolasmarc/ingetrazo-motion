@@ -26,6 +26,7 @@ groups' points (one box per group).
 import copy
 import numpy as np
 from .model import Mechanism, Box, Path, unit
+from .lang import T as _T
 
 FORMAT = 1
 
@@ -67,7 +68,7 @@ def add_body(data, uids, fixed, name=None):
     uids = [str(u) for u in uids]
     for b in d["bodies"]:
         b["groups"] = [u for u in b["groups"] if u not in uids]
-    name = name or unique_name(d, "fixe" if fixed else "pièce")
+    name = name or unique_name(d, _T("fixe") if fixed else _T("pièce"))
     d["bodies"].append({"name": name, "groups": uids, "fixed": bool(fixed)})
     return d, name
 
@@ -80,6 +81,7 @@ def add_joint(data, kind, a, b, point=None, axis=None, rail=None,
             "elastic": "élastique", "annular": "linéaire annulaire",
             "pointplane": "ponctuelle", "planar": "appui plan",
             "screw": "hélicoïdale"}[kind]
+    stem = _T(stem)
     j = {"kind": kind, "name": name or unique_name(d, stem), "a": a, "b": b,
          "limits": list(limits) if limits is not None else None}
     if kind == "guide":
@@ -152,7 +154,7 @@ def apply_detection(data, parts, frame, proposals):
         if x.kind not in ("pivot", "slider"):
             continue
         a, b = (x.a, x.b) if x.b != frame else (x.b, x.a)
-        stem = "pivot" if x.kind == "pivot" else "glissière"
+        stem = _T("pivot") if x.kind == "pivot" else _T("glissière")
         jn = f"{stem} {names[a]}–{names[b]}"
         if jn in {b_["name"] for b_ in d["bodies"]} | {j["name"] for j in d["joints"]}:
             jn = unique_name(d, jn + " ")
@@ -174,7 +176,7 @@ def apply_detection(data, parts, frame, proposals):
         r *= (1 if a0 == f else -1) * (1 if b0 == f else -1)
         if ax_a @ ax_b < 0:
             r = -r
-        d, cn = add_coupling(d, ja, jb, r, name=unique_name(d, "engrenage "))
+        d, cn = add_coupling(d, ja, jb, r, name=unique_name(d, _T("engrenage") + " "))
         made.append(cn)
     return d, made
 
@@ -375,7 +377,7 @@ def rail_and_rollers(segments):
     to the rail); rollers come in rail order, whatever the selection order."""
     cs = chains(segments)
     if not cs:
-        raise ValueError("sélectionner les arêtes du rail")
+        raise ValueError(_T("sélectionner les arêtes du rail"))
     rail = cs[0]
     a, b = rail[0], rail[-1]                  # runs from its lowest end
     if (b[2], b[0], b[1]) < (a[2], a[0], a[1]):
@@ -457,17 +459,17 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
         c = np.mean([bx.center for bx in bxs], axis=0) if bxs else np.zeros(3)
         bodies[b["name"]] = m.body(b["name"], c, bxs)
         if not bxs:
-            problems.append(f"{b['name']} : aucun groupe trouvé dans le modèle")
+            problems.append(_T("{name} : aucun groupe trouvé dans le modèle", name=b['name']))
     if not fixed:
-        problems.append("aucune pièce fixe : ajouter une « pièce fixe »")
+        problems.append(_T("aucune pièce fixe : ajouter une « pièce fixe »"))
     joints = {}
     for j in d["joints"]:
         a, b = bodies.get(j["a"]), bodies.get(j["b"])
         if a is None or b is None:
-            problems.append(f"{j['name']} : pièce inconnue")
+            problems.append(_T("{name} : pièce inconnue", name=j['name']))
             continue
         if a is b:
-            problems.append(f"{j['name']} : relie une pièce à elle-même")
+            problems.append(_T("{name} : relie une pièce à elle-même", name=j['name']))
             continue
         lim = tuple(j["limits"]) if j.get("limits") else None
         if j["kind"] == "coupling":
@@ -507,18 +509,18 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             continue
         ja, jb = joints.get(j.get("ja")), joints.get(j.get("jb"))
         if ja is None or jb is None:
-            problems.append(f"{j['name']} : liaison couplée inconnue")
+            problems.append(_T("{name} : liaison couplée inconnue", name=j['name']))
             continue
         joints[j["name"]] = m.couple(ja, jb, j["ratio"], j["name"])
     for drv in d["drivers"]:
         if drv["joint"] in joints:
             m.add_driver(joints[drv["joint"]], drv["lo"], drv["hi"])
         else:
-            problems.append(f"moteur {drv['joint']} : liaison inconnue")
+            problems.append(_T("moteur {name} : liaison inconnue", name=drv['joint']))
     m.torques = {n: v for n, v in d["couples"].items() if n in joints}
     m.simulation = dict(d["simulation"])
     if not m.drivers and m.bodies and not (m.simulation.get("active")):
-        problems.append("aucun moteur : choisir une liaison et « Moteur 0–100 % »")
+        problems.append(_T("aucun moteur : choisir une liaison et « Moteur 0–100 % »"))
     m.masses = {}
     if triangles_of_group is not None:
         m.masses = mass_properties(d, triangles_of_group)

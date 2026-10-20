@@ -13,6 +13,7 @@
 """
 import itertools
 import numpy as np
+from .lang import T as _T
 
 _CORNERS = np.array(list(itertools.product((-1, 1), repeat=3)), float)
 _EDGES = [(i, j) for i in range(8) for j in range(i + 1, 8)
@@ -325,12 +326,12 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
         rows.append(row)
         pct = round(100 * st["t"])
         if not st["ok"]:
-            problems.append(f"{pct} % : position non atteinte (résidu {st['res']:.2e})")
+            problems.append(_T("{p} % : position non atteinte (résidu {r})", p=pct, r=f"{st['res']:.2e}"))
         for a, b in row["hits"]:
-            problems.append(f"{pct} % : collision {a} / {b}")
+            problems.append(_T("{p} % : collision {a} / {b}", p=pct, a=a, b=b))
         if poses is None:                 # in a simulation the stops act: not a fault
             for name, v, lim in row["limits"]:
-                problems.append(f"{pct} % : butée dépassée {name} = {v:.4g}")
+                problems.append(_T("{p} % : butée dépassée {name} = {v}", p=pct, name=name, v=f"{v:.4g}"))
         # parts joined together: right next to their joint (within 2 sampling
         # steps) the gap means nothing — a pin in its bore; their collisions
         # and their gaps further off count
@@ -345,7 +346,8 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
                 worst = dict(c, t=st["t"])
             for c in cl:
                 if 0 <= c["distance"] < jeu_min - 1e-12:
-                    problems.append(f"{pct} % : jeu {c['distance'] * 1000:.1f} mm "
-                                    f"< {jeu_min * 1000:.1f} mm entre {c['a']} "
-                                    f"({c['box_a']}) et {c['b']} ({c['box_b']})")
+                    problems.append(_T("{p} % : jeu {d} mm < {j} mm entre {a} ({ga}) et {b} ({gb})",
+                                      p=pct, d=f"{c['distance'] * 1000:.1f}",
+                                      j=f"{jeu_min * 1000:.1f}", a=c['a'], ga=c['box_a'],
+                                      b=c['b'], gb=c['box_b']))
     return dict(steps=rows, worst=worst, ok=not problems, problems=problems)
