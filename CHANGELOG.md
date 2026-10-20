@@ -19,6 +19,34 @@
   a hinged lid opening and closing into its box, a face sliding 0.12 mm off a
   wall, a 3 mm gap read exactly.
 
+### Fixed — STEP reading (faces drawn wrong on a real model)
+- B-spline surfaces closed round one direction (tubes, ribs): a face across
+  the seam was meshed the long way round (a sheet between the ribs); the
+  seam is now crossed, bands between two rings are meshed as a strip, and
+  surfaces closed the other way are turned round first.
+- Planar faces with rows of lined-up holes: the cut to a hole could graze
+  the next one, and holes stayed filled. Cuts now miss every edge and
+  vertex, ears never step over a cut, and if the area still comes out wrong
+  the face is cut in slices instead (never fails).
+- The outline of a face is the loop that holds the others (some files flag
+  a hole as the outer bound).
+- Surfaces of linear extrusion: the swept curve is sampled whole (taken
+  between one point and itself it went there and back, and gear flanks
+  came out three times too big).
+- Surfaces of revolution follow their own profile curve (not the straight
+  line between the boundary points), with the right normal.
+- Cones scaled by the radius where the face is, not the file's reference
+  radius; a loop through the apex (or a sphere's pole) meets it twice.
+- Spheres cut by a circle that is not round their axis (a ball on its stem)
+  are meshed seen from above the face.
+- Facets leaning more than 15° off a small curved surface are split (a
+  1.5 mm ball at 0.2 mm was a few flat facets).
+- Complex B_SPLINE_CURVE entities (name in REPRESENTATION_ITEM) are read:
+  the 8 "unreadable" faces of the model.
+- Checked face by face against OpenCascade on a 133-part assembly: from 493
+  faces off by more than 3 % to 20, all of them thin tubes and small circles
+  within the chord tolerance. Faster b-spline evaluation.
+
 ### Changed
 - Videos of big models keep their largest faces when thinned (every n-th
   face left holes).
