@@ -33,6 +33,10 @@ tab appears in the side tray, and Extensions ▸ Motion has the examples.
 | Rotule | edges around the joint centre (a small circle) | ball joint |
 | Encastrement | edges at the joint point | the two parts move as one |
 | Élastique | edges at the joint point | silent-block (springs in the dynamics) |
+| Linéaire annulaire | ONE edge on the bore's axis + a circle of the ball | ball sliding in a bore, every rotation free |
+| Ponctuelle | ONE edge along the normal, from the contact point | point on a plane |
+| Appui plan | ONE edge along the plane's normal | slides on the plane, turns about the normal |
+| Hélicoïdale | ONE edge on the axis, then the pitch (mm per turn) | screw and nut |
 | Guide/rail | the rail's edges (lines + arc segments) and a short stroke across the rail at each roller | one roller joint per stroke, on the nearest moving part |
 | Driver 0–100 % | a joint in the list, and its travel (° or mm) | that joint drives the motion |
 | Validate | — | 0 → 100 %: convergence, collisions, stops, gaps under *Jeu mini* |
@@ -48,8 +52,15 @@ meshing gears (ratio from the teeth), separate pins kept with the part they
 are pressed in — with the frame; tick the ones to keep, they are created in
 one undo step. Then pick a motor.
 
-The twelve tools sit in one grid: parts and pivot/slider, the other
-standard joints, then rail, motor, validation, trajectory. On any joint: ressort, amortisseur, moteur en couple. Tick **Dynamique** (and a
+The sixteen tools sit in one 4×4 grid: parts and pivot/slider, the other
+standard joints (two rows), then rail, motor, validation, trajectory.
+
+**Collisions on the real surfaces**: on a model, every part is checked by
+its faces, not its box (a casing does not swallow what it holds): points
+spread over the faces, then the exact signed distance to the triangles
+where they come close. What touches in the drawn position is the joint (a
+pin in its bore); meshing gears are not checked against each other; a
+penetration under 0.1 mm (faceting) is not a collision. On any joint: ressort, amortisseur, moteur en couple. Tick **Dynamique** (and a
 duration) to run your model in time: weight, springs, dampers, stops; the
 report gives the motors' torques.
 

@@ -116,3 +116,19 @@ if __name__ == "__main__":
     for k, fn in list(globals().items()):
         if k.startswith("test_"):
             fn(); print("ok", k)
+
+
+def test_faces_turned_the_wrong_way_do_not_make_collisions():
+    # half the faces of the casing turned inward (as a mesher may leave
+    # them): inside or outside is told by the rays, not the normals
+    from test_contact import hollow as _h
+    T = _h((0, 0, 0), (0.2, 0.06, 0.06), 0.005)
+    T[::2] = T[::2, ::-1]
+    tris = {"carter": T, "tige": box((0.02, 0.025, 0.025), (0.08, 0.035, 0.035))}
+    tris["tige"][1::2] = tris["tige"][1::2, ::-1]
+    m, _ = mechanism(tris, [("carter", ["carter"], True), ("tige", ["tige"], False)],
+                     [("slider", "carter", "tige", (0.05, 0.03, 0.03), (1, 0, 0), None)],
+                     [("glissière1", 0.0, 0.13)])
+    rep = collide.validate(m, 27, 0.0)
+    hit = [round(r["value"], 4) for r in rep["steps"] if r["hits"]]
+    assert hit and abs(hit[0] - 0.12) < 1e-9, hit

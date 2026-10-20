@@ -193,19 +193,71 @@ class Surfaces:
 
     def _signed(self, A, Q, k=16):
         """Signed distance of points Q (in A's drawn frame) to A's surface:
-        < 0 inside A."""
+        < 0 inside A. Inside or not is told by counting the faces crossed
+        along three rays (x, y, z; two of three decide), which holds even
+        where some faces of the model are turned the wrong way."""
         k = min(k, len(A["T"]))
         _, it = A["ttree"].query(Q, k=k)
         it = np.atleast_2d(it).reshape(len(Q), -1)
         T = A["T"][it.ravel()]
         Qr = np.repeat(Q, it.shape[1], axis=0)
         cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
-        dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1)
-        side = _dot(Qr - cp, A["N"][it.ravel()]).reshape(len(Q), -1)
-        best = dist.min(axis=1)
-        tie = dist <= best[:, None] * (1 + 1e-6) + 1e-12
-        outside = np.where(tie, side, -np.inf).max(axis=1) >= -1e-12
-        return np.where(outside, best, -best)
+        best = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1).min(axis=1)
+        out = best.copy()
+        for i in np.nonzero(best < self.h)[0]:      # near the surface: which side?
+            if self._inside(A, Q[i]):
+                out[i] = -best[i]
+        return out
+
+    def _grid(self, A, axis):
+        key = "grid%d" % axis
+        if key not in A:
+            u, v = [c for c in range(3) if c != axis]
+            T = A["T"]
+            cell = max(4 * self.h, 1e-6)
+            lo = np.floor(T[:, :, [u, v]].min(axis=1) / cell).astype(np.int64)
+            hi = np.floor(T[:, :, [u, v]].max(axis=1) / cell).astype(np.int64)
+            na, nb = hi[:, 0] - lo[:, 0] + 1, hi[:, 1] - lo[:, 1] + 1
+            cnt = na * nb
+            t = np.repeat(np.arange(len(T)), cnt)
+            k = np.arange(len(t)) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+            ca = lo[t, 0] + k // nb[t]
+            cb = lo[t, 1] + k % nb[t]
+            order = np.lexsort((cb, ca))
+            t, ca, cb = t[order], ca[order], cb[order]
+            cut = np.nonzero(np.diff(ca) | np.diff(cb))[0] + 1
+            starts = np.concatenate([[0], cut])
+            ends = np.concatenate([cut, [len(t)]])
+            grid = {(int(ca[i]), int(cb[i])): t[i:j] for i, j in zip(starts, ends)}
+            A[key] = (cell, grid)
+        return A[key]
+
+    def _inside(self, A, q):
+        votes = 0
+        for axis in range(3):
+            u, v = [c for c in range(3) if c != axis]
+            cell, grid = self._grid(A, axis)
+            ix = grid.get((int(np.floor(q[u] / cell)), int(np.floor(q[v] / cell))))
+            if ix is None:
+                continue
+            T = A["T"][ix]
+            a, b, c = T[:, 0], T[:, 1], T[:, 2]
+            # where the ray q + t e_axis (t > 0) meets each triangle's plane,
+            # inside its projection on (u, v)
+            x0, y0 = a[:, u] - q[u], a[:, v] - q[v]
+            x1, y1 = b[:, u] - q[u], b[:, v] - q[v]
+            x2, y2 = c[:, u] - q[u], c[:, v] - q[v]
+            d = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+            ok = np.abs(d) > 1e-30
+            d = np.where(ok, d, 1.0)
+            l1 = (-x0 * (y2 - y0) + y0 * (x2 - x0)) / d
+            l2 = (-(x1 - x0) * y0 + (y1 - y0) * x0) / d
+            l0 = 1 - l1 - l2
+            hit = ok & (l0 >= 0) & (l1 >= 0) & (l2 >= 0)
+            z = l0 * a[:, axis] + l1 * b[:, axis] + l2 * c[:, axis]
+            n = int(np.count_nonzero(hit & (z > q[axis])))
+            votes += n % 2
+        return votes >= 2
 
 
 PENETRATION = 0.0001          # m: deeper than this is a collision (facets)

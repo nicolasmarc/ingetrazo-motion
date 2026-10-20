@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.0 — unreleased
+
+### Added
+- **Four more standard joints**: linéaire annulaire (a ball in a bore: its
+  centre stays on the axis, every rotation free), ponctuelle (a point on a
+  plane), appui plan (planar) and hélicoïdale (screw and nut, pitch per turn,
+  motor, springs, stops). Kinematics, dynamics, document, icons; the panel's
+  grid is 4×4. Tested by hand: bead on a sloping wire, point on a slope with
+  a sideways drift, block on a plane spinning about its normal, a nut falling
+  on its screw ((m + I k²) z'' = -m g), a lead screw's motor torque
+  (m g p / 2π), and an eccentric driving a leg through a ball in a bore.
+- **Collisions on the real surfaces** (`motion.contact`): parts built from the
+  model are checked by their faces — sampled points, k-d trees, then the exact
+  signed distance to the triangles near contact. Resting contacts in the drawn
+  position are the joint; gear pairs are not checked. Boxes stay for the
+  examples. Tested: a rod inside a hollow casing (its box swallows the rod),
+  a hinged lid opening and closing into its box, a face sliding 0.12 mm off a
+  wall, a 3 mm gap read exactly.
+
+### Changed
+- Groups whose faces are turned inward are turned outward for the collision
+  check (signed volume).
+- The panel tests' hinges sit on the top face: at mid-thickness the leaf's
+  corner swings into the table, which the new check reports (rightly).
+
 ## 0.7.0 — 2026-10-18
 
 ### Added
