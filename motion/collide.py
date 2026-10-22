@@ -299,7 +299,17 @@ def limit_violations(mech, x, tol=1e-6):
     return out
 
 
-def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
+def _held_pairs(mech):
+    """{frozenset of two part names} held together by a joint."""
+    out = set()
+    for j in mech.joints:
+        a, b = getattr(j, "a", None), getattr(j, "b", None)
+        if a is not None and b is not None:
+            out.add(frozenset((a.name, b.name)))
+    return out
+
+
+def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contacts=False):
     """Run the driver 0..100 % and check everything at each step.
 
     Returns a dict: ``steps`` (per step: t, value, ok, res, hits, limits,
@@ -307,17 +317,28 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None):
     with its t), ``ok`` (converged, no interference, no limit, gap >=
     jeu_min everywhere) and ``problems`` (readable strings).
     ``poses``: rows {t (0..1), value, x, ok, res} computed elsewhere (a
-    dynamic simulation) instead of the driver's sweep."""
+    dynamic simulation) instead of the driver's sweep. ``contacts``: the
+    simulation handles the shocks between parts not held by a joint, so
+    their touching is no fault (neither collision nor gap)."""
     from .solver import sweep
     rows, worst, problems = [], None, []
+    held = _held_pairs(mech) if contacts else None
     for st in (poses if poses is not None else sweep(mech, steps)):
         x = st["x"]
+        if contacts and not held:         # free parts only: the shocks say it all
+            rows.append(dict({k: v for k, v in st.items() if k not in ("x",)},
+                             t=st["t"], value=st["value"], x=x, ok=st["ok"], res=st["res"],
+                             hits=[], limits=limit_violations(mech, x), clearance=None))
+            continue
         cl = clearances(mech, x, ignore_joined, reach=_mesh_reach(mech, jeu_min))
         hits = [(c["a"], c["b"]) for c in cl if c.get("mesh") and c["distance"] < 0]
         if _surfaces(mech) is None:
             hits = interferences(mech, x, ignore_joined=ignore_joined)
         else:
             hits += [h for h in _box_hits(mech, x, ignore_joined)]
+        if contacts:
+            hits = [h for h in hits if frozenset(h) in held]
+            cl = [c for c in cl if c.get("joined") or frozenset((c["a"], c["b"])) in held]
         row = dict({k: v for k, v in st.items() if k not in ("x",)},
                    t=st["t"], value=st["value"], x=x, ok=st["ok"], res=st["res"],
                    hits=hits,

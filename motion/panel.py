@@ -419,6 +419,13 @@ class MotionPanel(QWidget):
         self.dur.setValue(4.0)
         self.dur.editingFinished.connect(lambda: self._dynamics_toggled(self.dyn_on.isChecked()))
         drow.addWidget(self.dur)
+        self.chocs_on = QCheckBox(_T("Chocs"))
+        self.chocs_on.setToolTip(_T("Chocs et appuis entre pièces libres (dominos, blocs, butées "
+                                    "posées) : les boîtes des pièces se repoussent, avec le "
+                                    "frottement et le rebond de leurs matériaux. Les pièces "
+                                    "tenues par une liaison ne se heurtent pas."))
+        self.chocs_on.toggled.connect(lambda on: self._dynamics_toggled(self.dyn_on.isChecked()))
+        drow.addWidget(self.chocs_on)
         drow.addStretch(1)
         lay.addLayout(drow)
 
@@ -457,11 +464,12 @@ class MotionPanel(QWidget):
             self.jeu.blockSignals(False)
             self.pas.setValue(int(self.data.get("pas", 51)))
             sim = self.data.get("simulation") or {}
-            for w_ in (self.dyn_on, self.dur):
+            for w_ in (self.dyn_on, self.dur, self.chocs_on):
                 w_.blockSignals(True)
             self.dyn_on.setChecked(bool(sim.get("active")))
             self.dur.setValue(float(sim.get("duree", 4.0)))
-            for w_ in (self.dyn_on, self.dur):
+            self.chocs_on.setChecked(bool(sim.get("chocs")))
+            for w_ in (self.dyn_on, self.dur, self.chocs_on):
                 w_.blockSignals(False)
         self._invalidate()
         self._fill_tree()
@@ -962,7 +970,7 @@ class MotionPanel(QWidget):
     def _dynamics_toggled(self, on):
         if self.source != "model":
             return
-        d = doc.set_simulation(self.data, on, self.dur.value())
+        d = doc.set_simulation(self.data, on, self.dur.value(), self.chocs_on.isChecked())
         self._store(d, _T("Dynamique : simulation dans le temps.") if on else _T("Dynamique : arrêtée."))
 
     def _do_pivot(self, kind="pivot"):
@@ -1065,6 +1073,9 @@ class MotionPanel(QWidget):
                 for name, v in (getattr(m, "torques", {}) or {}).items():
                     motors[name] = ("couple", (lambda t, v=v: v))
                 sim = dict(duree=T, dt=0.002, params=dict(motors=motors))
+                if ms.get("chocs"):            # stiff contacts: a finer step
+                    sim["dt"] = 2e-4
+                    sim["params"]["contacts"] = dict(dt=2e-4)
         if not sim:
             return None
         if getattr(self, "_sim_cache", (None,))[0] is not self.mech:
@@ -1091,7 +1102,14 @@ class MotionPanel(QWidget):
                 poses[-1]["couples"] = poses[-2]["couples"]
             self._sim_cache = (self.mech, poses)
             self._sim_assumed = list(dyn.assumed)
+            self._sim_impacts = (dyn.impacts.deepest if dyn.impacts is not None else None)
         return self._sim_cache[1]
+
+    def _chocs(self):
+        sim = (self.sample_info or {}).get("simulation")
+        if sim:
+            return bool(sim.get("params", {}).get("contacts"))
+        return bool((getattr(self.mechanism(), "simulation", {}) or {}).get("chocs"))
 
     def _do_validate(self):
         m = self.mechanism()
@@ -1107,7 +1125,8 @@ class MotionPanel(QWidget):
             m = self.mechanism()
             poses = self.simulation()
         self.report = collide.validate(m, self.pas.value(), self.jeu.value() / 1000,
-                                       poses=poses)
+                                       poses=poses,
+                                       contacts=poses is not None and self._chocs())
         self.frames = self.report["steps"]
         self._write_report()
         if self.buttons["trajectory"].isChecked():
@@ -1156,6 +1175,10 @@ class MotionPanel(QWidget):
                     on_stop.setdefault(name, r["value"])
             for name, t0 in on_stop.items():
                 lines.append(_T("{name} : en butée à partir de {t} s.", name=name, t=f"{t0:.2f}"))
+            deep = getattr(self, "_sim_impacts", None)
+            if deep is not None and self._chocs():
+                lines.append(_T("Chocs entre pièces : enfoncement maxi {d} mm (pièces indéformables).",
+                               d=f"{deep * 1000:.2f}"))
             assumed = getattr(self, "_sim_assumed", [])
             if assumed:
                 lines.append(_T("ⓘ sans matériau, masse estimée (boîtes, 700 kg/m³) : {names}.",
@@ -1532,7 +1555,8 @@ class MotionPanel(QWidget):
                                        QMessageBox, QProgressDialog)
         from . import video
         m = self.mechanism()
-        if m.driver is None:
+        sim = self.simulation()
+        if m.driver is None and sim is None:
             self.say(_T("Exporter la vidéo : pas de moteur."))
             return
         dlg = QDialog(self)
@@ -1550,6 +1574,17 @@ class MotionPanel(QWidget):
         back = QCheckBox(_T("Aller-retour (0 → 100 → 0 %)"))
         back.setChecked(True)
         form.addRow(back)
+        slow = QDoubleSpinBox()
+        slow.setRange(1.0, 20.0)
+        slow.setDecimals(1)
+        slow.setPrefix("× ")
+        slow.setValue(1.0)
+        slow.setToolTip(_T("Simulation dynamique : la vidéo la montre ce nombre de fois "
+                           "plus lentement (1 : en temps réel)."))
+        if sim is not None:                # the simulation sets the length
+            form.addRow(_T("Ralenti"), slow)
+            back.setVisible(False)
+            form.setRowVisible(dur, False)
         enc = QLabel()
         form.addRow("Format", enc)
         pick = QToolButton()
@@ -1592,7 +1627,8 @@ class MotionPanel(QWidget):
 
         try:
             out, label = self.export_video(path, dur.value(), res.currentData(),
-                                           back.isChecked(), progress=step)
+                                           back.isChecked(), progress=step,
+                                           ralenti=slow.value())
         except Exception as exc:
             prog.close()
             QMessageBox.warning(self, _T("Exporter la vidéo"), str(exc))
@@ -1609,11 +1645,14 @@ class MotionPanel(QWidget):
         return [by[u] for b in self.data["bodies"] if not b["fixed"]
                 for u in b["groups"] if u in by]
 
-    def _refresh_view_cache(self):
+    def _refresh_view_cache(self, hidden=None):
         # Best effort, viewport internals: forget the memoised placement
-        # epoch so a group's ``hidden`` flag is seen without bumping the
-        # document version (no undo step, the document stays saved). If
-        # these names change, moving parts simply stay drawn in place.
+        # epoch so a group's ``hidden`` flag is seen. The draw batches key on
+        # the scene version too (IngeTrazo 0.5.9): while the moving parts
+        # are hidden the version takes a value of its own, never a real one
+        # (negative), and comes back after — no undo step, the document
+        # stays saved. If these names change, moving parts simply stay
+        # drawn in place.
         vp = self.app.viewport
         for name in ("_epoch_memo", "_epoch_same"):
             if hasattr(vp, name):
@@ -1621,6 +1660,16 @@ class MotionPanel(QWidget):
                     setattr(vp, name, None)
                 except Exception:
                     pass
+        sc = getattr(vp, "scene", None)
+        if sc is None or not isinstance(getattr(sc, "version", None), int):
+            return
+        if hidden:
+            self._real_version = sc.version
+            self._hide_count = getattr(self, "_hide_count", 0) + 1
+            sc.version = -self._hide_count
+        elif hidden is False and getattr(self, "_real_version", None) is not None:
+            sc.version = self._real_version
+            self._real_version = None
 
     def _viewport_image(self, width, shaded=None, x=None, hits=None):
         """The IngeTrazo view as an image: IngeTrazo renders the model
@@ -1635,7 +1684,7 @@ class MotionPanel(QWidget):
                 for g in hide:
                     g.hidden = True
                 if hide:
-                    self._refresh_view_cache()
+                    self._refresh_view_cache(True)
                 img = render(width)
             except Exception:
                 img = None
@@ -1643,7 +1692,7 @@ class MotionPanel(QWidget):
                 for g in hide:
                     g.hidden = False
                 if hide:
-                    self._refresh_view_cache()
+                    self._refresh_view_cache(False)
         lw, lh = max(vp.width(), 1), max(vp.height(), 1)
         rendered = img is not None and not img.isNull()
         if not rendered:                                 # no GL here
@@ -1709,12 +1758,13 @@ class MotionPanel(QWidget):
         return j.kind == "pivot" and abs(abs(hi - lo) - 2 * math.pi) < 1e-6
 
     def export_video(self, path, seconds=8.0, size=(1920, 1080), aller_retour=True,
-                     fps=30, progress=None, cycles=None):
+                     fps=30, progress=None, cycles=None, ralenti=1.0):
         """Render the motion to ``path`` (split screen). Returns (file, kind
         label), or (None, None) when ``progress(i, n)`` returned False.
         A crank (full-turn driver) runs at constant speed for ``cycles``
         turns (default: one turn per 2 s); anything else is eased, there
-        and back when ``aller_retour``."""
+        and back when ``aller_retour``. A dynamic simulation plays in real
+        time, or ``ralenti`` times slower (its poses interpolated)."""
         from . import render, video
         m = self.mechanism()
         poses = self.simulation()
@@ -1725,10 +1775,12 @@ class MotionPanel(QWidget):
         rows = self.report["steps"] if self.report else None
         if rows is None or len(rows) < 3:
             rows = collide.validate(m, max(self.pas.value(), 21),
-                                    self.jeu.value() / 1000, poses=poses)["steps"]
+                                    self.jeu.value() / 1000, poses=poses,
+                                    contacts=poses is not None and self._chocs())["steps"]
         sweep_rows = rows
+        slow = max(float(ralenti or 1.0), 1.0)
         if poses is not None:                     # a simulation plays in real time
-            seconds = poses[-1]["value"]
+            seconds = (poses[-1]["value"] - poses[0]["value"]) * slow
         n = max(2, int(round(seconds * fps)))
         hold = min(int(0.5 * fps), n // 6)
         ease = lambda u: 0.5 - 0.5 * math.cos(math.pi * u)
@@ -1792,7 +1844,11 @@ class MotionPanel(QWidget):
                 k = min(int(f), len(sweep_rows) - 2)
                 a = f - k
                 if poses is not None:                 # the simulation's own pose
-                    x, ok = sweep_rows[int(round(f))]["x"], True
+                    if slow > 1.0:                    # slow motion: between two poses
+                        x = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
+                    else:
+                        x = sweep_rows[int(round(f))]["x"]
+                    ok = True
                 else:
                     guess = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
                     x, ok, _ = solver.solve(m, lo + t * (hi - lo), guess)
@@ -1804,6 +1860,8 @@ class MotionPanel(QWidget):
                 cl = [near["clearance"]] if near.get("clearance") else []
                 shown = lo + t * (hi - lo)
                 info = [_T("temps {t} s", t=f"{near['value']:.2f}")] if poses is not None else []
+                if poses is not None and slow > 1.0:
+                    info.append(_T("ralenti ×{k}", k=f"{slow:g}"))
                 for nm, v in (near.get("couples") or {}).items():
                     info.append(_T("couple {nm} {v} N·m", nm=nm, v=f"{v:+.3g}"))
                 for (jj, l_, h_), v in zip(m.drivers, m.driver_targets(shown) if m.drivers else []):

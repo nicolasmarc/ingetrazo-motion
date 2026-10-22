@@ -69,6 +69,12 @@ pin in its bore); meshing gears are not checked against each other; a
 penetration under 0.1 mm (faceting) is not a collision. On any joint: ressort, amortisseur, moteur en couple. Tick **Dynamique** (and a
 duration) to run your model in time: weight, springs, dampers, stops; the
 report gives the motors' torques.
+Tick **Chocs** as well for parts that knock or rest on each other without
+a joint (dominoes, blocks, a loose stop): their boxes push each other back,
+with the friction and rebound of their materials. The parts stay rigid and
+the values are indicative. A simulation needs no motor: a part drawn off
+balance (the first domino tilted) is enough; the video can play it slowed
+down (« Ralenti »).
 
 **Matériau**: pick the material of the part chosen in the list (woods,
 metals, plastics; «Nouveau…» for your own); its mass, volume and centre of

@@ -22,6 +22,21 @@ def rotation(w):
     return np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * K @ K
 
 
+def rotations(W):
+    """Rodrigues for many rotation vectors at once: (n, 3) -> (n, 3, 3)."""
+    W = np.asarray(W, float).reshape(-1, 3)
+    th = np.linalg.norm(W, axis=1)
+    small = th < 1e-12
+    k = np.where(small[:, None], W, W / np.where(small, 1.0, th)[:, None])
+    K = np.zeros((len(W), 3, 3))
+    K[:, 0, 1], K[:, 0, 2] = -k[:, 2], k[:, 1]
+    K[:, 1, 0], K[:, 1, 2] = k[:, 2], -k[:, 0]
+    K[:, 2, 0], K[:, 2, 1] = -k[:, 1], k[:, 0]
+    s = np.where(small, 1.0, np.sin(th))[:, None, None]
+    c = np.where(small, 0.5, 1 - np.cos(th))[:, None, None]
+    return np.eye(3)[None] + s * K + c * (K @ K)
+
+
 def _skew(v):
     x, y, z = v
     return np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]], float)

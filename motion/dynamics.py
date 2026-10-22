@@ -25,7 +25,7 @@ a force, on a slider) and lets the mechanism answer.
 """
 import math
 import numpy as np
-from .model import rotation
+from .model import rotation, rotations
 from . import solver as _solver
 
 
@@ -86,10 +86,13 @@ class Dynamics:
     torque (N m) / force (N). Joints not listed are free. ``damping``:
     {joint: c} viscous friction in a joint (N m s/rad or N s/m).
     ``default_density``: kg/m^3 for parts without a mass (their boxes'
-    volume). ``stiffness``: Baumgarte constant (1/s)."""
+    volume). ``stiffness``: Baumgarte constant (1/s). ``contacts``: True
+    (or a dict of :class:`motion.impacts.Impacts` options) for shocks and
+    resting contacts between the parts' boxes; parts held by a joint do
+    not knock each other."""
 
     def __init__(self, mech, gravity=(0.0, 0.0, -9.81), motors=None, damping=None,
-                 default_density=700.0, stiffness=30.0):
+                 default_density=700.0, stiffness=30.0, contacts=None):
         self.m = mech
         self.g = np.asarray(gravity, float)
         key = lambda j: j if isinstance(j, str) else j.name
@@ -121,6 +124,10 @@ class Dynamics:
                 self.assumed.append(b.name)
         self.joints = [j for j in mech.joints]   # elastic ones act as springs only
         self.n = 6 * len(self.bodies)
+        self.impacts = None
+        if contacts:
+            from .impacts import Impacts
+            self.impacts = Impacts(self, **(contacts if isinstance(contacts, dict) else {}))
 
     # -- pose <-> centre-of-gravity coordinates ----------------------------
     def _R(self, x, b):
@@ -133,18 +140,25 @@ class Dynamics:
         """Pose after moving each part's centre of gravity by du[:3] and
         turning it about that centre by du[3:] (world rotation vector)."""
         x = np.array(x, float)
-        for k, b in enumerate(self.bodies):
-            d = du[6 * k: 6 * k + 6]
-            if not np.any(d):
-                continue
-            i = 6 * b.index
-            R = rotation(x[i + 3: i + 6])
-            r = R @ (self.com[id(b)] - b.center)            # centre -> cog, world
-            c = b.center + x[i: i + 3] + r
-            R2 = rotation(d[3:]) @ R
-            c2 = c + d[:3]
-            x[i: i + 3] = c2 - R2 @ (self.com[id(b)] - b.center) - b.center
-            x[i + 3: i + 6] = _unwrap(log_rotation(R2), x[i + 3: i + 6])
+        nb = len(self.bodies)
+        if not nb:
+            return x
+        D = np.asarray(du, float).reshape(nb, 6)
+        act = np.nonzero(np.any(D != 0, axis=1))[0]
+        if not len(act):
+            return x
+        a = self._arrays()
+        X = x.reshape(-1, 6)
+        rows = a["index"][act]
+        q = X[rows]
+        R = rotations(q[:, 3:])
+        r0 = a["com"][act] - a["center"][act]
+        c = a["center"][act] + q[:, :3] + np.einsum("nij,nj->ni", R, r0)
+        R2 = rotations(D[act, 3:]) @ R
+        c2 = c + D[act, :3]
+        X[rows, :3] = c2 - np.einsum("nij,nj->ni", R2, r0) - a["center"][act]
+        for i, row in enumerate(rows):
+            X[row, 3:] = _unwrap(log_rotation(R2[i]), q[i, 3:])
         return x
 
     # -- constraints -----------------------------------------------------------
@@ -173,21 +187,47 @@ class Dynamics:
         return self._kin(x, np.zeros(self.n), t, eps)[1]
 
     # -- masses and forces ------------------------------------------------------
+    def _arrays(self):
+        if getattr(self, "_arr", None) is None:
+            b = self.bodies
+            self._arr = dict(
+                index=np.array([bb.index for bb in b], int),
+                mass=np.array([self.mass[id(bb)] for bb in b], float),
+                Iref=np.array([self.Iref[id(bb)] for bb in b], float).reshape(-1, 3, 3),
+                center=np.array([bb.center for bb in b], float).reshape(-1, 3),
+                com=np.array([self.com[id(bb)] for bb in b], float).reshape(-1, 3))
+        return self._arr
+
+    def poses(self, x):
+        """(R, cog) of every moving part at once: (n, 3, 3), (n, 3)."""
+        a = self._arrays()
+        q = np.asarray(x, float).reshape(-1, 6)[a["index"]]
+        R = rotations(q[:, 3:])
+        cog = a["center"] + q[:, :3] + np.einsum("nij,nj->ni", R, a["com"] - a["center"])
+        return R, cog
+
     def M_and_forces(self, x, u, t):
         M = np.zeros((self.n, self.n))
         F = np.zeros(self.n)
-        for k, b in enumerate(self.bodies):
-            R = self._R(x, b)
-            m = self.mass[id(b)]
-            Iw = R @ self.Iref[id(b)] @ R.T
-            w = u[6 * k + 3: 6 * k + 6]
-            M[6 * k: 6 * k + 3, 6 * k: 6 * k + 3] = m * np.eye(3)
-            M[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] = Iw
-            F[6 * k: 6 * k + 3] += m * self.g
-            F[6 * k + 3: 6 * k + 6] -= np.cross(w, Iw @ w)
+        nb = len(self.bodies)
+        if nb:
+            a = self._arrays()
+            R, cog = self.poses(x)
+            Iw = R @ a["Iref"] @ np.transpose(R, (0, 2, 1))
+            U = np.asarray(u, float).reshape(nb, 6)
+            w = U[:, 3:]
+            Fb = np.zeros((nb, 6))
+            Fb[:, :3] = a["mass"][:, None] * self.g
+            Fb[:, 3:] = -np.cross(w, np.einsum("nij,nj->ni", Iw, w))
+            F += Fb.reshape(-1)
+            for k in range(nb):
+                M[6 * k: 6 * k + 3, 6 * k: 6 * k + 3] = a["mass"][k] * np.eye(3)
+                M[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] = Iw[k]
         idx = {id(b): k for k, b in enumerate(self.bodies)}
         for j in self.joints:
             self._joint_efforts(j, x, u, t, F, idx)
+        if self.impacts is not None:
+            self.impacts.forces(x, u, F, *(self.poses(x) if nb else (None, None)))
         return M, F
 
     # -- efforts in the joints: torque motors, springs, dampers, stops --------
@@ -381,11 +421,14 @@ class Dynamics:
         dC = Gm @ u - self._motor_speeds(t)
         rhs_c = -gamma - 2 * self.k * dC - self.k ** 2 * C + self.motor_rates(t)
         Mi = np.zeros_like(M)
-        for k in range(len(self.bodies)):
-            Mi[6 * k: 6 * k + 3, 6 * k: 6 * k + 3] = np.eye(3) / M[6 * k, 6 * k]
+        nb = len(self.bodies)
+        if nb:
             # pinv: a thin rod has no inertia about its own axis
-            Mi[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] = np.linalg.pinv(
-                M[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6], rcond=1e-12)
+            blocks = np.array([M[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] for k in range(nb)])
+            inv = np.linalg.pinv(blocks, rcond=1e-12)
+            for k in range(nb):
+                Mi[6 * k: 6 * k + 3, 6 * k: 6 * k + 3] = np.eye(3) / M[6 * k, 6 * k]
+                Mi[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] = inv[k]
         if Gm.shape[0]:
             A = Gm @ Mi @ Gm.T
             nu = np.linalg.lstsq(A, Gm @ Mi @ F - rhs_c, rcond=1e-12)[0]
@@ -454,6 +497,8 @@ class Dynamics:
         u = np.zeros(self.n) if u0 is None else np.array(u0, float)
         x = self.settle(x, t0)
         u = self.project_velocity(x, u, t0)
+        if self.impacts is not None:
+            self.impacts.dt = dt
         rows = []
         t = t0
         steps = int(round(seconds / dt))

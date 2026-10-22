@@ -61,6 +61,15 @@ EN = {
     "Pas": "Steps",
     "Dynamique": "Dynamics",
     "durée": "duration",
+    "Chocs": "Shocks",
+    "Ralenti": "Slow motion",
+    "Simulation dynamique : la vidéo la montre ce nombre de fois plus lentement (1 : en temps réel).":
+        "Dynamic simulation: the video shows it this many times slower (1: real time).",
+    "ralenti ×{k}": "slow motion ×{k}",
+    "Chocs et appuis entre pièces libres (dominos, blocs, butées posées) : les boîtes des pièces se repoussent, avec le frottement et le rebond de leurs matériaux. Les pièces tenues par une liaison ne se heurtent pas.":
+        "Shocks and resting contacts between free parts (dominoes, blocks, loose stops): the parts' boxes push each other back, with the friction and the rebound of their materials. Parts held by a joint do not knock each other.",
+    "Chocs entre pièces : enfoncement maxi {d} mm (pièces indéformables).":
+        "Shocks between parts: deepest overlap {d} mm (rigid parts).",
     "Masses (matériaux), pesanteur, ressorts, amortisseurs, butées, moteurs en couple : "
     "Valider, la lecture et la vidéo suivent la simulation dans le temps ; les moteurs en "
     "vitesse font leur course en « durée » et le rapport donne leur couple.":

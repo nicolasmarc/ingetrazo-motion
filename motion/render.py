@@ -60,6 +60,11 @@ def view_axes(yaw, pitch):
     return right, up, fwd
 
 
+#: index type of the tiles cut out of a large face: drawn without an
+#: outline, so the face still reads as one
+TILE = np.int32
+
+
 class Shaded:
     """``polys``: {body name: [ (k, 3) arrays of face corners, reference
     pose ]}; bodies without polygons are drawn from their boxes."""
@@ -87,6 +92,7 @@ class Shaded:
             if not body.fixed:
                 k += 1
             self.items.append([body, V, idx, col, fcols])
+        self._split_large(max_faces)
         total = sum(len(i[2]) for i in self.items)
         if total > max_faces:                     # keep it drawable: the
             # largest faces (the small ones are the fine facets of curved
@@ -108,6 +114,58 @@ class Shaded:
                 it[2] = [it[2][i] for i in keep]
                 if it[4] is not None:
                     it[4] = [it[4][i] for i in keep]
+
+    def _split_large(self, max_faces, max_tiles=20000):
+        """Faces much larger than the moving parts (a table under dominoes,
+        a big plate) are cut into tiles about one part across: the drawing
+        sorts faces back to front by their centre, and one huge face would
+        cover the parts lying on it."""
+        sizes = [float(2 * np.max(bx.half)) for b in self.m.bodies for bx in b.boxes]
+        if not sizes:
+            return
+        L = 0.5 * float(np.median(sizes))
+        if L <= 0:
+            return
+        total = sum(len(i[2]) for i in self.items)
+        added = 0
+        for it in self.items:
+            body, V, idx, col, fcols = it
+            newV, newidx, newcols = [V], [], ([] if fcols is not None else None)
+            o = len(V)
+            for fi, f in enumerate(idx):
+                P = V[f]
+                span = float(np.max(np.linalg.norm(P - np.roll(P, 1, axis=0), axis=1))) if len(P) > 1 else 0.0
+                n = int(np.ceil(span / L))
+                # moving parts keep their faces whole unless huge beside the
+                # others (their outlines show their shape)
+                if not body.fixed and span < 8 * L:
+                    n = 1
+                if len(P) != 4 or n <= 1 or total + added + n * n > max_faces or added > max_tiles:
+                    newidx.append(f)
+                    if newcols is not None:
+                        newcols.append(fcols[fi])
+                    continue
+                nu = max(1, int(np.ceil(np.linalg.norm(P[1] - P[0]) / L)))
+                nv = max(1, int(np.ceil(np.linalg.norm(P[3] - P[0]) / L)))
+                u = np.linspace(0, 1, nu + 1)
+                v = np.linspace(0, 1, nv + 1)
+                G = ((1 - u)[:, None, None] * (1 - v)[None, :, None] * P[0]
+                     + u[:, None, None] * (1 - v)[None, :, None] * P[1]
+                     + u[:, None, None] * v[None, :, None] * P[2]
+                     + (1 - u)[:, None, None] * v[None, :, None] * P[3]).reshape(-1, 3)
+                newV.append(G)
+                for i in range(nu):
+                    for j in range(nv):
+                        a = o + i * (nv + 1) + j
+                        newidx.append(np.array([a, a + nv + 1, a + nv + 2, a + 1], dtype=TILE))
+                        if newcols is not None:
+                            newcols.append(fcols[fi])
+                o += len(G)
+                added += nu * nv - 1
+            if len(newV) > 1:
+                it[1] = np.vstack(newV)
+                it[2] = newidx
+                it[4] = newcols
 
     @staticmethod
     def _boxes(body):
@@ -199,12 +257,13 @@ class Shaded:
                 if nn < 1e-15:
                     continue
                 shade = 0.55 + 0.45 * abs((n / nn) @ light)
-                polys.append((float(depth[f].mean()), px[f], py[f], base, shade))
+                polys.append((float(depth[f].max() if body.fixed else depth[f].mean()), px[f], py[f], base, shade,
+                              f.dtype == TILE))
         polys.sort(key=lambda t: -t[0])
-        for _, X, Yp, base, shade in polys:
+        for _, X, Yp, base, shade, tile in polys:
             c = QColor(int(base.red() * shade), int(base.green() * shade),
                        int(base.blue() * shade))
-            p.setPen(QPen(c.darker(140), 0.7))
+            p.setPen(QPen(c if tile else c.darker(140), 0.7))
             p.setBrush(QBrush(c))
             p.drawPolygon(QPolygonF([QPointF(a, b) for a, b in zip(X, Yp)]))
         for tr in traces:
@@ -252,14 +311,15 @@ def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255):
             if nn < 1e-15:
                 continue
             shade = 0.55 + 0.45 * abs((n / nn) @ light)
-            polys.append((float(depth[f].mean()), px[f], py[f], base, shade))
+            polys.append((float(depth[f].max() if body.fixed else depth[f].mean()), px[f], py[f], base, shade,
+                          f.dtype == TILE))
     polys.sort(key=lambda t: -t[0])
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
-    for _, X, Yp, base, shade in polys:
+    for _, X, Yp, base, shade, tile in polys:
         c = QColor(int(base.red() * shade), int(base.green() * shade),
                    int(base.blue() * shade), alpha)
-        p.setPen(QPen(c.darker(140), 0.7))
+        p.setPen(QPen(c if tile else c.darker(140), 0.7))
         p.setBrush(QBrush(c))
         p.drawPolygon(QPolygonF([QPointF(a, b) for a, b in zip(X, Yp)]))
     p.restore()

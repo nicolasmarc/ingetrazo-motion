@@ -15,7 +15,8 @@ One JSON-safe dict (``app.set_document_data``), metres and radians::
      "driver": <the first of "drivers"> | null,      # kept for 0.1-0.5 files
      "jeu_min": 0.005, "pas": 51,
      "couples": {"<joint>": 1.5},                   # torque motors (N m or N), dynamics
-     "simulation": {"active": false, "duree": 4.0}, # dynamics in validate / video
+     "simulation": {"active": false, "duree": 4.0,  # dynamics in validate / video
+                    "chocs": false},                # shocks between the parts' boxes
      "materiau": {"<uid>": "chene", ...},           # material of each group
      "matieres": {"<key>": {"name": ..., "density": ...}}}   # the document's own
 
@@ -210,11 +211,14 @@ def set_torque(data, joint, value):
     return d
 
 
-def set_simulation(data, active, duree=None):
+def set_simulation(data, active, duree=None, chocs=None):
+    """Dynamics on or off, its length (s) and the shocks between parts."""
     d = normalized(data)
     d["simulation"]["active"] = bool(active)
     if duree is not None:
         d["simulation"]["duree"] = float(duree)
+    if chocs is not None:
+        d["simulation"]["chocs"] = bool(chocs)
     return d
 
 
@@ -238,7 +242,8 @@ def add_material(data, key, props):
 
 
 def mass_properties(data, triangles_of_group):
-    """{body name: dict(mass, com, inertia, volume, materials, missing)}
+    """{body name: dict(mass, com, inertia, volume, materials, missing,
+    friction, restitution)}
     from each group's closed triangles (world, reference pose) and its
     material; groups without a material are listed in ``missing`` and left
     out of the mass."""
@@ -247,7 +252,7 @@ def mass_properties(data, triangles_of_group):
     lib = materials.library(d)
     out = {}
     for b in d["bodies"]:
-        pieces, mats, missing, vol = [], set(), [], 0.0
+        pieces, mats, missing, vol, surf = [], set(), [], 0.0, []
         for u in b["groups"]:
             T = triangles_of_group(u)
             if T is None or not len(T):
@@ -263,9 +268,15 @@ def mass_properties(data, triangles_of_group):
             if m < 0:                         # faces turned inward
                 m, I = -m, -I
             pieces.append((m, c, I))
+            surf.append((m, rec.get("friction"), rec.get("restitution")))
         m, c, I = massprops.combine(pieces) if pieces else (0.0, None, None)
+        def mean(i):                          # by mass, over the known values
+            vals = [(s[0], s[i]) for s in surf if s[i] is not None]
+            tot = sum(w for w, _ in vals)
+            return sum(w * v for w, v in vals) / tot if tot > 0 else None
         out[b["name"]] = dict(mass=m, com=c, inertia=I, volume=vol,
-                              materials=sorted(mats), missing=missing)
+                              materials=sorted(mats), missing=missing,
+                              friction=mean(1), restitution=mean(2))
     return out
 
 
@@ -528,6 +539,8 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             mp = m.masses.get(name)
             if mp and mp["mass"] > 0 and body is not m.ground:
                 body.mass, body.com, body.inertia = mp["mass"], mp["com"], mp["inertia"]
+            if mp:
+                body.friction, body.restitution = mp.get("friction"), mp.get("restitution")
         m.surfaces = _surfaces(m, d, bodies, triangles_of_group, names_of_group)
     return m, problems
 

@@ -3,6 +3,24 @@
 ## 0.8.0 — unreleased
 
 ### Added
+- **Shocks between free parts** (`motion.impacts`, « Chocs » next to
+  « Dynamique »): parts not held by a joint push each other back through
+  their boxes (corners and points along every edge), with the friction and
+  the restitution of their materials; fixed parts are obstacles. A penalty
+  method (contact at 400 Hz, step 0.2 ms): dominoes, blocks, loose stops; the
+  parts stay rigid. With shocks on, touching between free parts is no
+  collision in the report, which gives the deepest overlap instead. Tested: a
+  block resting on a table (sinks < 0.1 mm), a rebound of e² h, a block
+  sliding v²/2μg before it stops, a domino knocking the next ones down,
+  parts held by a pivot not knocking each other.
+- **Slow motion** for a dynamic simulation's video (« Ralenti » ×1–20, the
+  poses interpolated); a simulation without any motor can now be exported.
+- Video: the IngeTrazo half showed the moving parts both where they were
+  drawn and where they had moved (hidden parts were not seen hidden by
+  IngeTrazo 0.5.9's draw batches); the Motion half let a large face (a table)
+  cover the parts lying on it — such faces are now drawn in tiles.
+- The dynamics handles many free parts quicker (rotations, masses and
+  displacements computed for all the parts at once).
 - **Four more standard joints**: linéaire annulaire (a ball in a bore: its
   centre stays on the axis, every rotation free), ponctuelle (a point on a
   plane), appui plan (planar) and hélicoïdale (screw and nut, pitch per turn,
