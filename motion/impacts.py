@@ -19,6 +19,12 @@ so the dynamics stays a smooth set of forces the step integrates.
 Friction and restitution come from the parts' materials (the means of the
 two), else 0.4 and 0.4.
 
+A group whose points all lie at one distance from its centre is a ball
+(:func:`motion.document.sphere_radius`): a ball against a ball or a box is
+exact (one contact point) and follows Hertz's law, f = K d^1.5, as steel
+balls do — what carries a blow along a row of touching balls (Newton's
+cradle). K is set as stiff as the linear law at ``hertz_depth`` (0.1 mm).
+
 This is a penalty method: quick and steady for blocks, plates, dominoes,
 stops; it does not replace a finite-element impact study, and the parts do
 not deform. Fixed parts (the frame, a table) take part as obstacles.
@@ -65,8 +71,10 @@ class Impacts:
     damping so that the step stays stable); ``per_edge``: points along each
     edge of a box."""
 
-    def __init__(self, dyn, frequency=400.0, dt=1e-4, per_edge=3, skip=()):
+    def __init__(self, dyn, frequency=400.0, dt=1e-4, per_edge=3, skip=(),
+                 hertz_depth=1e-4):
         self.dyn = dyn
+        self.hertz_depth = float(hertz_depth)
         m = dyn.m
         self.freq = float(frequency)
         self.dt = float(dt)
@@ -81,6 +89,7 @@ class Impacts:
         self.joined = joined | {frozenset(map(id, p)) for p in skip}
         # one row per box
         self.box_body, self.box_k, self.box_c, self.box_R, self.box_h = [], [], [], [], []
+        self.box_r = []
         self.box_pts = []
         for body in fixed + list(dyn.bodies):
             for bx in body.boxes:
@@ -89,6 +98,7 @@ class Impacts:
                 self.box_c.append(bx.center)
                 self.box_R.append(bx.R)
                 self.box_h.append(bx.half)
+                self.box_r.append(float(getattr(bx, "sphere", None) or 0.0))
                 self.box_pts.append(bx.center + _box_samples(bx.half, per_edge) @ bx.R.T)
         self.nb = len(self.box_body)
         self.box_k = np.array(self.box_k, int)
@@ -103,6 +113,8 @@ class Impacts:
         held = np.array([[frozenset((ids[i], ids[k])) in self.joined for k in range(self.nb)]
                          for i in range(self.nb)], bool)
         self.allowed = ~(same | both_fixed | held)
+        self.box_r = np.array(self.box_r, float)
+        self.is_ball = self.box_r > 0
         # materials
         fr = [getattr(b, "friction", None) for b in self.box_body]
         rs = [getattr(b, "restitution", None) for b in self.box_body]
@@ -146,16 +158,26 @@ class Impacts:
         lo, hi = C - ext, C + ext
         ov = np.all((lo[:, None, :] <= hi[None, :, :]) & (lo[None, :, :] <= hi[:, None, :]), axis=2)
         ov &= self.allowed
+        found = [self._box_points(C, R, P, ov), self._balls(C, R, ov)]
+        found = [f for f in found if f is not None]
+        if not found:
+            return
+        a_box, b_box, p, n, d, share, hertz = (np.concatenate(v) for v in zip(*found))
+        self._push(x, u, F, cogs, a_box, b_box, p, n, d, share, hertz)
+
+    def _box_points(self, C, R, P, ov):
+        """Corners and edge points of a box inside another box (no ball)."""
+        ov = ov & ~self.is_ball[:, None] & ~self.is_ball[None, :]
         ia, ib = np.nonzero(ov)          # points of box ia inside box ib
         if not len(ia):
-            return
+            return None
         pts = P[ia]                                   # (n, s, 3)
         loc = np.einsum("nij,nsi->nsj", R[ib], pts - C[ib][:, None, :])
         h = self.box_h[ib][:, None, :]
         depth = h - np.abs(loc)
         inside = np.all(depth > 0, axis=2)
         if not inside.any():
-            return
+            return None
         pn, ps = np.nonzero(inside)
         d3 = depth[pn, ps]
         ax = np.argmin(d3, axis=1)
@@ -165,7 +187,62 @@ class Impacts:
         sign[sign == 0] = 1.0
         n = R[b_box, :, ax] * sign[:, None]           # out of box b, towards a
         p = pts[pn, ps]
-        # velocities of the point on each part (fixed parts: at rest)
+        # stiffness shared among the points of one box pair
+        pair = a_box * self.nb + b_box
+        _, inv, cnt = np.unique(pair, return_inverse=True, return_counts=True)
+        return a_box, b_box, p, n, d, cnt[inv].astype(float), np.zeros(len(d), bool)
+
+    def _balls(self, C, R, ov):
+        """A ball (a sphere group) against another ball or a box: exact, one
+        point, Hertz's law."""
+        if not self.is_ball.any():
+            return None
+        upper = np.triu(np.ones_like(ov, bool), 1)
+        out = []
+        # ball / ball
+        ia, ib = np.nonzero(ov & upper & self.is_ball[:, None] & self.is_ball[None, :])
+        if len(ia):
+            dv = C[ia] - C[ib]
+            dist = np.linalg.norm(dv, axis=1)
+            d = self.box_r[ia] + self.box_r[ib] - dist
+            k = (d > 0) & (dist > 1e-12)
+            if k.any():
+                n = dv[k] / dist[k][:, None]                 # from b towards a
+                p = C[ib][k] + n * (self.box_r[ib][k] - 0.5 * d[k])[:, None]
+                out.append((ia[k], ib[k], p, n, d[k]))
+        # ball (a) / box (b)
+        ia, ib = np.nonzero(ov & self.is_ball[:, None] & ~self.is_ball[None, :])
+        if len(ia):
+            loc = np.einsum("nij,ni->nj", R[ib], C[ia] - C[ib])
+            h = self.box_h[ib]
+            q = np.clip(loc, -h, h)
+            gap = loc - q
+            dist = np.linalg.norm(gap, axis=1)
+            r = self.box_r[ia]
+            outside = dist > 1e-12
+            # centre outside the box: nearest point of the box
+            n_loc = np.where(outside[:, None], gap / np.maximum(dist, 1e-12)[:, None], 0.0)
+            d = r - dist
+            # centre inside: out through the nearest face
+            dep = h - np.abs(loc)
+            ax = np.argmin(dep, axis=1)
+            sgn = np.sign(loc[np.arange(len(ax)), ax])
+            sgn[sgn == 0] = 1.0
+            n_in = np.zeros_like(loc)
+            n_in[np.arange(len(ax)), ax] = sgn
+            n_loc = np.where(outside[:, None], n_loc, n_in)
+            d = np.where(outside, d, r + dep[np.arange(len(ax)), ax])
+            k = d > 0
+            if k.any():
+                n = np.einsum("nij,nj->ni", R[ib][k], n_loc[k])   # box -> ball
+                p = C[ia][k] - n * r[k][:, None]
+                out.append((ia[k], ib[k], p, n, d[k]))
+        if not out:
+            return None
+        a, b, p, n, d = (np.concatenate(v) for v in zip(*out))
+        return a, b, p, n, d, np.ones(len(d)), np.ones(len(d), bool)
+
+    def _push(self, x, u, F, cogs, a_box, b_box, p, n, d, share, hertz):
         dyn = self.dyn
         ka, kb = self.box_k[a_box], self.box_k[b_box]
         nbod = len(dyn.bodies)
@@ -183,30 +260,31 @@ class Impacts:
         vrel = va - vb
         vn = np.einsum("ij,ij->i", vrel, n)
         vt = vrel - vn[:, None] * n
-        # stiffness and damping, shared among the points of one box pair
-        pair = a_box * self.nb + b_box
-        _, inv, cnt = np.unique(pair, return_inverse=True, return_counts=True)
-        share = cnt[inv].astype(float)
         ma, mb = self.box_m[a_box], self.box_m[b_box]
         fa, fb = np.isinf(ma), np.isinf(mb)
         ma_, mb_ = np.where(fa, 1.0, ma), np.where(fb, 1.0, mb)
         meff = np.where(fa, mb_, np.where(fb, ma_, ma_ * mb_ / (ma_ + mb_)))
         w = 2 * math.pi * self.freq
-        k = meff * w * w / share
+        k = meff * w * w / share                      # linear: N/m
         e = 0.5 * (self.box_e[a_box] + self.box_e[b_box])
         zeta = _zeta(e)
-        c = 2 * zeta * np.sqrt(k * meff / share)
-        fn = np.maximum(k * d - c * vn, 0.0)
+        # Hertz (balls): f = K d^1.5, as stiff as the linear law at the
+        # reference depth; its stiffness grows with the depth
+        dref = self.hertz_depth
+        kh = np.where(hertz, 1.5 * k * np.sqrt(np.maximum(d, 0.0) / dref), k)
+        felastic = np.where(hertz, k * dref * (np.maximum(d, 0.0) / dref) ** 1.5, k * d)
+        c = 2 * zeta * np.sqrt(np.maximum(kh, 1e-12) * meff / share)
+        fn = np.maximum(felastic - c * vn, 0.0)
         mu = 0.5 * (self.box_mu[a_box] + self.box_mu[b_box])
         ct = 0.5 * meff / share / self.dt               # the most a step can take
         vts = np.linalg.norm(vt, axis=1)
         ft_mag = np.minimum(mu * fn, ct * vts)
         tdir = np.where(vts[:, None] > 1e-12, vt / np.maximum(vts, 1e-12)[:, None], 0.0)
         f = fn[:, None] * n - ft_mag[:, None] * tdir    # on part a
-        G = np.zeros((max(len(dyn.bodies), 1), 6))
+        G = np.zeros((max(nbod, 1), 6))
         oa, ob = ka >= 0, kb >= 0
         np.add.at(G, ka[oa], np.hstack([f[oa], np.cross(ra[oa], f[oa])]))
         np.add.at(G, kb[ob], -np.hstack([f[ob], np.cross(rb[ob], f[ob])]))
-        F[:6 * len(dyn.bodies)] += G[:len(dyn.bodies)].reshape(-1)
+        F[:6 * nbod] += G[:nbod].reshape(-1)
         self.count = len(f)
         self.deepest = max(self.deepest, float(d.max()))

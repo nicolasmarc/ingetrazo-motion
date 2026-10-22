@@ -13,6 +13,11 @@
   block resting on a table (sinks < 0.1 mm), a rebound of e² h, a block
   sliding v²/2μg before it stops, a domino knocking the next ones down,
   parts held by a pivot not knocking each other.
+- **Balls**: a group whose points all lie on a sphere is a ball for the
+  shocks — exact contact with another ball or a box, Hertz's law (f ∝ d^1.5).
+  Tested: two equal balls exchanging their speed ((1 ± e)/2), a ball resting
+  on a table; Newton's cradle, five steel balls on V strings: the last one
+  leaves at 36° when the first falls from 40° (e 0.97, μ 0.1).
 - **Slow motion** for a dynamic simulation's video (« Ralenti » ×1–20, the
   poses interpolated); a simulation without any motor can now be exported.
 - Video: the IngeTrazo half showed the moving parts both where they were

@@ -71,7 +71,8 @@ duration) to run your model in time: weight, springs, dampers, stops; the
 report gives the motors' torques.
 Tick **Chocs** as well for parts that knock or rest on each other without
 a joint (dominoes, blocks, a loose stop): their boxes push each other back,
-with the friction and rebound of their materials. The parts stay rigid and
+with the friction and rebound of their materials; a group that is a sphere
+counts as a ball (exact contact, Hertz's law). The parts stay rigid and
 the values are indicative. A simulation needs no motor: a part drawn off
 balance (the first domino tilted) is enough; the video can play it slowed
 down (« Ralenti »).

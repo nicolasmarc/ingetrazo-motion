@@ -146,3 +146,51 @@ def test_moving_parts_hidden_without_touching_the_saved_state():
     assert sc.version < 0 and sc.version != first   # never the same twice
     MotionPanel._refresh_view_cache(me, False)
     assert sc.version == 41
+
+
+def _ball(m, name, c, r, rho=7850.0, e=0.97, mu=0.1):
+    c = np.asarray(c, float)
+    bx = Box(c, (r, r, r))
+    bx.sphere = r
+    b = m.body(name, c, [bx])
+    b.mass = rho * 4 / 3 * math.pi * r ** 3
+    b.com = c.copy()
+    b.inertia = 0.4 * b.mass * r * r * np.eye(3)
+    b.friction, b.restitution = mu, e
+    return b
+
+
+def test_a_ball_group_is_found_by_its_points():
+    from motion import document as doc
+    rng = np.random.default_rng(1)
+    v = rng.normal(size=(400, 3))
+    P = 0.0125 * v / np.linalg.norm(v, axis=1)[:, None] + [0.1, 0.2, 0.3]
+    bx = doc.fit_box(P)
+    assert abs(doc.sphere_radius(P, bx) - 0.0125) < 3e-4
+    cube = rng.uniform(-0.01, 0.01, size=(400, 3))
+    assert doc.sphere_radius(cube, doc.fit_box(cube)) is None
+
+
+def test_equal_balls_exchange_their_speed():
+    """Head-on, no weight: the moving ball stops, the other one leaves at
+    e times its speed (equal masses)."""
+    m = Mechanism()
+    r, e = 0.0125, 0.97
+    _ball(m, "A", (0, 0, 0), r, e=e)
+    _ball(m, "B", (2 * r + 0.002, 0, 0), r, e=e)
+    u0 = np.zeros(12)
+    u0[0] = 0.5
+    dyn = Dynamics(m, gravity=(0, 0, 0), contacts=dict(dt=DT))
+    rows = dyn.run(0.03, dt=DT, u0=u0, every=150)
+    va, vb = rows[-1]["u"][0], rows[-1]["u"][6]
+    assert abs(vb - 0.5 * (1 + e) / 2) < 0.02 and abs(va - 0.5 * (1 - e) / 2) < 0.02, (va, vb)
+
+
+def test_a_ball_rests_on_a_table():
+    m = Mechanism()
+    _table(m)
+    _ball(m, "bille", (0.1, 0, 0.0125), 0.0125)
+    dyn = Dynamics(m, contacts=dict(dt=DT))
+    rows = dyn.run(0.2, dt=DT, every=1000)
+    x = rows[-1]["x"]
+    assert abs(x[2]) < 2e-4 and np.linalg.norm(x[:2]) < 1e-5

@@ -428,6 +428,21 @@ def nearest_body(point, boxes_by_body, exclude=()):
 
 # -- building the mechanism -----------------------------------------------------
 
+def sphere_radius(points, box, tol=0.02):
+    """Radius when the group is a ball (every point at the same distance
+    from its box's centre, a cubic box), else None."""
+    P = np.asarray(points, float).reshape(-1, 3)
+    if len(P) < 20:
+        return None
+    h = np.asarray(box.half, float)
+    if h.max() <= 0 or (h.max() - h.min()) > tol * h.max():
+        return None
+    r = np.linalg.norm(P - box.center, axis=1)
+    if r.mean() <= 0 or r.std() > tol * r.mean() or r.max() > 1.05 * h.max():
+        return None
+    return float(h.max())
+
+
 def body_boxes(data, points_of_group):
     """{body name: [Box per group]} from the groups' world points."""
     out = {}
@@ -438,6 +453,7 @@ def body_boxes(data, points_of_group):
             if pts is not None and len(pts):
                 bx = fit_box(pts, name=str(uid))
                 if bx is not None:
+                    bx.sphere = sphere_radius(pts, bx)
                     boxes.append(bx)
         out[b["name"]] = boxes
     return out
