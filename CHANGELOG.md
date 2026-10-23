@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 — unreleased
+## 0.8.0 — 2026-10-24
 
 ### Fixed
 - **File ▸ New (or Open) brings the panel back to « Modèle (document) »**:
