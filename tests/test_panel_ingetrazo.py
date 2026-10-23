@@ -829,3 +829,28 @@ def test_gear_coupling_from_the_tool():
         slide = m.pose(x, by["crémaillère"])[0]
         assert abs(abs(slide) - 0.6 * 0.020) < 1e-6, slide   # 20 mm pitch radius
     _reset(win, panel)
+
+
+def test_new_file_brings_the_panel_back_to_the_document():
+    """File ▸ New while an example is shown: the panel goes back to the
+    (empty) document instead of keeping the example on screen."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    win.viewport.scene.groups.append(_box_group("Bloc", (0, 0, 0), (0.1, 0.1, 0.1)))
+    win.viewport.notify_scene_changed()
+    panel.set_source("draisine")
+    assert panel.tree.topLevelItemCount() > 0
+    for attr in ("_maybe_save", "_confirm_discard", "_ask_save"):
+        if hasattr(win, attr):
+            setattr(win, attr, lambda *a, **k: True)
+    win._confirm_discard = lambda *a, **k: True
+    win._on_new()
+    assert panel.source == "model" and panel.tree.topLevelItemCount() == 0
+    panel.set_source("chaise")                    # an example on the new file stays
+    win.viewport.scene.groups.append(_box_group("Bloc2", (0, 0, 0), (0.1, 0.1, 0.1)))
+    win.viewport.notify_scene_changed()
+    assert panel.source == "chaise"
+    panel.set_source("model")

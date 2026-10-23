@@ -3,6 +3,10 @@
 ## 0.8.0 — unreleased
 
 ### Fixed
+- **File ▸ New (or Open) brings the panel back to « Modèle (document) »**:
+  an example picked before stayed on screen over the new file. A new or
+  opened document is told by its file name or by its emptied history (New
+  may load a template that already has groups).
 - **No grey box around the frame while playing** (the spider: a big cube
   around the shell): the lighter overlay keeps no outline for fixed parts,
   and the drawing then fell back on their box; fixed parts of the model are

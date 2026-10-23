@@ -633,6 +633,28 @@ class MotionPanel(QWidget):
             pass
 
     # ---- data ---------------------------------------------------------------------
+    def _back_to_model_on_new_document(self):
+        """File ▸ New or Open: the panel goes back to « Modèle (document) »
+        (an example picked before would stay on screen over a new file)."""
+        win = getattr(self.app, "window", None)
+        path = getattr(win, "_current_path", None)
+        hist = getattr(getattr(self.app, "viewport", None), "history", None)
+        # New and Open forget the history (New may load a template with
+        # groups in it): both stacks empty where there was something
+        fresh = (not getattr(hist, "undo_stack", [1]) and not getattr(hist, "redo_stack", [1]))
+        changed = path != getattr(self, "_last_path", path) or (fresh and not getattr(self, "_was_fresh", True))
+        self._last_path, self._was_fresh = path, fresh
+        if changed and self.source != "model":
+            self.timer.stop()
+            self.play_btn.setChecked(False)
+            self.src.blockSignals(True)
+            self.src.setCurrentIndex(0)
+            self.src.blockSignals(False)
+            self.source = "model"
+            self.mech = None
+            self.traces, self.trace_pts = [], []
+            self.out.clear()
+
     def _doc_key(self):
         """What the mechanism depends on: the scene's version (geometry) and
         the document data. None while Motion itself hides the moving parts
@@ -654,6 +676,7 @@ class MotionPanel(QWidget):
         time, e.g. while a video is rendered): then nothing is rebuilt."""
         if getattr(self, "_quiet", 0):
             return
+        self._back_to_model_on_new_document()
         key = self._doc_key()
         if key is None:
             return
