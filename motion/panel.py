@@ -224,6 +224,28 @@ def group_segments(group):
     return np.vstack(out) if out else np.zeros((0, 2, 3))
 
 
+def _make_groups(parts):
+    """IngeTrazo groups for ``excopy.parts``: [(body name, group)]."""
+    from core.group import Group
+    from core.mesh import Mesh
+    out = []
+    for body, fixed, groups in parts:
+        for name, faces, col in groups:
+            pos = np.vstack(faces)
+            mesh = Mesh()
+            mesh.add_faces_bulk(pos, np.array([len(f) for f in faces], dtype=np.int64),
+                                np.ones(len(faces), dtype=np.int64))
+            try:
+                from core.orient import orient_outward
+                orient_outward(mesh)
+            except Exception:
+                pass
+            g = Group(mesh, name=name)
+            g.material = {"color": tuple(c / 255.0 for c in col)}
+            out.append((body, g))
+    return out
+
+
 def groups_by_uid(scene):
     f = getattr(scene, "groups_by_uid", None)
     if callable(f):
@@ -354,6 +376,15 @@ class MotionPanel(QWidget):
         self.delete_btn.clicked.connect(self._delete)
         row.addWidget(self.delete_btn)
         row.addStretch(1)
+        self.copy_btn = QToolButton()
+        self.copy_btn.setText(_T("Copier dans le modèle"))
+        self.copy_btn.setToolTip(_T("Crée les pièces de l'exemple dans le document (vrais groupes, "
+                                   "ombrés, enregistrés dans le fichier) avec leurs liaisons et "
+                                   "moteurs, à modifier comme un mécanisme fait à la main. "
+                                   "L'exemple lui-même ne change pas."))
+        self.copy_btn.clicked.connect(self.copy_example)
+        self.copy_btn.setVisible(False)
+        row.addWidget(self.copy_btn)
         lay.addLayout(row)
 
         mrow = QHBoxLayout()
@@ -664,6 +695,8 @@ class MotionPanel(QWidget):
             self.tree.resizeColumnToContents(c)
         self.tree.blockSignals(False)
         editable = self.source == "model"
+        from .excopy import NOT_COPYABLE
+        self.copy_btn.setVisible(not editable and self.source not in NOT_COPYABLE)
         for n in ("fixed", "moving", "pivot", "slider", "guide",
                   "cylindrical", "ball", "lock", "elastic",
                   "annular", "pointplane", "planar", "screw"):
@@ -1353,6 +1386,56 @@ class MotionPanel(QWidget):
             self.jeu.setValue(1000 * jeu)
         self.slider.setValue(0)
         self._scrub(0)
+
+    # ---- copy an example into the document -----------------------------------------
+    def copy_example(self, confirm=None):
+        """The current example as real groups and the document's mechanism
+        (two undo steps: the groups, then the mechanism). ``confirm``: the
+        answer to « replace the mechanism already in the document? »
+        (None: ask)."""
+        from . import excopy
+        builders = {"chaise": samples.chaise_pliante, "porte": samples.porte_sectionnelle,
+                    "oiseau": samples.oiseau, "pendule_double": samples.pendule_double}
+        key = self.source
+        if key not in builders:
+            return None
+        current = doc.normalized(self.app.document_data(default=None))
+        if current["bodies"]:
+            if confirm is None:
+                from PySide6.QtWidgets import QMessageBox
+                confirm = QMessageBox.question(
+                    self, _T("Copier dans le modèle"),
+                    _T("Le document a déjà un mécanisme. Le remplacer par celui de l'exemple ? "
+                       "(Ses groupes restent dans le modèle.)")) == QMessageBox.Yes
+            if not confirm:
+                return None
+        m, info = builders[key]()
+        made = _make_groups(excopy.parts(m, info))
+        from core.history import SnapshotImport
+        vp = self.app.viewport
+
+        def mutate(scene):
+            scene.groups.extend(g for _, g in made)
+
+        vp.history.execute(SnapshotImport(mutate))
+        uids = {}
+        for body, g in made:
+            uids.setdefault(body, []).append(g.uid)
+        data = excopy.data(m, info, uids)
+        self.src.blockSignals(True)
+        self.src.setCurrentIndex(0)                 # back to the document
+        self.src.blockSignals(False)
+        self.source = "model"
+        self.traces, self.trace_pts = [], []
+        self.app.set_document_data(data)            # one undo step; reload follows
+        notify = getattr(vp, "notify_scene_changed", None)
+        if callable(notify):
+            notify()
+        self.reload()
+        vp.update()
+        self.say(_T("Exemple copié : {n} pièce(s), {j} liaison(s) — modifiables.",
+                    n=len(data["bodies"]), j=len(data["joints"])))
+        return data
 
     # ---- STEP import -----------------------------------------------------------------
     def import_step(self, path, tol=0.0002):

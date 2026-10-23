@@ -13,6 +13,16 @@
   the list to give it the room a mechanism with many joints needs.
 
 ### Added
+- **« Copier dans le modèle »** (examples only): the chair, the sectional
+  door, the bird and the double pendulum become real IngeTrazo groups
+  (shaded, saved in the .igz) with their joints, motors, gap, dynamics and
+  masses (the pendulum's oak) in the document, to edit like a mechanism made
+  by hand; two undo steps (the groups, then the mechanism). The example
+  itself does not change. Tested: every part of the copy moves as in the
+  example (door rails as 2° chords: under 2 mm), the copies validate in the
+  panel, the pendulum keeps its masses. Not offered for the chains (a chain
+  calculation of their own) nor the handcar (crank and rod drawn in one
+  plane).
 - **Shocks between free parts** (`motion.impacts`, « Chocs » next to
   « Dynamique »): parts not held by a joint push each other back through
   their boxes (corners and points along every edge), with the friction and

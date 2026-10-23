@@ -686,3 +686,32 @@ def test_english_panel_and_fields_per_joint_kind():
     for w in (panel.lim_row, panel.drv_row, panel.motor_on, panel.k_row, panel.tq_row):
         assert shown(w)
     assert panel.k_spin.isVisibleTo(panel) and panel.c_spin.isVisibleTo(panel)
+
+
+def test_examples_copied_into_the_model_validate():
+    """« Copier dans le modèle »: real groups, the mechanism in the
+    document, the same validation as the example; not offered for chains."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    for key in ("chaise", "porte", "oiseau", "pendule_double"):
+        _reset(win, panel)
+        panel.set_source(key)
+        assert panel.copy_btn.isVisibleTo(panel)
+        data = panel.copy_example(confirm=True)
+        assert panel.source == "model"
+        uids = {u for b in data["bodies"] for u in b["groups"]}
+        assert uids <= {g.uid for g in win.viewport.scene.groups}
+        assert panel.problems == [], (key, panel.problems)
+        if key == "pendule_double":
+            m = panel.mechanism()
+            assert {round(v["mass"], 4) for v in m.masses.values() if v["mass"]} == {0.0767, 0.0639}
+            continue
+        panel.pas.setValue(21)
+        panel._action("validate")
+        assert panel.report["ok"], (key, panel.report["problems"])
+    for key in ("chaine", "chaine_souple", "draisine"):
+        panel.set_source(key)
+        assert not panel.copy_btn.isVisibleTo(panel)
+    _reset(win, panel)

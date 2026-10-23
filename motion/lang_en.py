@@ -14,6 +14,20 @@ EN = {
         "bores (pivots), flat contacts (sliders), gears. Nothing is applied until you confirm.",
     "Calcul des masses…": "Computing masses…",
     "Glisser pour agrandir la liste": "Drag to enlarge the list",
+    "Copier dans le modèle": "Copy into the model",
+    "Crée les pièces de l'exemple dans le document (vrais groupes, ombrés, enregistrés dans le "
+    "fichier) avec leurs liaisons et moteurs, à modifier comme un mécanisme fait à la main. "
+    "L'exemple lui-même ne change pas.":
+        "Creates the example's parts in the document (real groups, shaded, saved in the file) "
+        "with their joints and motors, to edit like a mechanism made by hand. The example "
+        "itself does not change.",
+    "Le document a déjà un mécanisme. Le remplacer par celui de l'exemple ? "
+    "(Ses groupes restent dans le modèle.)":
+        "The document already has a mechanism. Replace it with the example's? (Its groups "
+        "stay in the model.)",
+    "Exemple copié : {n} pièce(s), {j} liaison(s) — modifiables.":
+        "Example copied: {n} part(s), {j} joint(s), ready to edit.",
+    "Matière de l'exemple": "Example's material",
     "Nom": "Name",
     "Type": "Type",
     "Détail": "Detail",
