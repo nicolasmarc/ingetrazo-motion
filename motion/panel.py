@@ -2332,7 +2332,10 @@ class MotionPanel(QWidget):
                         info += extra(m, x)
                 if cl:
                     info.append(_T("jeu mini {d} mm", d=f"{1000 * max(cl[0]['distance'], 0):.1f}"))
-                info.append(_T("collision : ") + " / ".join(sorted(hits)) if hits
+                names = sorted(hits)
+                if len(names) > 4:                    # a line, not a paragraph
+                    names = names[:3] + [_T("+{n} autres", n=len(names) - 3)]
+                info.append(_T("collision : ") + " / ".join(names) if hits
                             else _T("aucune collision"))
                 if not ok:
                     info.append(_T("position non atteinte"))

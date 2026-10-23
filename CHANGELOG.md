@@ -3,6 +3,14 @@
 ## 0.8.0 — unreleased
 
 ### Fixed
+- **Collisions on the real surfaces in IngeTrazo's Windows build**: it has
+  no scipy, so the surface checks were off and Motion fell back to the
+  parts' bounding boxes (the spider: the shell's box swallowing the legs,
+  every part « in collision », the video all red). A numpy-only nearest
+  point search replaces scipy's k-d tree when it is missing: the same
+  answers (checked against scipy and brute force), the spider's
+  validation the same (smallest gap 1.38 mm, no collision), about 3× the
+  time scipy takes. The video's collision line names 3 parts then « +n ».
 - **Big models stay usable (the spider, 133 parts, ~300 000 faces)**:
   - turning the view: Motion's overlay drew every edge of every moving part
     at each repaint (0.5 s); now the sharp edges only, the 1 500 longest of

@@ -33,6 +33,7 @@ EN = {
         "Simulation stopped: ▶ or « Validate » runs it again.",
     "Validation…": "Validation…",
     "Validation interrompue.": "Validation stopped.",
+    "+{n} autres": "+{n} more",
     "Nom": "Name",
     "Type": "Type",
     "Détail": "Detail",

@@ -16,12 +16,128 @@ What touches in the drawn position is the joint, not a fault:
   socket, a part resting on another) are left out of that pair's check;
   the rest of both parts is checked.
 """
+import math
 import numpy as np
+
+class GridTree:
+    """Nearest-point queries on a fixed point set, numpy only (the same
+    answers as scipy's cKDTree for what Motion asks): IngeTrazo's Windows
+    build has no scipy, and without these queries the collisions fell back
+    to the parts' bounding boxes (a shell's box swallowing the legs).
+
+    ``query(X, k=1, distance_upper_bound=r)``: (distance, index), inf and
+    ``len(P)`` where nothing lies within r; ``query(X, k=k)``: the k nearest
+    (distances and indices, (m, k))."""
+
+    def __init__(self, P):
+        self.P = np.asarray(P, float).reshape(-1, 3)
+        self.n = len(self.P)
+        self._grids = {}
+        if self.n:
+            lo, hi = self.P.min(0), self.P.max(0)
+            self.lo = lo
+            span = float(np.max(hi - lo)) or 1.0
+            self._knn_cell = span / max(1.0, (self.n / 8.0) ** (1 / 3))
+
+    def _grid(self, cell):
+        g = self._grids.get(cell)
+        if g is None:
+            C = np.floor((self.P - self.lo) / cell).astype(np.int64)
+            key = self._key(C)
+            order = np.argsort(key, kind="stable")
+            g = self._grids[cell] = (key[order], order)
+            if len(self._grids) > 8:
+                self._grids.pop(next(iter(self._grids)))
+        return g
+
+    @staticmethod
+    def _key(C):
+        C = C + (1 << 20)                          # room for negative cells
+        return (C[..., 0] << 42) | (C[..., 1] << 21) | C[..., 2]
+
+    LIMIT = 3_000_000          # candidate pairs held at once
+
+    def _candidates(self, X, cell, R):
+        """Chunks of (first query, query index, point index) for every
+        point in the cube of (2R + 1)^3 cells around each query; queries are
+        split so that no chunk holds more than LIMIT pairs."""
+        skey, order = self._grid(cell)
+        C = np.floor((X - self.lo) / cell).astype(np.int64)
+        rng = np.arange(-R, R + 1)
+        off = np.stack(np.meshgrid(rng, rng, rng, indexing="ij"), -1).reshape(-1, 3)
+        K = self._key(C[:, None, :] + off[None, :, :])              # (m, o)
+        A = np.searchsorted(skey, K, "left")
+        B = np.searchsorted(skey, K, "right")
+        per_q = (B - A).sum(axis=1)
+        s0 = 0
+        while s0 < len(X):
+            csum = np.cumsum(per_q[s0:])
+            s1 = s0 + max(1, int(np.searchsorted(csum, self.LIMIT, "right")))
+            a, cnt = A[s0:s1].ravel(), (B[s0:s1] - A[s0:s1]).ravel()
+            tot = int(cnt.sum())
+            qi = np.repeat(np.repeat(np.arange(s1 - s0), len(off)), cnt)
+            start = np.repeat(a, cnt)
+            local = np.arange(tot) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+            yield s0, s1, qi, order[start + local]
+            s0 = s1
+
+    def query(self, X, k=1, distance_upper_bound=np.inf):
+        X = np.asarray(X, float)
+        single = X.ndim == 1
+        X = X.reshape(-1, 3)
+        m, k = len(X), int(k)
+        rmax = float(distance_upper_bound)
+        D = np.full((m, k), np.inf)
+        I = np.full((m, k), self.n, int)
+        if self.n and m:
+            span = float(np.max(np.ptp(self.P, axis=0))) or 1.0
+            # start about where the k-th neighbour of a surface point is,
+            # then double for the queries still short of k within r: the
+            # cube of 3 x 3 x 3 cells of side r holds the whole ball of r
+            r = span * math.sqrt(min(k, self.n) / self.n)
+            r = min(r, rmax) if np.isfinite(rmax) else r
+            todo = np.arange(m)
+            while len(todo):
+                Dt = np.full((len(todo), k), np.inf)
+                It = np.full((len(todo), k), self.n, int)
+                for s0, s1, qi, pi in self._candidates(X[todo], r, 1):
+                    if not len(qi):
+                        continue
+                    diff = X[todo[s0:s1]][qi] - self.P[pi]
+                    dd = np.sqrt(np.einsum("ij,ij->i", diff, diff))
+                    if k == 1:                           # the nearest: no sorting
+                        st = np.flatnonzero(np.r_[True, qi[1:] != qi[:-1]])
+                        mn = np.minimum.reduceat(dd, st)
+                        grp = np.repeat(np.arange(len(st)), np.diff(np.r_[st, len(qi)]))
+                        hit = np.flatnonzero(dd == mn[grp])
+                        firsts = hit[np.r_[True, grp[hit][1:] != grp[hit][:-1]]]
+                        Dt[s0 + qi[firsts], 0] = dd[firsts]
+                        It[s0 + qi[firsts], 0] = pi[firsts]
+                        continue
+                    o = np.lexsort((dd, qi))
+                    qi, pi, dd = qi[o], pi[o], dd[o]
+                    starts = np.searchsorted(qi, np.arange(s1 - s0), "left")
+                    rank = np.arange(len(qi)) - starts[qi]
+                    sel = rank < k
+                    Dt[s0 + qi[sel], rank[sel]] = dd[sel]
+                    It[s0 + qi[sel], rank[sel]] = pi[sel]
+                last = r >= rmax or r > 2 * span
+                fin = (Dt[:, min(k, self.n) - 1] <= r) | last
+                if np.isfinite(rmax):
+                    far = Dt >= rmax
+                    Dt[far], It[far] = np.inf, self.n
+                D[todo[fin]], I[todo[fin]] = Dt[fin], It[fin]
+                todo = todo[~fin]
+                r = min(2 * r, rmax) if np.isfinite(rmax) else 2 * r
+        if k == 1:
+            D, I = D[:, 0], I[:, 0]
+        return (D[0], I[0]) if single else (D, I)
+
 
 try:
     from scipy.spatial import cKDTree as _Tree
-except Exception:                                  # pragma: no cover
-    _Tree = None
+except Exception:                                  # IngeTrazo's Windows build
+    _Tree = GridTree
 
 
 def available():
