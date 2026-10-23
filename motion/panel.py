@@ -23,7 +23,7 @@ import math
 import numpy as np
 from PySide6.QtCore import QPointF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPen
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                QDoubleSpinBox, QFormLayout, QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
                                QSlider, QSpinBox, QToolButton, QTreeWidget,
@@ -112,14 +112,73 @@ def _placements(group):
         yield g.mesh, (None if m is None else np_affine(m))
 
 
+def _positions(vertices):
+    """(n, 3) array of vertex positions, read in one pass."""
+    return np.array([(p.x(), p.y(), p.z()) for p in (v.position for v in vertices)],
+                    float).reshape(-1, 3)
+
+
 def group_points(group):
     out = []
     for mesh, aff in _placements(group):
         if not mesh.vertices:
             continue
-        P = np.array([_xyz(v.position) for v in mesh.vertices])
+        P = _positions(mesh.vertices)
         out.append(P if aff is None else P @ aff[0].T + aff[1])
     return np.vstack(out) if out else np.zeros((0, 3))
+
+
+def _mesh_triangles(mesh):
+    """(n, 3, 3) triangles of one mesh. Triangles and convex quads without
+    holes (most of an imported STEP model) are indexed directly; any other
+    face goes through IngeTrazo's own triangulation (holes, concave)."""
+    verts = mesh.vertices
+    if not verts:
+        return np.zeros((0, 3, 3))
+    P = _positions(verts)
+    index = {id(v): i for i, v in enumerate(verts)}
+    tris, quads, quad_faces, other = [], [], [], []
+    for f in mesh.faces:
+        loop = f.loop
+        if f.hole_loops or len(loop) not in (3, 4):
+            other.append(f)
+            continue
+        try:
+            ids = [index[id(v)] for v in loop]
+        except KeyError:
+            other.append(f)
+            continue
+        if len(ids) == 3:
+            tris.append(ids)
+        else:
+            quads.append(ids)
+            quad_faces.append(f)
+    parts = []
+    if tris:
+        parts.append(P[np.array(tris)])
+    if quads:
+        Q = P[np.array(quads)]                                  # (m, 4, 3)
+        n = np.cross(Q[:, 2] - Q[:, 0], Q[:, 3] - Q[:, 1])
+        e = np.roll(Q, -1, axis=1) - Q                          # edges i -> i+1
+        turn = np.einsum("mij,mj->mi", np.cross(e, np.roll(e, -1, axis=1)), n)
+        convex = (turn > 0).all(axis=1) | (turn < 0).all(axis=1)
+        C = Q[convex]
+        if len(C):
+            parts.append(C[:, [0, 1, 2]])
+            parts.append(C[:, [0, 2, 3]])
+        if not convex.all():
+            other += [f for f, ok in zip(quad_faces, convex) if not ok]
+    tri = []
+    for f in other:
+        try:
+            for a, b, c in f.triangulate():
+                tri.append(((a.x(), a.y(), a.z()), (b.x(), b.y(), b.z()),
+                            (c.x(), c.y(), c.z())))
+        except Exception:
+            continue
+    if tri:
+        parts.append(np.array(tri, float))
+    return np.concatenate(parts) if parts else np.zeros((0, 3, 3))
 
 
 def group_triangles(group):
@@ -127,15 +186,8 @@ def group_triangles(group):
     own triangulation), nested placements included."""
     out = []
     for mesh, aff in _placements(group):
-        tri = []
-        for f in mesh.faces:
-            try:
-                for a, b, c in f.triangulate():
-                    tri.append((_xyz(a), _xyz(b), _xyz(c)))
-            except Exception:
-                continue
-        if tri:
-            T = np.array(tri)
+        T = _mesh_triangles(mesh)
+        if len(T):
             if aff is not None:
                 T = T @ aff[0].T + aff[1]
             out.append(T)
@@ -160,11 +212,12 @@ def group_material_names(group):
 def group_segments(group):
     out = []
     for mesh, aff in _placements(group):
-        segs = [(_xyz(e.v0.position), _xyz(e.v1.position)) for e in mesh.edges
-                if not getattr(e, "hidden", False)]
+        segs = [((a.x(), a.y(), a.z()), (b.x(), b.y(), b.z()))
+                for a, b in ((e.v0.position, e.v1.position) for e in mesh.edges
+                             if not getattr(e, "hidden", False))]
         if not segs:
             continue
-        S = np.array(segs)
+        S = np.array(segs, float)
         if aff is not None:
             S = S @ aff[0].T + aff[1]
         out.append(S)
@@ -574,12 +627,12 @@ class MotionPanel(QWidget):
                                                        for b in m.bodies]
             joints = [(j.name, j.kind, f"{j.a.name} ↔ {j.b.name}") for j in m.joints]
             motors = [d[0].name for d in m.drivers]
-        masses = {}
-        if self.source == "model" and self.data["bodies"]:
-            try:
-                masses = getattr(self.mechanism(), "masses", {}) or {}
-            except Exception:
-                masses = {}
+        # Masses need the whole mechanism (every face of every part): never
+        # inside the document-changed signal, or opening a big model freezes
+        # the window. Shown at once when known, else computed right after.
+        masses = self._known_masses()
+        if self.mech is None and self.source == "model" and self.data["bodies"]:
+            self._schedule_masses()
         if masses:
             bodies = [(n, k, self._mass_text(masses.get(n)) or dt) for n, k, dt in bodies]
         kinds = {k: _T(v) for k, v in KIND_NAMES.items()}
@@ -613,10 +666,15 @@ class MotionPanel(QWidget):
             c.addItems(names)
             c.blockSignals(False)
         self._show_fields(None)
-        if motors:                               # show the first motor's travel
-            hit = self.tree.findItems(motors[0], Qt.MatchExactly)
-            if hit:
-                self.tree.setCurrentItem(hit[0])
+        self._first_motor = motors[0] if motors else None
+        if motors and (self.mech is not None or self.source != "model"):
+            self._select_first_motor()           # show the first motor's travel
+
+    def _select_first_motor(self):
+        name = getattr(self, "_first_motor", None)
+        hit = self.tree.findItems(name, Qt.MatchExactly) if name else []
+        if hit and self.tree.currentItem() is None:
+            self.tree.setCurrentItem(hit[0])
 
     # ---- materials ------------------------------------------------------------------
     def _fill_materials(self):
@@ -652,7 +710,7 @@ class MotionPanel(QWidget):
         else:
             self.mat_combo.setCurrentIndex(-1)
         self.mat_combo.blockSignals(False)
-        mp = (getattr(self.mechanism(), "masses", {}) or {}).get(name)
+        mp = self._known_masses().get(name)
         if not mp:
             self.mass_label.setText("")
             return
@@ -743,6 +801,42 @@ class MotionPanel(QWidget):
             young=E.value() or None, friction=mu.value(), restitution=e.value()))
         self._store(d, _T("Matériau « {name} » : {rho} kg/m³.", name=name.text().strip(),
                          rho=f"{rho.value():g}"))
+
+    def _known_masses(self):
+        """Masses of the mechanism already built, without building it."""
+        return (getattr(self.mech, "masses", None) or {}) if self.mech is not None else {}
+
+    def _schedule_masses(self):
+        if getattr(self, "_masses_pending", False):
+            return
+        self._masses_pending = True
+        QTimer.singleShot(0, self._compute_masses)
+
+    def _compute_masses(self):
+        """Build the mechanism once the window is drawn, then fill the masses."""
+        self._masses_pending = False
+        if self.source != "model" or not self.data["bodies"]:
+            return
+        if self.mech is None:
+            self.say(_T("Calcul des masses…"))
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            masses = getattr(self.mechanism(), "masses", {}) or {}
+        except Exception:
+            masses = {}
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.say("")
+        for i in range(self.tree.topLevelItemCount()):
+            it = self.tree.topLevelItem(i)
+            txt = self._mass_text(masses.get(it.data(0, Qt.UserRole)))
+            if txt:
+                it.setText(2, txt)
+        self.tree.resizeColumnToContents(2)
+        if self.tree.currentItem() is None:
+            self._select_first_motor()
+        else:
+            self._show_material(self._chosen())
 
     @staticmethod
     def _mass_text(mp):

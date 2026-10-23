@@ -2,6 +2,14 @@
 
 ## 0.8.0 — unreleased
 
+### Fixed
+- **Opening a big model no longer freezes the window** (the spider, 133
+  parts, ~300 000 faces): the masses were computed inside IngeTrazo's
+  document-changed signal. They are now computed right after the window is
+  drawn (wait cursor, « Calcul des masses… »), and the faces are read 3.5×
+  faster (triangles and convex quads indexed directly; holes and other
+  faces still go through IngeTrazo's triangulation, same area and volume).
+
 ### Added
 - **Shocks between free parts** (`motion.impacts`, « Chocs » next to
   « Dynamique »): parts not held by a joint push each other back through
