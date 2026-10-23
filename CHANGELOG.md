@@ -9,6 +9,8 @@
   drawn (wait cursor, « Calcul des masses… »), and the faces are read 3.5×
   faster (triangles and convex quads indexed directly; holes and other
   faces still go through IngeTrazo's triangulation, same area and volume).
+- **The panel scrolls instead of being squeezed** on a laptop screen (the
+  last rows were cut in half at the bottom of the window).
 - **The list of parts and joints can be enlarged**: drag the handle under
   the list to give it the room a mechanism with many joints needs.
 

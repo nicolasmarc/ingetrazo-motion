@@ -2144,7 +2144,19 @@ def _box_segments(body, q):
 
 def setup(app):
     panel = MotionPanel(app)
-    dock = app.add_panel("Motion", panel, start_hidden=False)
+    # Taller than a laptop screen once every row is shown: in a scroll area
+    # the panel keeps its rows whole and scrolls, instead of being squeezed
+    # (spin boxes cut in half at the bottom of the window).
+    from PySide6.QtWidgets import QFrame, QScrollArea
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setWidget(panel)
+    # room for the scroll bar: the panel never gets narrower than its rows
+    scroll.setMinimumWidth(panel.minimumSizeHint().width()
+                           + scroll.verticalScrollBar().sizeHint().width() + 2)
+    dock = app.add_panel("Motion", scroll, start_hidden=False)
     app.add_overlay(panel.paint)
     app.on_document_changed(panel.reload)
 
