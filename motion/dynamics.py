@@ -73,6 +73,52 @@ def _unwrap(v, near):
     return best
 
 
+def log_rotations(R):
+    """:func:`log_rotation` of (n, 3, 3) matrices at once (rows near half a
+    turn go through the one-matrix version)."""
+    R = np.asarray(R, float)
+    sk = np.stack([R[:, 2, 1] - R[:, 1, 2], R[:, 0, 2] - R[:, 2, 0],
+                   R[:, 1, 0] - R[:, 0, 1]], axis=1)
+    s2 = np.sqrt(np.einsum("ij,ij->i", sk, sk))
+    c = (np.trace(R, axis1=1, axis2=2) - 1.0) / 2.0
+    th = np.arctan2(0.5 * s2, c)
+    out = 0.5 * sk
+    big = th >= 1e-9
+    usual = big & (c > -0.5)
+    out[usual] = (th[usual] / s2[usual])[:, None] * sk[usual]
+    for i in np.nonzero(big & ~usual)[0]:
+        out[i] = log_rotation(R[i])
+    return out
+
+
+def unwraps(V, near):
+    """:func:`_unwrap` of (n, 3) rotation vectors at once (the same choice,
+    ties included: the first nearest candidate in the same order)."""
+    V, near = np.asarray(V, float), np.asarray(near, float)
+    out = V.copy()
+    th = np.sqrt(np.einsum("ij,ij->i", V, V))
+    small = th < 1e-12
+    for i in np.nonzero(small)[0]:
+        out[i] = _unwrap(V[i], near[i])
+    ok = ~small
+    if not ok.any():
+        return out
+    v, nr, t = V[ok], near[ok], th[ok]
+    n = v / t[:, None]
+    base = np.round(np.einsum("ij,ij->i", nr, n) / (2 * math.pi))
+    lens = [t]                                   # the order _unwrap tries them in
+    for dk in (-1, 0, 1):
+        k = base + dk
+        lens += [t + 2 * math.pi * k, t - 2 * math.pi * k]
+    L = np.stack(lens, axis=1)                   # (m, 7): candidate = n * L
+    C = n[:, None, :] * L[:, :, None]
+    d = np.linalg.norm(C - nr[:, None, :], axis=2)
+    pick = np.argmin(d, axis=1)
+    best = C[np.arange(len(C)), pick]
+    out[ok] = np.where((pick == 0)[:, None], v, best)
+    return out
+
+
 def _skew(v):
     x, y, z = v
     return np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]], float)
@@ -157,8 +203,7 @@ class Dynamics:
         R2 = rotations(D[act, 3:]) @ R
         c2 = c + D[act, :3]
         X[rows, :3] = c2 - np.einsum("nij,nj->ni", R2, r0) - a["center"][act]
-        for i, row in enumerate(rows):
-            X[row, 3:] = _unwrap(log_rotation(R2[i]), q[i, 3:])
+        X[rows, 3:] = unwraps(log_rotations(R2), q[:, 3:])
         return x
 
     # -- constraints -----------------------------------------------------------
@@ -489,10 +534,11 @@ class Dynamics:
             at += n
         return out
 
-    def run(self, seconds, dt=1e-3, x0=None, u0=None, every=1, t0=0.0):
+    def run(self, seconds, dt=1e-3, x0=None, u0=None, every=1, t0=0.0, progress=None):
         """Simulate; returns rows {t, x, u, ke, pe, lam} every ``every``
         steps. ``x0`` defaults to the drawn pose (placed on the joints and
-        on the speed motors' laws at t0)."""
+        on the speed motors' laws at t0). ``progress(i, steps)`` is called
+        now and then; when it returns False the run stops and returns None."""
         x = np.zeros(self.m.n) if x0 is None else np.array(x0, float)
         u = np.zeros(self.n) if u0 is None else np.array(u0, float)
         x = self.settle(x, t0)
@@ -508,6 +554,8 @@ class Dynamics:
                 rows.append(dict(t=t, x=x.copy(), u=u.copy(), ke=ke, pe=pe))
             if i == steps:
                 break
+            if progress is not None and i % 100 == 0 and progress(i, steps) is False:
+                return None
             x, u, a, lam = self.step(x, u, t, dt)
             if rows and rows[-1]["t"] == t:
                 rows[-1]["lam"] = lam

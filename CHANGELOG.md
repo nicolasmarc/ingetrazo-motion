@@ -9,6 +9,10 @@
   drawn (wait cursor, « Calcul des masses… »), and the faces are read 3.5×
   faster (triangles and convex quads indexed directly; holes and other
   faces still go through IngeTrazo's triangulation, same area and volume).
+- **A long dynamic run no longer freezes the window** (dominoes with
+  shocks: 15 000 steps of 0.2 ms): a progress window with « Annuler »;
+  cancelled, it waits for ▶ or « Valider » to run again. The parts' turns
+  are updated all at once (same results to 1e-14; about 25 % faster).
 - **The panel scrolls instead of being squeezed** on a laptop screen (the
   last rows were cut in half at the bottom of the window).
 - **The list of parts and joints can be enlarged**: drag the handle under

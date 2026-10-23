@@ -1227,7 +1227,17 @@ class MotionPanel(QWidget):
             dyn = dynamics.Dynamics(m, **sim.get("params", {}))
             dt = sim.get("dt", 0.002)
             every = max(1, int(round(1.0 / (30 * dt))))
-            rows = dyn.run(sim["duree"], dt=dt, every=every)
+            steps = int(round(sim["duree"] / dt))
+            prog = self._sim_progress(steps)
+            try:
+                rows = dyn.run(sim["duree"], dt=dt, every=every, progress=prog)
+            finally:
+                if prog is not None:
+                    prog.close()
+            if rows is None:                   # cancelled: not again until asked
+                self._sim_cache = (self.mech, None)
+                self.say(_T("Simulation interrompue : ▶ ou « Valider » la relance."))
+                return None
             n = len(rows)
             motor_rows = [nm for nm, (kind, _f) in dyn.motors.items() if kind == "vitesse"]
 
@@ -1248,6 +1258,36 @@ class MotionPanel(QWidget):
             self._sim_impacts = (dyn.impacts.deepest if dyn.impacts is not None else None)
         return self._sim_cache[1]
 
+    def has_simulation(self):
+        """A dynamic simulation is set (without running it)."""
+        if (self.sample_info or {}).get("simulation"):
+            return True
+        if self.source != "model":
+            return False
+        return bool((getattr(self.mechanism(), "simulation", {}) or {}).get("active"))
+
+    def rerun_simulation(self):
+        """Forget a cancelled run, so the next request computes again."""
+        if getattr(self, "_sim_cache", (None, 0))[1] is None:
+            self._sim_cache = (None, None)
+
+    def _sim_progress(self, steps):
+        """A progress window for a long run (shocks: thousands of steps),
+        so the window keeps answering; None for a short one or headless."""
+        if steps < 2000 or not self.isVisible():
+            return None
+        from PySide6.QtWidgets import QProgressDialog
+        dlg = QProgressDialog(_T("Simulation dynamique…"), _T("Annuler"), 0, steps, self)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(400)
+
+        def step(i, n):
+            dlg.setValue(i)
+            QApplication.processEvents()
+            return not dlg.wasCanceled()
+        step.close = dlg.close
+        return step
+
     def _chocs(self):
         sim = (self.sample_info or {}).get("simulation")
         if sim:
@@ -1256,6 +1296,7 @@ class MotionPanel(QWidget):
 
     def _do_validate(self):
         m = self.mechanism()
+        self.rerun_simulation()
         poses = self.simulation()
         if m.driver is None and poses is None:
             raise ValueError(_T("pas de moteur"))
@@ -1645,6 +1686,7 @@ class MotionPanel(QWidget):
     def _play(self, on):
         self.play_btn.setText("⏸" if on else "▶")
         if on:
+            self.rerun_simulation()
             m = self.mechanism()
             if m.driver is not None and self.frames is None:
                 self.frames = solver.sweep(m, self.pas.value())
@@ -1945,7 +1987,7 @@ class MotionPanel(QWidget):
     def full_turn(self):
         """Driver is a pivot doing a whole revolution (a crank)."""
         m = self.mechanism()
-        if m.driver is None or self.simulation() is not None:
+        if m.driver is None or self.has_simulation():
             return False
         j, lo, hi = m.driver
         return j.kind == "pivot" and abs(abs(hi - lo) - 2 * math.pi) < 1e-6

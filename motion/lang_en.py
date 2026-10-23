@@ -28,6 +28,9 @@ EN = {
     "Exemple copié : {n} pièce(s), {j} liaison(s) — modifiables.":
         "Example copied: {n} part(s), {j} joint(s), ready to edit.",
     "Matière de l'exemple": "Example's material",
+    "Simulation dynamique…": "Dynamic simulation…",
+    "Simulation interrompue : ▶ ou « Valider » la relance.":
+        "Simulation stopped: ▶ or « Validate » runs it again.",
     "Nom": "Name",
     "Type": "Type",
     "Détail": "Detail",
