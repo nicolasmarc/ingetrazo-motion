@@ -9,11 +9,12 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPainterPath,
                            QPen, QPixmap, QPolygonF)
 
 # the panel's tools, four per row: parts and the simple joints, the other
-# standard joints, then rail, motor, validation, trajectory
+# standard joints, then rail, coupling (gears, rack), motor, validation; the
+# trajectory, a view of the motion, sits beside the play button
 NAMES = ("fixed", "moving", "pivot", "slider",
          "cylindrical", "ball", "lock", "elastic",
          "annular", "pointplane", "planar", "screw",
-         "guide", "driver", "validate", "trajectory")
+         "guide", "coupling", "driver", "validate")
 
 LABELS = {
     "fixed": ("Pièce fixe", "Fixed part"),

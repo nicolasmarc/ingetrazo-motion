@@ -603,7 +603,7 @@ def test_screw_and_the_other_new_tools_from_the_panel():
     win = _window()
     panel = _state["panel"]
     _reset(win, panel)
-    assert len(panel.buttons) == 16
+    assert len(panel.buttons) == 17                  # 16 tools + the trajectory by the play button
     for n in ("annular", "pointplane", "planar", "screw"):
         assert panel.buttons[n].isEnabled() and panel.buttons[n].text()
     scene = win.viewport.scene
@@ -773,4 +773,59 @@ def test_the_frame_is_never_drawn_over_the_model():
     del panel._draw_segments
     n_fixed = sum(len(v) for k, v in panel.body_segments.items() if k == m.ground.name)
     assert n_fixed == 0 and len(drawn) == len(m.bodies)
+    _reset(win, panel)
+
+
+def test_gear_coupling_from_the_tool():
+    """« Couplage »: 12 teeth driving 24, the driven gear turns half as
+    fast the other way, whichever way its pivot's axis points; a rack
+    slides by the pitch radius times the angle."""
+    if SKIP:
+        print("skip:", SKIP); return
+    from motion import solver as _s  # noqa: F401  (the panel's own copy is used below)
+    win = _window()
+    panel = _state["panel"]
+    for sense in (1.0, -1.0):
+        _reset(win, panel)
+        scene = win.viewport.scene
+        frame = _box_group("Bâti", (-0.1, -0.1, -0.02), (0.1, 0.1, -0.01))
+        g1 = _box_group("Pignon", (-0.012, -0.012, 0.0), (0.012, 0.012, 0.005))
+        g2 = _box_group("Roue", (0.012, -0.024, 0.0), (0.06, 0.024, 0.005))
+        rack = _box_group("Crémaillère", (-0.05, 0.03, 0.0), (0.05, 0.04, 0.005))
+        scene.groups += [frame, g1, g2, rack]
+        data = {"format": 1, "bodies": [
+            {"name": "bâti", "groups": [frame.uid], "fixed": True},
+            {"name": "pignon", "groups": [g1.uid], "fixed": False},
+            {"name": "roue", "groups": [g2.uid], "fixed": False},
+            {"name": "crémaillère", "groups": [rack.uid], "fixed": False}],
+            "joints": [
+            {"kind": "pivot", "name": "p1", "a": "bâti", "b": "pignon",
+             "point": [0, 0, 0], "axis": [0, 0, 1], "limits": None},
+            {"kind": "pivot", "name": "p2", "a": "bâti", "b": "roue",
+             "point": [0.036, 0, 0], "axis": [0, 0, sense], "limits": None},
+            {"kind": "slider", "name": "s", "a": "bâti", "b": "crémaillère",
+             "point": [0, 0.035, 0], "axis": [1, 0, 0], "limits": None}],
+            "drivers": [{"joint": "p1", "lo": 0.0, "hi": 1.0}]}
+        panel.app.set_document_data(data)
+        panel.tree.setCurrentItem(panel.tree.findItems("p1", Qt_MatchExactly())[0])
+        panel._auto_accept = True
+        try:
+            panel._action("coupling")                       # p1 -> p2, 12 -> 24 teeth
+            panel._do_coupling("p1", "s")                   # p1 -> rack, 20 mm
+        finally:
+            panel._auto_accept = False
+        d = panel.app.document_data()
+        assert [j["kind"] for j in d["joints"]].count("coupling") == 2, d["joints"]
+        m = panel.mechanism()
+        pkg = type(panel).__module__.rsplit(".", 1)[0]
+        import importlib
+        solver = importlib.import_module(pkg + ".solver")
+        x, ok, _ = solver.solve(m, 0.6)
+        assert ok
+        by = {b.name: b for b in m.bodies}
+        R = by["roue"].rot(m.pose(x, by["roue"]))
+        ang = math.atan2(R[1, 0], R[0, 0])                  # world turn about +z
+        assert abs(ang - (-0.3)) < 1e-6, ang
+        slide = m.pose(x, by["crémaillère"])[0]
+        assert abs(abs(slide) - 0.6 * 0.020) < 1e-6, slide   # 20 mm pitch radius
     _reset(win, panel)

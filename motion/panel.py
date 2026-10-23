@@ -79,6 +79,8 @@ TIPS = {
     "driver": "Moteur 0–100 % (Driver) — la liaison choisie dans la liste, avec la course indiquée.",
     "validate": "Valider (Validate) — de 0 à 100 % : collisions, butées, jeu minimal.",
     "trajectory": "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.",
+    "coupling": "Couplage (Coupling) — engrenage, pignon-crémaillère, roulement : deux liaisons "
+                "de la liste dont l'une entraîne l'autre selon un rapport.",
     "cylindrical": "Pivot glissant (Cylindrical) — UNE arête sur l'axe : la pièce tourne et coulisse.",
     "ball": "Rotule (Ball) — des arêtes autour du centre (un petit cercle) : toutes les rotations.",
     "lock": "Encastrement (Lock) — des arêtes au point de liaison : les deux pièces n'en font qu'une.",
@@ -402,7 +404,16 @@ class MotionPanel(QWidget):
         for c in range(4):
             grid.setColumnStretch(c, 1)
             grid.setColumnMinimumWidth(c, 10)
-        self.buttons["trajectory"].setCheckable(True)
+        tb = QToolButton()                       # trajectory: beside the play button
+        tb.setIcon(icons.icon("trajectory", self, 18))
+        tb.setIconSize(QSize(18, 18))
+        tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        tb.setText(icons.label("trajectory"))
+        tb.setToolTip(_T(TIPS["trajectory"]))
+        tb.setAutoRaise(True)
+        tb.setCheckable(True)
+        tb.clicked.connect(lambda _c=False: self._action("trajectory"))
+        self.buttons["trajectory"] = tb
         lay.addLayout(grid)
 
         self.tree = QTreeWidget()
@@ -526,6 +537,7 @@ class MotionPanel(QWidget):
         self.pct = QLabel("0 %")
         self.pct.setMinimumWidth(42)
         play.addWidget(self.pct)
+        play.addWidget(self.buttons["trajectory"])
         lay.addLayout(play)
         self.loop = QCheckBox(_T("Aller-retour"))
         self.loop.setChecked(True)
@@ -795,7 +807,7 @@ class MotionPanel(QWidget):
         self.copy_btn.setVisible(not editable and self.source not in NOT_COPYABLE)
         for n in ("fixed", "moving", "pivot", "slider", "guide",
                   "cylindrical", "ball", "lock", "elastic",
-                  "annular", "pointplane", "planar", "screw"):
+                  "annular", "pointplane", "planar", "screw", "coupling"):
             self.buttons[n].setEnabled(editable)
         self.delete_btn.setEnabled(editable)
         self._fill_materials()
@@ -1287,6 +1299,111 @@ class MotionPanel(QWidget):
             d, n = doc.add_joint(d, "guide", a, b, point=r, rail=rail)
             names.append(n)
         self._store(d, _T("{n} galet(s) sur le rail de {a}.", n=len(names), a=a))
+
+    def _do_coupling(self, ja=None, jb=None):
+        """Gears, rack and pinion, rolling: joint B turns (or slides) by
+        ratio x joint A. The ratio is given as teeth (two rotations) or as a
+        pitch radius (a rotation and a slide); its sign follows from which
+        part the two joints share and how their axes point."""
+        if self.source != "model":
+            return
+        kinds = ("pivot", "cylindrical", "screw", "slider")
+        js = [j for j in self.data["joints"] if j["kind"] in kinds]
+        if len(js) < 2:
+            raise ValueError(_T("il faut deux liaisons (pivots ou glissières) dans la liste"))
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(icons.label("coupling"))
+        form = QFormLayout(dlg)
+        ca, cb = QComboBox(), QComboBox()
+        for c in (ca, cb):
+            for j in js:
+                c.addItem(f"{j['name']} ({_T(KIND_NAMES[j['kind']])})", j["name"])
+        cur = self._chosen()
+        names = [j["name"] for j in js]
+        ca.setCurrentIndex(names.index(ja) if ja in names else
+                           names.index(cur) if cur in names else 0)
+        cb.setCurrentIndex(names.index(jb) if jb in names else
+                           (1 if ca.currentIndex() == 0 else 0))
+        form.addRow(_T("Liaison menante"), ca)
+        form.addRow(_T("Liaison menée"), cb)
+        za, zb = QSpinBox(), QSpinBox()
+        for z, v in ((za, 12), (zb, 24)):
+            z.setRange(1, 999)
+            z.setValue(v)
+        zrow = QHBoxLayout()
+        zrow.addWidget(za)
+        zrow.addWidget(QLabel("→"))
+        zrow.addWidget(zb)
+        form.addRow(_T("Dents (menante → menée)"), zrow)
+        inner = QCheckBox(_T("Denture intérieure (même sens de rotation)"))
+        form.addRow(inner)
+        rad = QDoubleSpinBox()
+        rad.setRange(0.01, 100000.0)
+        rad.setDecimals(2)
+        rad.setValue(20.0)
+        rad.setSuffix(" mm")
+        form.addRow(_T("Rayon primitif (pignon, roue)"), rad)
+        flip = QCheckBox(_T("Inverser le sens"))
+        form.addRow(flip)
+        out = QLabel("")
+        form.addRow(_T("Rapport"), out)
+        rec = {j["name"]: j for j in js}
+
+        def ratio():
+            a, b = rec[ca.currentData()], rec[cb.currentData()]
+            ra, rb = a["kind"] != "slider", b["kind"] != "slider"
+            if ra and rb:
+                r = (1 if inner.isChecked() else -1) * za.value() / zb.value()
+            elif ra != rb:                    # rack / rolling: m per rad (or rad per m)
+                r = -rad.value() / 1000.0
+                if not ra:
+                    r = 1.0 / r
+            else:
+                r = 1.0
+            r *= self._coupling_sign(a, b)
+            return -r if flip.isChecked() else r
+
+        def refresh(*_):
+            a, b = rec[ca.currentData()], rec[cb.currentData()]
+            ra, rb = a["kind"] != "slider", b["kind"] != "slider"
+            for w in (za, zb, inner):
+                w.setEnabled(ra and rb)
+            rad.setEnabled(ra != rb)
+            unit = "" if ra == rb else (" m/rad" if ra else " rad/m")
+            out.setText(f"{ratio():+.4g}{unit}")
+        for w in (ca, cb, za, zb, inner, rad, flip):
+            sig = getattr(w, "currentIndexChanged", None) or getattr(w, "valueChanged", None) \
+                or getattr(w, "toggled")
+            sig.connect(refresh)
+        refresh()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        self._coupling_dialog = dlg                  # tests drive it
+        if getattr(self, "_auto_accept", False):
+            dlg.accept()
+        elif not dlg.exec():
+            return
+        if ca.currentData() == cb.currentData():
+            raise ValueError(_T("choisir deux liaisons différentes"))
+        d, name = doc.add_coupling(self.data, ca.currentData(), cb.currentData(), ratio())
+        self._store(d, _T("Couplage {name} : rapport {r}.", name=name, r=f"{ratio():+.4g}"))
+
+    def _coupling_sign(self, a, b):
+        """Turn a ratio between the gears' turns (seen from the part both
+        joints share) into one between the two joints' own values: each
+        joint measures its second part from its first, about its own axis."""
+        common = ({a["a"], a["b"]} & {b["a"], b["b"]})
+        s = 1.0
+        if common:
+            c = next(iter(common))
+            s *= (1 if a["a"] == c else -1) * (1 if b["a"] == c else -1)
+        ua, ub = np.asarray(a.get("axis", (0, 0, 1)), float), np.asarray(b.get("axis", (0, 0, 1)), float)
+        if a["kind"] != "slider" and b["kind"] != "slider" and float(ua @ ub) < 0:
+            s = -s
+        return s
 
     def _do_driver(self):
         name = self._chosen()

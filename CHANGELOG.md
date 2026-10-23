@@ -65,6 +65,14 @@
   already there, which a laptop screen does not have.
 
 ### Added
+- **« Couplage » tool**: gears (teeth driving → driven, internal teeth),
+  rack and pinion or rolling (pitch radius) between two joints of the list;
+  the sign comes from the part both joints share and their axes, with
+  « Inverser le sens » to turn it round. Until now a coupling only came from
+  « Détecter… ». « Trajectoire » moves beside the play button (it shows the
+  motion). Tested: 12 teeth driving 24, the wheel turns half as fast the
+  other way whichever way its pivot's axis points; a 20 mm pinion moves its
+  rack 20 mm per radian.
 - **A click in the list shows the item in the model**: a part's groups
   become IngeTrazo's selection (highlighted); a joint selects both its
   parts and gets a ring at its point in the view; examples: the parts drawn
