@@ -3,6 +3,17 @@
 ## 0.8.0 — unreleased
 
 ### Fixed
+- **Big models stay usable (the spider, 133 parts, ~300 000 faces)**:
+  - turning the view: Motion's overlay drew every edge of every moving part
+    at each repaint (0.5 s); now the sharp edges only, the 1 500 longest of
+    a part, in one drawing call, and nothing at the drawn pose (the model
+    shows it): 0.06 s moved, 0.001 s at rest;
+  - « Valider » and the video's checks: about 2.8× faster (one rotation per
+    part in the joints' equations, a plain 3-vector cross product), with a
+    progress window and « Annuler » instead of a frozen window;
+  - video: faces under a quarter of a pixel are not painted, the parts'
+    polygons, areas and tiles are prepared in one go: setup halved, frames
+    about 2× faster.
 - **Video export of a dynamic model no longer re-runs the simulation at
   every frame** (Newton's cradle: two progress windows taking turns, no
   end). Hiding the moving parts for the IngeTrazo half makes IngeTrazo

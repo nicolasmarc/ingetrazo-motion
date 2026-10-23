@@ -28,6 +28,14 @@ def rotation(w):
                      [-s * y + c * xz, s * x + c * yz, 1.0 - c * (xx + yy)]])
 
 
+def cross3(a, b):
+    """np.cross of two 3-vectors, without its general overhead (the
+    solvers call it hundreds of thousands of times)."""
+    a0, a1, a2 = float(a[0]), float(a[1]), float(a[2])
+    b0, b1, b2 = float(b[0]), float(b[1]), float(b[2])
+    return np.array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
+
+
 def rotations(W):
     """Rodrigues for many rotation vectors at once: (n, 3) -> (n, 3, 3)."""
     W = np.asarray(W, float).reshape(-1, 3)

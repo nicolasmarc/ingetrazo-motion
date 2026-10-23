@@ -63,6 +63,37 @@ def view_axes(yaw, pitch):
 #: index type of the tiles cut out of a large face: drawn without an
 #: outline, so the face still reads as one
 TILE = np.int32
+MIN_PIXEL_AREA = 0.25          # px²: smaller faces are not painted
+
+
+def _face_areas(V, idx):
+    """Area of each face (corner index arrays into V), all at once: the fan
+    of triangles from its first corner, as the one-by-one sum did."""
+    n = len(idx)
+    out = np.zeros(n)
+    if not n:
+        return out
+    lens = np.array([len(f) for f in idx], int)
+    ok = lens >= 3
+    if not ok.any():
+        return out
+    faces = [idx[i] for i in np.nonzero(ok)[0]]
+    L = lens[ok]
+    flat = np.concatenate(faces).astype(int)
+    starts = np.concatenate([[0], np.cumsum(L)[:-1]])
+    ntri = L - 2
+    fid = np.repeat(np.arange(len(faces)), ntri)
+    k = np.arange(ntri.sum()) - np.repeat(np.cumsum(ntri) - ntri, ntri)    # 0..n-3 per face
+    A = V[flat[starts[fid]]]
+    B = V[flat[starts[fid] + 1 + k]]
+    C = V[flat[starts[fid] + 2 + k]]
+    a, b = B - A, C - A
+    cr = np.stack([a[:, 1] * b[:, 2] - a[:, 2] * b[:, 1], a[:, 2] * b[:, 0] - a[:, 0] * b[:, 2],
+                   a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]], axis=1)
+    S = np.zeros((len(faces), 3))
+    np.add.at(S, fid, cr)
+    out[ok] = 0.5 * np.sqrt(np.einsum("ij,ij->i", S, S))
+    return out
 
 
 class Shaded:
@@ -97,14 +128,7 @@ class Shaded:
         if total > max_faces:                     # keep it drawable: the
             # largest faces (the small ones are the fine facets of curved
             # surfaces, hardly seen); every n-th face would leave holes
-            areas = []
-            for it in self.items:
-                V = it[1]
-                for f in it[2]:
-                    P = V[f]
-                    areas.append(0.5 * float(np.linalg.norm(
-                        np.cross(P[1:-1] - P[0], P[2:] - P[0]).sum(axis=0))) if len(P) >= 3 else 0.0)
-            areas = np.array(areas)
+            areas = np.concatenate([_face_areas(it[1], it[2]) for it in self.items])
             cut = np.sort(areas)[::-1][max_faces - 1]
             k = 0
             for it in self.items:
@@ -130,6 +154,14 @@ class Shaded:
         added = 0
         for it in self.items:
             body, V, idx, col, fcols = it
+            # only quads can be tiled, and a moving part's only when huge
+            quads = [f for f in idx if len(f) == 4]
+            if not quads:
+                continue
+            Q = V[np.array(quads, int)]
+            spans = np.linalg.norm(Q - np.roll(Q, 1, axis=1), axis=2).max(axis=1)
+            if not (spans > L).any() or (not body.fixed and not (spans >= 8 * L).any()):
+                continue                          # nothing to cut: keep as is
             newV, newidx, newcols = [V], [], ([] if fcols is not None else None)
             o = len(V)
             for fi, f in enumerate(idx):
@@ -234,6 +266,15 @@ class Shaded:
             if need_front:
                 okf = np.asarray(res[2], bool)[pr["flat"]]
                 good &= np.logical_and.reduceat(okf, pr["starts"]) if len(okf) else good
+            # faces smaller than a quarter of a pixel on screen add nothing
+            # (big STEP parts: thousands of tiny facets): left out
+            X, Y = np.asarray(px, float)[pr["flat"]], np.asarray(py, float)[pr["flat"]]
+            nxt = np.arange(len(pr["flat"])) + 1
+            ends = pr["starts"] + pr["lens"]
+            nxt[ends - 1] = pr["starts"]
+            cross2 = X * Y[nxt] - X[nxt] * Y
+            area2 = np.abs(np.add.reduceat(cross2, pr["starts"])) * 0.5
+            good &= area2 >= MIN_PIXEL_AREA
             dflat = depth[pr["flat"]]
             dep = (np.maximum.reduceat(dflat, pr["starts"]) if body.fixed
                    else np.add.reduceat(dflat, pr["starts"]) / pr["lens"])

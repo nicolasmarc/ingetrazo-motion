@@ -309,7 +309,8 @@ def _held_pairs(mech):
     return out
 
 
-def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contacts=False):
+def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contacts=False,
+             progress=None):
     """Run the driver 0..100 % and check everything at each step.
 
     Returns a dict: ``steps`` (per step: t, value, ok, res, hits, limits,
@@ -319,11 +320,24 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contac
     ``poses``: rows {t (0..1), value, x, ok, res} computed elsewhere (a
     dynamic simulation) instead of the driver's sweep. ``contacts``: the
     simulation handles the shocks between parts not held by a joint, so
-    their touching is no fault (neither collision nor gap)."""
+    their touching is no fault (neither collision nor gap).
+    ``progress(i, n)``: called along (the solving, then the checks); when it
+    returns False the validation stops and returns None."""
     from .solver import sweep
     rows, worst, problems = [], None, []
     held = _held_pairs(mech) if contacts else None
-    for st in (poses if poses is not None else sweep(mech, steps)):
+    if poses is None:
+        half = (lambda i, n: progress(i, 2 * n)) if progress is not None else None
+        poses = sweep(mech, steps, progress=half)
+        if poses is None:
+            return None
+        base = len(poses)
+    else:
+        base = 0
+    total = base + len(poses)
+    for i_st, st in enumerate(poses):
+        if progress is not None and progress(base + i_st, total) is False:
+            return None
         x = st["x"]
         if contacts and not held:         # free parts only: the shocks say it all
             rows.append(dict({k: v for k, v in st.items() if k not in ("x",)},

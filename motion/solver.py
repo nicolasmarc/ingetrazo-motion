@@ -4,7 +4,7 @@ Works for open chains and closed loops alike (four-bar, scissor...).
 """
 import math
 import numpy as np
-from .model import perp_basis
+from .model import perp_basis, cross3
 
 
 ROWS = {"guide": 3, "coupling": 1, "ball": 3,      # residual rows (default 6)
@@ -23,9 +23,10 @@ def _joint_residual(mech, j, x):
     if j.kind == "guide":                     # point on the rail (rank 2)
         p = j.a.local_point(qa, j.b.world_point(qb, j.point))
         return p - j.path.closest(p)[1]
-    Ra, Rb = j.a.rot(qa), j.b.rot(qb)
-    pa = j.a.world_point(qa, j.point)
-    pb = j.b.world_point(qb, j.point)
+    Ra, Rb = j.a.rot(qa), j.b.rot(qb)          # one rotation per part
+    p = np.asarray(j.point, float)
+    pa = p if j.a.fixed else j.a.center + qa[:3] + Ra @ (p - j.a.center)
+    pb = p if j.b.fixed else j.b.center + qb[:3] + Rb @ (p - j.b.center)
     if j.kind == "ball":
         return pa - pb                                       # same point
     if j.kind in ("lock", "elastic"):                        # one piece (kinematics)
@@ -39,17 +40,17 @@ def _joint_residual(mech, j, x):
     if j.kind == "pointplane":                               # point on the plane
         return np.array([ua @ (pb - pa)])
     if j.kind == "planar":                                   # on the plane, normals together
-        return np.concatenate([[ua @ (pb - pa)], np.cross(ua, ub)])
+        return np.concatenate([[ua @ (pb - pa)], cross3(ua, ub)])
     if j.kind == "screw":                                    # cylindrical + advance per turn
         d = pb - pa
         ang = float((mech.pose(x, j.b)[3:] - mech.pose(x, j.a)[3:]) @ j.axis)
-        return np.concatenate([d - ua * (ua @ d), np.cross(ua, ub),
+        return np.concatenate([d - ua * (ua @ d), cross3(ua, ub),
                                [ua @ d - j.pitch * ang / (2 * np.pi)]])
     if j.kind == "pivot":
-        return np.concatenate([pa - pb, np.cross(ua, ub)])   # same point, axis
+        return np.concatenate([pa - pb, cross3(ua, ub)])   # same point, axis
     d = pb - pa
     if j.kind == "cylindrical":                              # on the axis, parallel
-        return np.concatenate([d - ua * (ua @ d), np.cross(ua, ub)])
+        return np.concatenate([d - ua * (ua @ d), cross3(ua, ub)])
     Rr = Ra.T @ Rb                            # no relative rotation
     return np.concatenate([d - ua * (ua @ d),                # stays on the line
                            [Rr[2, 1] - Rr[1, 2], Rr[0, 2] - Rr[2, 0],
@@ -94,13 +95,19 @@ def jacobian(mech, x, driver_value=None, eps=1e-7):
     J = np.zeros((at + nd, x.size))
     tg = mech.driver_targets(driver_value) if nd else None
     fb = {id(b) for b in getattr(mech, "follower_bodies", lambda: [])()}
+    by_body = {}
+    for j, sl in rows:
+        for o in {id(o) for o in _joint_bodies(j)}:
+            by_body.setdefault(o, []).append((j, sl))
+    drv_by = {}
+    for k in range(nd):
+        for o in {id(o) for o in _joint_bodies(mech.drivers[k][0])}:
+            drv_by.setdefault(o, []).append(k)
     for body in mech.bodies:
         if id(body) in fb:
             continue
-        mine = [(j, sl) for j, sl in rows
-                if any(o is body for o in _joint_bodies(j))]
-        drv = [k for k in range(nd)
-               if any(o is body for o in _joint_bodies(mech.drivers[k][0]))]
+        mine = by_body.get(id(body), [])
+        drv = drv_by.get(id(body), [])
         for c in range(6 * body.index, 6 * body.index + 6):
             xp = x.copy(); xp[c] += eps
             xm = x.copy(); xm[c] -= eps
@@ -176,8 +183,9 @@ def dof(mech, x=None, tol=1e-6):
             - sum(getattr(f, "free_dof", 0) for f in fol))
 
 
-def sweep(mech, steps=51):
-    """Solve 0..100 % of the driver. Returns list of dicts with pose x."""
+def sweep(mech, steps=51, progress=None):
+    """Solve 0..100 % of the driver. Returns list of dicts with pose x.
+    ``progress(i, steps)`` after each step; False stops (None returned)."""
     j, lo, hi = mech.driver
     out, x = [], None
     # every motor that is a pivot is followed in steps of at most 0.4 rad,
@@ -197,4 +205,6 @@ def sweep(mech, steps=51):
         x, ok, nr = solve(mech, v, x)
         v_prev = v
         out.append({"t": t, "value": v, "x": x.copy(), "ok": ok, "res": nr})
+        if progress is not None and progress(i + 1, steps) is False:
+            return None
     return out

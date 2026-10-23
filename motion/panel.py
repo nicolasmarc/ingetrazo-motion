@@ -209,12 +209,29 @@ def group_material_names(group):
     return names
 
 
+# the overlay of a moving part: at most this many strokes (a STEP part can
+# bring tens of thousands of tessellation edges, drawn at every repaint)
+OVERLAY_MAX_SEGMENTS = 1500
+
+
+def _lighter(S, cap=None):
+    """At most ``cap`` segments of (M, 2, 3), the longest first (they carry
+    the shape; the short ones are the facets of curved faces)."""
+    cap = OVERLAY_MAX_SEGMENTS if cap is None else cap
+    if len(S) <= cap:
+        return S
+    L = np.einsum("ij,ij->i", S[:, 1] - S[:, 0], S[:, 1] - S[:, 0])
+    keep = np.argpartition(-L, cap - 1)[:cap]
+    return S[np.sort(keep)]
+
+
 def group_segments(group):
     out = []
     for mesh, aff in _placements(group):
+        shown = [e for e in mesh.edges if not getattr(e, "hidden", False)]
+        sharp = [e for e in shown if not getattr(e, "soft", False)]
         segs = [((a.x(), a.y(), a.z()), (b.x(), b.y(), b.z()))
-                for a, b in ((e.v0.position, e.v1.position) for e in mesh.edges
-                             if not getattr(e, "hidden", False))]
+                for a, b in ((e.v0.position, e.v1.position) for e in (sharp or shown))]
         if not segs:
             continue
         S = np.array(segs, float)
@@ -643,10 +660,12 @@ class MotionPanel(QWidget):
                 triangles_of_group=lambda u: self._triangles(by, u))
             self.body_segments = {}
             for b in self.data["bodies"]:
+                if b["fixed"]:
+                    continue                     # never drawn: the model shows it
                 segs = [group_segments(by[u]) for u in b["groups"] if u in by]
                 segs = [s for s in segs if len(s)]
                 if segs:
-                    self.body_segments[b["name"]] = np.vstack(segs)
+                    self.body_segments[b["name"]] = _lighter(np.vstack(segs))
             if getattr(self, "_masses_pending", False):     # built before the timer:
                 self._masses_pending = False               # show them now
                 self._show_masses(getattr(self.mech, "masses", {}) or {})
@@ -1312,6 +1331,24 @@ class MotionPanel(QWidget):
         if getattr(self, "_sim_cache", (None, 0))[1] is None:
             self._sim_cache = (None, None)
 
+    def _busy(self, label):
+        """A progress window (shown after 0.4 s) whose callback ``(i, n)``
+        keeps the window answering; None when the panel is not shown."""
+        if not self.isVisible():
+            return None
+        from PySide6.QtWidgets import QProgressDialog
+        dlg = QProgressDialog(label, _T("Annuler"), 0, 100, self)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(400)
+
+        def step(i, n):
+            dlg.setMaximum(max(int(n), 1))
+            dlg.setValue(int(i))
+            QApplication.processEvents()
+            return not dlg.wasCanceled()
+        step.close = dlg.close
+        return step
+
     def _sim_progress(self, steps):
         """A progress window for a long run (shocks: thousands of steps),
         so the window keeps answering; None for a short one or headless."""
@@ -1349,9 +1386,18 @@ class MotionPanel(QWidget):
             self._store(doc.normalized(self.data))
             m = self.mechanism()
             poses = self.simulation()
-        self.report = collide.validate(m, self.pas.value(), self.jeu.value() / 1000,
-                                       poses=poses,
-                                       contacts=poses is not None and self._chocs())
+        prog = self._busy(_T("Validation…"))
+        try:
+            rep = collide.validate(m, self.pas.value(), self.jeu.value() / 1000,
+                                   poses=poses, contacts=poses is not None and self._chocs(),
+                                   progress=prog)
+        finally:
+            if prog is not None:
+                prog.close()
+        if rep is None:
+            self.say(_T("Validation interrompue."))
+            return
+        self.report = rep
         self.frames = self.report["steps"]
         self._write_report()
         if self.buttons["trajectory"].isChecked():
@@ -1763,6 +1809,8 @@ class MotionPanel(QWidget):
             for a, b in self.frames[k].get("hits", []):
                 hits.update((a, b))
         bodies = [m.ground] + m.bodies if wire else []
+        if self.source == "model" and not np.any(x):
+            bodies = []                          # drawn pose: the model shows the parts
         for body in bodies:
             q = m.pose(x, body)
             color = QColor(220, 40, 40) if body.name in hits else (
@@ -2018,11 +2066,18 @@ class MotionPanel(QWidget):
                 if g is None:
                     continue
                 for mesh, aff in _placements(g):
+                    if not mesh.vertices:
+                        continue
+                    V = _positions(mesh.vertices)            # read once
+                    if aff is not None:
+                        V = V @ aff[0].T + aff[1]
+                    index = {id(v): i for i, v in enumerate(mesh.vertices)}
                     for f in mesh.faces:
-                        P = np.array([_xyz(v) for v in f.vertices])
-                        if aff is not None:
-                            P = P @ aff[0].T + aff[1]
-                        faces.append(P)
+                        try:
+                            faces.append(V[[index[id(v)] for v in f.loop]])
+                        except KeyError:
+                            P = np.array([_xyz(v.position) for v in f.loop])
+                            faces.append(P if aff is None else P @ aff[0].T + aff[1])
             if faces:
                 out[b["name"]] = faces
         return out
@@ -2055,9 +2110,18 @@ class MotionPanel(QWidget):
         # (smallest gap, collisions) are those of its nearest step
         rows = self.report["steps"] if self.report else None
         if rows is None or len(rows) < 3:
-            rows = collide.validate(m, max(self.pas.value(), 21),
-                                    self.jeu.value() / 1000, poses=poses,
-                                    contacts=poses is not None and self._chocs())["steps"]
+            prog = self._busy(_T("Validation…"))
+            try:
+                rep = collide.validate(m, max(self.pas.value(), 21),
+                                       self.jeu.value() / 1000, poses=poses,
+                                       contacts=poses is not None and self._chocs(),
+                                       progress=prog)
+            finally:
+                if prog is not None:
+                    prog.close()
+            if rep is None:
+                return None, None                 # cancelled
+            rows = rep["steps"]
         sweep_rows = rows
         slow = max(float(ralenti or 1.0), 1.0)
         if poses is not None:                     # a simulation plays in real time
@@ -2197,9 +2261,14 @@ class MotionPanel(QWidget):
     def _draw_segments(self, painter, pts, color, width):
         px, py, ok = self.app.world_to_pixels(pts)
         painter.setPen(QPen(color, width))
-        for i in range(0, len(pts) - 1, 2):
-            if ok[i] and ok[i + 1]:
-                painter.drawLine(QPointF(px[i], py[i]), QPointF(px[i + 1], py[i + 1]))
+        px, py, ok = np.asarray(px, float), np.asarray(py, float), np.asarray(ok, bool)
+        n = len(pts) // 2 * 2
+        keep = ok[0:n:2] & ok[1:n:2]
+        if not keep.any():
+            return
+        from PySide6.QtCore import QLineF
+        a = np.stack([px[0:n:2], py[0:n:2], px[1:n:2], py[1:n:2]], axis=1)[keep]
+        painter.drawLines([QLineF(*r) for r in a.tolist()])     # one call
 
 
 def _draw_cog(painter, c, r):

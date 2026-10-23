@@ -31,6 +31,8 @@ EN = {
     "Simulation dynamique…": "Dynamic simulation…",
     "Simulation interrompue : ▶ ou « Valider » la relance.":
         "Simulation stopped: ▶ or « Validate » runs it again.",
+    "Validation…": "Validation…",
+    "Validation interrompue.": "Validation stopped.",
     "Nom": "Name",
     "Type": "Type",
     "Détail": "Detail",
