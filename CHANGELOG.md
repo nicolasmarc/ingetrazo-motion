@@ -47,10 +47,16 @@
   are updated all at once (same results to 1e-14; about 25 % faster).
 - **The panel scrolls instead of being squeezed** on a laptop screen (the
   last rows were cut in half at the bottom of the window).
-- **The list of parts and joints can be enlarged**: drag the handle under
-  the list to give it the room a mechanism with many joints needs.
+- **The list of parts and joints can be enlarged**: drag the grip under
+  the list (the panel then scrolls; double-click: back to the usual
+  height); the height is remembered. A splitter could only share the room
+  already there, which a laptop screen does not have.
 
 ### Added
+- **A click in the list shows the item in the model**: a part's groups
+  become IngeTrazo's selection (highlighted); a joint selects both its
+  parts and gets a ring at its point in the view; examples: the parts drawn
+  thicker. Only on a click, never when the list is refilled.
 - **« Copier dans le modèle »** (examples only): the chair, the sectional
   door, the bird and the double pendulum become real IngeTrazo groups
   (shaded, saved in the .igz) with their joints, motors, gap, dynamics and

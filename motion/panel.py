@@ -241,6 +241,47 @@ def group_segments(group):
     return np.vstack(out) if out else np.zeros((0, 2, 3))
 
 
+class _Grip(QWidget):
+    """A thin bar under the list: drag it to set the list's height."""
+
+    def __init__(self, target, done=None):
+        super().__init__()
+        self.target, self.done = target, done
+        self.setFixedHeight(9)
+        self.setCursor(Qt.SizeVerCursor)
+        self._y0 = self._h0 = None
+
+    def paintEvent(self, ev):
+        from PySide6.QtGui import QPainter
+        p = QPainter(self)
+        c = self.palette().mid().color()
+        p.setPen(QPen(c, 1))
+        w, y = self.width(), self.height() // 2
+        for dx in (-6, -2, 2, 6):                    # four dots in the middle
+            p.drawEllipse(QPointF(w / 2 + dx, y), 0.9, 0.9)
+        p.end()
+
+    def mousePressEvent(self, ev):
+        self._y0 = ev.globalPosition().y()
+        self._h0 = self.target.height()
+
+    def mouseMoveEvent(self, ev):
+        if self._y0 is None:
+            return
+        h = int(max(60, min(2000, self._h0 + ev.globalPosition().y() - self._y0)))
+        self.target.setFixedHeight(h)
+
+    def mouseReleaseEvent(self, ev):
+        if self._y0 is not None and self.done is not None:
+            self.done(self.target.height())
+        self._y0 = None
+
+    def mouseDoubleClickEvent(self, ev):            # back to the usual height
+        self.target.setFixedHeight(90)
+        if self.done is not None:
+            self.done(90)
+
+
 def _make_groups(parts):
     """IngeTrazo groups for ``excopy.parts``: [(body name, group)]."""
     from core.group import Group
@@ -369,23 +410,16 @@ class MotionPanel(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.itemSelectionChanged.connect(self._item_selected)
-        self.tree.setMinimumHeight(60)
-        # The list and everything under it share a splitter: drag the handle
-        # to give the list more room (a mechanism with many joints).
-        from PySide6.QtWidgets import QSplitter
-        self.split = QSplitter(Qt.Vertical)
-        self.split.setChildrenCollapsible(False)
-        self.split.setHandleWidth(8)
-        self.split.addWidget(self.tree)
-        lower = QWidget()
-        self.split.addWidget(lower)
-        self.split.setStretchFactor(0, 1)
-        self.split.setStretchFactor(1, 0)
-        self.split.handle(1).setToolTip(_T("Glisser pour agrandir la liste"))
-        self.split.handle(1).setCursor(Qt.SplitVCursor)
-        lay.addWidget(self.split, 1)
-        lay = QVBoxLayout(lower)                 # the rest goes under the handle
-        lay.setContentsMargins(0, 0, 0, 0)
+        # a click (not the list being refilled) shows the item in the model
+        self.tree.itemClicked.connect(lambda it, _c: self._highlight(it.data(0, Qt.UserRole)))
+        # The list keeps the height the user gives it with the grip under it
+        # (drag down: taller; the panel scrolls). A splitter could only share
+        # the room already there, none on a laptop screen.
+        self.tree.setFixedHeight(self._list_height())
+        lay.addWidget(self.tree)
+        self.grip = _Grip(self.tree, self._save_list_height)
+        self.grip.setToolTip(_T("Glisser pour agrandir la liste"))
+        lay.addWidget(self.grip)
 
         row = QHBoxLayout()
         self.delete_btn = QToolButton()
@@ -560,6 +594,21 @@ class MotionPanel(QWidget):
         s.setRange(-1e6, 1e6)
         s.setDecimals(1)
         return s
+
+    def _list_height(self):
+        try:
+            from PySide6.QtCore import QSettings
+            v = int(QSettings("IngeTrazo", "motion").value("hauteur_liste", 90))
+        except Exception:
+            v = 90
+        return max(60, min(v, 2000))
+
+    def _save_list_height(self, h):
+        try:
+            from PySide6.QtCore import QSettings
+            QSettings("IngeTrazo", "motion").setValue("hauteur_liste", int(h))
+        except Exception:
+            pass
 
     def say(self, text):
         self.status.setText(text)
@@ -999,8 +1048,48 @@ class MotionPanel(QWidget):
         else:
             self.k_label.setText(_T("Ressort"))
 
+    def _highlight(self, name):
+        """Show in the model what was clicked in the list: a part's groups
+        (or, for a joint, both its parts' groups) become IngeTrazo's
+        selection; a joint's point gets a ring in the view."""
+        self._hl_point, self._hl_bodies, self._hl_name = None, set(), name
+        if not name:
+            return
+        if self.source == "model":
+            bodies = {b["name"]: b for b in self.data["bodies"]}
+            rec = self._joint_record(name)
+            names = [rec["a"], rec["b"]] if rec is not None else ([name] if name in bodies else [])
+            if rec is not None and rec.get("point") is not None:
+                self._hl_point = np.asarray(rec["point"], float)
+            by = groups_by_uid(self._scene())
+            groups = [by[u] for n in names if n in bodies for u in bodies[n]["groups"] if u in by]
+            sel = getattr(self._scene(), "selection", None)
+            if sel is not None and groups:
+                try:
+                    sel.clear()
+                    sel.update(groups)
+                except Exception:
+                    pass
+            self._hl_bodies = set(names)
+        else:
+            m = self.mechanism()
+            j = next((j for j in m.joints if j.name == name), None)
+            if j is not None:
+                self._hl_bodies = {j.a.name, j.b.name}
+                if j.kind != "coupling":
+                    self._hl_point = np.asarray(j.point, float)
+            else:
+                self._hl_bodies = {name}
+        try:
+            self.app.viewport.update()
+        except Exception:
+            pass
+
     def _item_selected(self):
         name = self._chosen()
+        if getattr(self, "_hl_point", None) is not None or getattr(self, "_hl_bodies", None):
+            if name not in getattr(self, "_hl_bodies", set()) | {getattr(self, "_hl_name", None)}:
+                self._hl_point, self._hl_bodies = None, set()   # stale highlight
         self._show_material(name)
         if self.source != "model":
             j = next((j for j in self.mechanism().joints if j.name == name), None)
@@ -1824,11 +1913,13 @@ class MotionPanel(QWidget):
                 pts = _box_segments(body, q)
                 if not len(pts):
                     continue
-                self._draw_segments(painter, pts, color, 1.4)
+                self._draw_segments(painter, pts, color,
+                                    3.0 if body.name in getattr(self, "_hl_bodies", ()) else 1.4)
                 continue
             R = body.rot(q)
             w = body.center + q[:3] + (pts - body.center) @ R.T
-            self._draw_segments(painter, w, color, 1.6)
+            self._draw_segments(painter, w, color,
+                                3.0 if body.name in getattr(self, "_hl_bodies", ()) else 1.6)
         # joints
         pts = []
         for j in m.joints:
@@ -1843,6 +1934,23 @@ class MotionPanel(QWidget):
             for X, Y, o in zip(px, py, ok):
                 if o:
                     painter.drawEllipse(QPointF(X, Y), 3.5, 3.5)
+        # the joint picked in the list: a ring where it is
+        hp = getattr(self, "_hl_point", None)
+        if hp is not None:
+            jn = self._chosen()
+            mj = next((j for j in m.joints if j.name == jn and j.kind != "coupling"), None)
+            if mj is not None:
+                body = mj.b if not mj.b.fixed else mj.a
+                hp = body.world_point(m.pose(x, body), mj.point)
+            px, py, ok = self.app.world_to_pixels(np.array([hp]))
+            if ok[0]:
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(acc, 3.0))
+                painter.drawEllipse(QPointF(px[0], py[0]), 11, 11)
+                painter.setPen(QPen(acc, 1.5))
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    painter.drawLine(QPointF(px[0] + 14 * dx, py[0] + 14 * dy),
+                                     QPointF(px[0] + 20 * dx, py[0] + 20 * dy))
         # centres of gravity
         cg = [(b, b.world_point(m.pose(x, b), b.com)) for b in m.bodies
               if getattr(b, "com", None) is not None]

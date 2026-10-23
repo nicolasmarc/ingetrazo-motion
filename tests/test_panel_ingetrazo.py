@@ -715,3 +715,35 @@ def test_examples_copied_into_the_model_validate():
         panel.set_source(key)
         assert not panel.copy_btn.isVisibleTo(panel)
     _reset(win, panel)
+
+
+def test_clicking_the_list_shows_the_item_in_the_model():
+    """A part clicked in the list: its groups become the selection; a joint:
+    both its parts' groups, and a ring at its point. The grip sets the
+    list's height (the panel scrolls)."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    panel.set_source("chaise")
+    data = panel.copy_example(confirm=True)
+    scene = win.viewport.scene
+    by = {g.uid: g for g in scene.groups}
+    body = data["bodies"][1]
+    it = panel.tree.findItems(body["name"], Qt_MatchExactly())[0]
+    panel.tree.itemClicked.emit(it, 0)
+    assert set(scene.selection) == {by[u] for u in body["groups"]}
+    j = data["joints"][0]
+    it = panel.tree.findItems(j["name"], Qt_MatchExactly())[0]
+    panel.tree.setCurrentItem(it)
+    panel.tree.itemClicked.emit(it, 0)
+    parts = {b["name"]: b for b in data["bodies"]}
+    want = {by[u] for n in (j["a"], j["b"]) for u in parts[n]["groups"]}
+    assert set(scene.selection) == want
+    assert panel._hl_point is not None
+    h0 = panel.tree.height()
+    panel.tree.setFixedHeight(h0 + 150)          # what the grip does
+    assert panel.tree.height() == h0 + 150 or panel.tree.maximumHeight() == h0 + 150
+    panel.tree.setFixedHeight(h0)
+    _reset(win, panel)
