@@ -182,6 +182,71 @@ class Shaded:
             cols = None
         return (np.vstack(V) if V else np.zeros((0, 3))), idx, cols
 
+    def _prepared(self, it):
+        """Per item, once: the faces' first three corners, their corners
+        flattened, a tile flag and the face colours."""
+        key = id(it[2])
+        cache = self.__dict__.setdefault("_prep", {})
+        hit = cache.get(id(it))
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        idx = it[2]
+        keep = [i for i, f in enumerate(idx) if len(f) >= 3]
+        faces = [idx[i] for i in keep]
+        if faces:
+            f012 = np.array([f[:3] for f in faces], int)
+            lens = np.array([len(f) for f in faces], int)
+            flat = np.concatenate(faces).astype(int)
+            starts = np.concatenate([[0], np.cumsum(lens)[:-1]])
+            tile = np.array([f.dtype == TILE for f in faces], bool)
+        else:
+            f012 = np.zeros((0, 3), int)
+            lens = flat = starts = np.zeros(0, int)
+            tile = np.zeros(0, bool)
+        fc = it[4]
+        cols = [fc[i] if fc and fc[i] else None for i in keep]
+        prep = dict(f012=f012, lens=lens, flat=flat, starts=starts, tile=tile, cols=cols)
+        cache[id(it)] = (key, prep)
+        return prep
+
+    def faces(self, x, project, fwd, light, hits=(), bodies=None, need_front=False):
+        """Faces to paint, back to front: [(X, Y, colour (r, g, b), shade,
+        tile)], with ``project(W) -> (px, py[, in_front])``."""
+        out_d, out = [], []
+        for it in self.items:
+            body, V, idx, col, fcols = it
+            if bodies is not None and body.name not in bodies:
+                continue
+            pr = self._prepared(it)
+            if not len(pr["f012"]):
+                continue
+            W = self.world(body, x)
+            res = project(W)
+            px, py = res[0], res[1]
+            depth = W @ fwd
+            P0, P1, P2 = W[pr["f012"][:, 0]], W[pr["f012"][:, 1]], W[pr["f012"][:, 2]]
+            a, b = P1 - P0, P2 - P0
+            n = np.stack([a[:, 1] * b[:, 2] - a[:, 2] * b[:, 1],
+                          a[:, 2] * b[:, 0] - a[:, 0] * b[:, 2],
+                          a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]], axis=1)
+            nn = np.sqrt(np.einsum("ij,ij->i", n, n))
+            good = nn >= 1e-15
+            if need_front:
+                okf = np.asarray(res[2], bool)[pr["flat"]]
+                good &= np.logical_and.reduceat(okf, pr["starts"]) if len(okf) else good
+            dflat = depth[pr["flat"]]
+            dep = (np.maximum.reduceat(dflat, pr["starts"]) if body.fixed
+                   else np.add.reduceat(dflat, pr["starts"]) / pr["lens"])
+            shade = 0.55 + 0.45 * np.abs((n / np.where(good, nn, 1.0)[:, None]) @ light)
+            hit = body.name in hits
+            for i in np.nonzero(good)[0]:
+                f = idx_flat = pr["flat"][pr["starts"][i]: pr["starts"][i] + pr["lens"][i]]
+                base = HIT if hit else (pr["cols"][i] or col)
+                out_d.append(dep[i])
+                out.append((px[f], py[f], base, shade[i], pr["tile"][i]))
+        order = np.argsort(-np.asarray(out_d, float), kind="stable")
+        return [out[i] for i in order]
+
     def world(self, body, x):
         q = self.m.pose(x, body)
         V = [it for it in self.items if it[0] is body][0][1]
@@ -241,31 +306,8 @@ class Shaded:
                                ((c0[0] - ext, c0[1] + a, zmin), (c0[0] + ext, c0[1] + a, zmin))):
                     (x0, y0), (x1, y1) = to_px(P0), to_px(P1)
                     p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
-        polys = []
-        for body, V, idx, col, fcols in self.items:
-            W = self.world(body, x)
-            px, py = to_px(W)
-            depth = W @ fwd
-            hit = body.name in hits
-            for fi, f in enumerate(idx):
-                base = HIT if hit else (fcols[fi] if fcols and fcols[fi] else col)
-                Pf = W[f]
-                if len(f) < 3:
-                    continue
-                n = np.cross(Pf[1] - Pf[0], Pf[2] - Pf[0])
-                nn = np.linalg.norm(n)
-                if nn < 1e-15:
-                    continue
-                shade = 0.55 + 0.45 * abs((n / nn) @ light)
-                polys.append((float(depth[f].max() if body.fixed else depth[f].mean()), px[f], py[f], base, shade,
-                              f.dtype == TILE))
-        polys.sort(key=lambda t: -t[0])
-        for _, X, Yp, base, shade, tile in polys:
-            c = QColor(int(base.red() * shade), int(base.green() * shade),
-                       int(base.blue() * shade))
-            p.setPen(QPen(c if tile else c.darker(140), 0.7))
-            p.setBrush(QBrush(c))
-            p.drawPolygon(QPolygonF([QPointF(a, b) for a, b in zip(X, Yp)]))
+        polys = self.faces(x, to_px, fwd, light, hits)
+        _paint(p, polys, 255)
         for tr in traces:
             if len(tr) < 2:
                 continue
@@ -293,36 +335,30 @@ def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255):
     fwd = fwd / np.linalg.norm(fwd)
     light = -fwd + np.array([-0.3, -0.4, 0.8])
     light /= np.linalg.norm(light)
-    polys = []
-    for body, V, idx, col, fcols in shaded.items:
-        if bodies is not None and body.name not in bodies:
-            continue
-        W = shaded.world(body, x)
-        px, py, ok = project(W)
-        depth = W @ fwd
-        hit = body.name in hits
-        for fi, f in enumerate(idx):
-            base = HIT if hit else (fcols[fi] if fcols and fcols[fi] else col)
-            if len(f) < 3 or not np.all(ok[f]):
-                continue
-            Pf = W[f]
-            n = np.cross(Pf[1] - Pf[0], Pf[2] - Pf[0])
-            nn = np.linalg.norm(n)
-            if nn < 1e-15:
-                continue
-            shade = 0.55 + 0.45 * abs((n / nn) @ light)
-            polys.append((float(depth[f].max() if body.fixed else depth[f].mean()), px[f], py[f], base, shade,
-                          f.dtype == TILE))
-    polys.sort(key=lambda t: -t[0])
+    polys = shaded.faces(x, project, fwd, light, hits, bodies, need_front=True)
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
-    for _, X, Yp, base, shade, tile in polys:
-        c = QColor(int(base.red() * shade), int(base.green() * shade),
-                   int(base.blue() * shade), alpha)
-        p.setPen(QPen(c if tile else c.darker(140), 0.7))
-        p.setBrush(QBrush(c))
-        p.drawPolygon(QPolygonF([QPointF(a, b) for a, b in zip(X, Yp)]))
+    _paint(p, polys, alpha)
     p.restore()
+
+
+def _paint(p, polys, alpha):
+    """Paint the faces (already back to front). Pens and brushes are made
+    once per colour (the same rounding to whole colour levels as before)."""
+    tools = {}
+    last = None
+    for X, Yp, base, shade, tile in polys:
+        key = (int(base.red() * shade), int(base.green() * shade),
+               int(base.blue() * shade), bool(tile))
+        if key != last:
+            t = tools.get(key)
+            if t is None:
+                c = QColor(key[0], key[1], key[2], alpha)
+                t = tools[key] = (QPen(c if tile else c.darker(140), 0.7), QBrush(c))
+            p.setPen(t[0])
+            p.setBrush(t[1])
+            last = key
+        p.drawPolygon(QPolygonF(list(map(QPointF, X.tolist(), Yp.tolist()))))
 
 
 def compose(width, height, left, draw_right, title, info_lines, t,

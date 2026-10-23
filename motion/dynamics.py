@@ -98,8 +98,13 @@ def unwraps(V, near):
     out = V.copy()
     th = np.sqrt(np.einsum("ij,ij->i", V, V))
     small = th < 1e-12
-    for i in np.nonzero(small)[0]:
-        out[i] = _unwrap(V[i], near[i])
+    if small.any():                              # no turn: keep near's whole turns
+        nr = near[small]
+        ln = np.sqrt(np.einsum("ij,ij->i", nr, nr))
+        has = ln > 1e-12
+        k = np.round(ln / (2 * math.pi))
+        n = np.where(has[:, None], nr / np.where(has, ln, 1.0)[:, None], 0.0)
+        out[small] = np.where(has[:, None], n * (2 * math.pi * k)[:, None] + V[small], V[small])
     ok = ~small
     if not ok.any():
         return out
@@ -117,6 +122,24 @@ def unwraps(V, near):
     best = C[np.arange(len(C)), pick]
     out[ok] = np.where((pick == 0)[:, None], v, best)
     return out
+
+
+def _cross(a, b):
+    """np.cross for 3-vectors (or rows of them), without its general
+    overhead: the joints call it tens of thousands of times a second."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    if a.ndim == 1 and b.ndim == 1:
+        a0, a1, a2 = a
+        b0, b1, b2 = b
+        return np.array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
+    out = np.empty(np.broadcast_shapes(a.shape, b.shape))
+    out[..., 0] = a[..., 1] * b[..., 2] - a[..., 2] * b[..., 1]
+    out[..., 1] = a[..., 2] * b[..., 0] - a[..., 0] * b[..., 2]
+    out[..., 2] = a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+    return out
+
+
+_EYE3 = np.eye(3)
 
 
 def _skew(v):
@@ -251,10 +274,13 @@ class Dynamics:
         cog = a["center"] + q[:, :3] + np.einsum("nij,nj->ni", R, a["com"] - a["center"])
         return R, cog
 
-    def M_and_forces(self, x, u, t):
-        M = np.zeros((self.n, self.n))
+    def _blocks(self, x, u, t):
+        """(R, cog, Iw, F): the parts' rotations, centres of gravity, world
+        inertias (n, 3, 3) and the forces (weight, gyroscopic, joints,
+        contacts). The mass matrix is block diagonal: kept as blocks."""
         F = np.zeros(self.n)
         nb = len(self.bodies)
+        R = cog = Iw = None
         if nb:
             a = self._arrays()
             R, cog = self.poses(x)
@@ -263,17 +289,36 @@ class Dynamics:
             w = U[:, 3:]
             Fb = np.zeros((nb, 6))
             Fb[:, :3] = a["mass"][:, None] * self.g
-            Fb[:, 3:] = -np.cross(w, np.einsum("nij,nj->ni", Iw, w))
+            Iww = np.einsum("nij,nj->ni", Iw, w)
+            Fb[:, 3:] = -np.stack([w[:, 1] * Iww[:, 2] - w[:, 2] * Iww[:, 1],
+                                   w[:, 2] * Iww[:, 0] - w[:, 0] * Iww[:, 2],
+                                   w[:, 0] * Iww[:, 1] - w[:, 1] * Iww[:, 0]], axis=1)
             F += Fb.reshape(-1)
-            for k in range(nb):
+        if self.joints:
+            idx = {id(b): k for k, b in enumerate(self.bodies)}
+            for j in self.joints:
+                self._joint_efforts(j, x, u, t, F, idx)
+        if self.impacts is not None:
+            self.impacts.forces(x, u, F, R, cog)
+        return R, cog, Iw, F
+
+    def M_and_forces(self, x, u, t):
+        R, cog, Iw, F = self._blocks(x, u, t)
+        M = np.zeros((self.n, self.n))
+        if Iw is not None:
+            a = self._arrays()
+            for k in range(len(self.bodies)):
                 M[6 * k: 6 * k + 3, 6 * k: 6 * k + 3] = a["mass"][k] * np.eye(3)
                 M[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] = Iw[k]
-        idx = {id(b): k for k, b in enumerate(self.bodies)}
-        for j in self.joints:
-            self._joint_efforts(j, x, u, t, F, idx)
-        if self.impacts is not None:
-            self.impacts.forces(x, u, F, *(self.poses(x) if nb else (None, None)))
         return M, F
+
+    def _inverse_inertias(self, R):
+        """World inverse inertias R I^+ R^T (pinv: a thin rod has no inertia
+        about its own axis); the reference pseudo-inverse is taken once."""
+        a = self._arrays()
+        if "Iref_pinv" not in a:
+            a["Iref_pinv"] = np.linalg.pinv(a["Iref"], rcond=1e-12)
+        return R @ a["Iref_pinv"] @ np.transpose(R, (0, 2, 1))
 
     # -- efforts in the joints: torque motors, springs, dampers, stops --------
     def _stop(self, v, rate, lim, inertia):
@@ -311,7 +356,7 @@ class Dynamics:
             if k is None:
                 continue
             F[6 * k: 6 * k + 3] += s * f
-            F[6 * k + 3: 6 * k + 6] += s * np.cross(point - self.cog(x, body), f)
+            F[6 * k + 3: 6 * k + 6] += s * _cross(point - self.cog(x, body), f)
 
     def _joint_efforts(self, j, x, u, t, F, idx):
         if j.kind not in ("pivot", "slider", "cylindrical", "ball", "elastic", "screw"):
@@ -375,7 +420,7 @@ class Dynamics:
         k = idx.get(id(b))
         if k is None:
             return np.zeros(3)
-        return u[6 * k: 6 * k + 3] + np.cross(u[6 * k + 3: 6 * k + 6], p - self.cog(x, b))
+        return u[6 * k: 6 * k + 3] + _cross(u[6 * k + 3: 6 * k + 6], p - self.cog(x, b))
 
     # -- stepping ---------------------------------------------------------------
     def motor_rates(self, t, h=1e-5):
@@ -395,10 +440,11 @@ class Dynamics:
         by finite differences on their own parts only."""
         idx = {id(b): k for k, b in enumerate(self.bodies)}
         Cs, Gs, gs = [], [], []
+        piv = self._pivots_batch(x, u, idx)
         for j, n, drv in self._rows():
             Gb = np.zeros((n, self.n))
             if j.kind == "pivot" and not drv:
-                C, g = self._pivot_rows(j, x, u, Gb, idx)
+                C, g = self._pivot_fill(piv, j, Gb)
             else:
                 parts = j.bodies() if j.kind == "coupling" else [j.a, j.b]
                 ks = sorted({idx[id(o)] for o in parts if id(o) in idx})
@@ -428,6 +474,86 @@ class Dynamics:
             return np.zeros(0), np.zeros((0, self.n)), np.zeros(0)
         return np.concatenate(Cs), np.vstack(Gs), np.concatenate(gs)
 
+    def _pivots_batch(self, x, u, idx):
+        """Every pivot's rows at once (same equations as :meth:`_pivot_rows`):
+        {id(joint): (C, gamma, [(rows, column, 3x3 block)])}."""
+        st = getattr(self, "_piv_static", None)
+        if st is None:
+            js = [j for j, n, drv in self._rows() if j.kind == "pivot" and not drv]
+
+            def side(bodies):
+                k = np.array([idx.get(id(b), -1) for b in bodies], int)
+                mov = k >= 0
+                rows = np.array([b.index for b, m_ in zip(bodies, mov) if m_], int)
+                cen = np.array([b.center for b in bodies], float).reshape(-1, 3)
+                com = np.array([self.com[id(b)] if id(b) in self.com else b.center
+                                for b in bodies], float).reshape(-1, 3)
+                return k, mov, rows, cen, com
+            st = self._piv_static = (js, side([j.a for j in js]), side([j.b for j in js]),
+                                     np.array([j.point for j in js], float).reshape(-1, 3),
+                                     np.array([j.axis for j in js], float).reshape(-1, 3))
+        js, sa, sb, P, A = st
+        if not js:
+            return {}
+        X = np.asarray(x, float).reshape(-1, 6)
+        u = np.asarray(u, float)
+        U = u.reshape(-1, 6) if len(u) else np.zeros((0, 6))
+        nj = len(js)
+
+        def pose(sd):
+            k, mov, rows, cen, com = sd
+            R = np.repeat(_EYE3[None], nj, axis=0)
+            t = np.zeros((nj, 3))
+            w = np.zeros((nj, 3))
+            if len(rows):
+                q = X[rows]
+                R[mov] = rotations(q[:, 3:])
+                t[mov] = q[:, :3]
+                w[mov] = U[k[mov], 3:]
+            return k, mov, R, t, cen, w, com
+        ka, ma, Ra, ta, ca, wa, coma = pose(sa)
+        kb, mb, Rb, tb, cb, wb, comb = pose(sb)
+        mv = lambda R, v: np.einsum("nij,nj->ni", R, v)
+        pa = ca + ta + mv(Ra, P - ca)          # world_point on each side
+        pb = cb + tb + mv(Rb, P - cb)
+        ua, ub = mv(Ra, A), mv(Rb, A)
+        cga = ca + ta + mv(Ra, coma - ca)
+        cgb = cb + tb + mv(Rb, comb - cb)
+        ra = np.where(ma[:, None], pa - cga, 0.0)
+        rb = np.where(mb[:, None], pb - cgb, 0.0)
+        C = np.hstack([pa - pb, _cross(ua, ub)])
+        gam_p = _cross(wa, _cross(wa, ra)) - _cross(wb, _cross(wb, rb))
+        dua, dub = _cross(wa, ua), _cross(wb, ub)
+        gam_a = (_cross(_cross(wa, dua), ub) + 2 * _cross(dua, dub)
+                 + _cross(ua, _cross(wb, dub)))
+        G = np.hstack([gam_p, gam_a])
+        Sk = lambda v: np.stack([np.stack([np.zeros(len(v)), -v[:, 2], v[:, 1]], 1),
+                                 np.stack([v[:, 2], np.zeros(len(v)), -v[:, 0]], 1),
+                                 np.stack([-v[:, 1], v[:, 0], np.zeros(len(v))], 1)], 1)
+        Sua, Sub = Sk(ua), Sk(ub)
+        Ba, Bb = Sub @ Sua, -(Sua @ Sub)
+        Sra, Srb = Sk(ra), Sk(rb)
+        out = {}
+        for i, j in enumerate(js):
+            ent = []
+            if ma[i]:
+                k = ka[i]
+                ent += [(slice(0, 3), 6 * k, _EYE3), (slice(0, 3), 6 * k + 3, -Sra[i]),
+                        (slice(3, 6), 6 * k + 3, Ba[i])]
+            if mb[i]:
+                k = kb[i]
+                ent += [(slice(0, 3), 6 * k, -_EYE3), (slice(0, 3), 6 * k + 3, Srb[i]),
+                        (slice(3, 6), 6 * k + 3, Bb[i])]
+            out[id(j)] = (C[i], G[i], ent)
+        return out
+
+    @staticmethod
+    def _pivot_fill(piv, j, Gb):
+        C, g, ent = piv[id(j)]
+        for rows, col, block in ent:
+            Gb[rows, col: col + 3] = block
+        return C, g
+
     def _pivot_rows(self, j, x, u, Gb, idx):
         """Pivot: same point (3 rows) and same axis (ua x ub, 3 rows)."""
         out_p, out_a, gam_p, gam_a = 0, 0, np.zeros(3), np.zeros(3)
@@ -439,47 +565,54 @@ class Dynamics:
             k = idx.get(id(body))
             oms.append(u[6 * k + 3: 6 * k + 6] if k is not None else np.zeros(3))
         (pa, pb), (ua, ub), (wa, wb) = pts, axes, oms
-        C = np.concatenate([pa - pb, np.cross(ua, ub)])
+        C = np.concatenate([pa - pb, _cross(ua, ub)])
         for s, body, p, w in ((1.0, j.a, pa, wa), (-1.0, j.b, pb, wb)):
             k = idx.get(id(body))
             r = p - (self.cog(x, body) if k is not None else p)
             if k is not None:
-                Gb[0:3, 6 * k: 6 * k + 3] = s * np.eye(3)
+                Gb[0:3, 6 * k: 6 * k + 3] = s * _EYE3
                 Gb[0:3, 6 * k + 3: 6 * k + 6] = -s * _skew(r)
-            gam_p += s * np.cross(w, np.cross(w, r))
+            gam_p += s * _cross(w, _cross(w, r))
         ka, kb = idx.get(id(j.a)), idx.get(id(j.b))
         if ka is not None:
             Gb[3:6, 6 * ka + 3: 6 * ka + 6] = _skew(ub) @ _skew(ua)
         if kb is not None:
             Gb[3:6, 6 * kb + 3: 6 * kb + 6] = -_skew(ua) @ _skew(ub)
-        dua, dub = np.cross(wa, ua), np.cross(wb, ub)
-        gam_a = (np.cross(np.cross(wa, dua), ub) + 2 * np.cross(dua, dub)
-                 + np.cross(ua, np.cross(wb, dub)))
+        dua, dub = _cross(wa, ua), _cross(wb, ub)
+        gam_a = (_cross(_cross(wa, dua), ub) + 2 * _cross(dua, dub)
+                 + _cross(ua, _cross(wb, dub)))
         return C, np.concatenate([gam_p, gam_a])
 
     def accelerations(self, x, u, t):
         """(a, lambda, G): accelerations (cog, angular) and the joint
         multipliers, from M a + G^T nu = F, G a = rhs, solved through
         (G M^-1 G^T) nu (least squares: over-constrained loops are fine)."""
-        M, F = self.M_and_forces(x, u, t)
+        R, cog, Iw, F = self._blocks(x, u, t)
         C, Gm, gamma = self._kin(x, u, t)
-        dC = Gm @ u - self._motor_speeds(t)
-        rhs_c = -gamma - 2 * self.k * dC - self.k ** 2 * C + self.motor_rates(t)
-        Mi = np.zeros_like(M)
         nb = len(self.bodies)
         if nb:
-            # pinv: a thin rod has no inertia about its own axis
-            blocks = np.array([M[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] for k in range(nb)])
-            inv = np.linalg.pinv(blocks, rcond=1e-12)
-            for k in range(nb):
-                Mi[6 * k: 6 * k + 3, 6 * k: 6 * k + 3] = np.eye(3) / M[6 * k, 6 * k]
-                Mi[6 * k + 3: 6 * k + 6, 6 * k + 3: 6 * k + 6] = inv[k]
+            mass = self._arrays()["mass"]
+            Ii = self._inverse_inertias(R)
+
+            def Mi(V):                         # M^-1 V, block by block
+                V = np.asarray(V, float)
+                W = V.reshape((nb, 6) + V.shape[1:])
+                out = np.empty_like(W)
+                out[:, :3] = W[:, :3] / mass.reshape((nb, 1) + (1,) * (V.ndim - 1))
+                out[:, 3:] = np.einsum("nij,nj...->ni...", Ii, W[:, 3:])
+                return out.reshape(V.shape)
+        else:
+            Mi = lambda V: np.zeros_like(np.asarray(V, float))
         if Gm.shape[0]:
-            A = Gm @ Mi @ Gm.T
-            nu = np.linalg.lstsq(A, Gm @ Mi @ F - rhs_c, rcond=1e-12)[0]
+            dC = Gm @ u - self._motor_speeds(t)
+            rhs_c = -gamma - 2 * self.k * dC - self.k ** 2 * C + self.motor_rates(t)
+            MiGt = Mi(Gm.T)
+            A = Gm @ MiGt
+            nu = np.linalg.lstsq(A, Gm @ Mi(F) - rhs_c, rcond=1e-12)[0]
+            a = Mi(F) - MiGt @ nu
         else:
             nu = np.zeros(0)
-        a = Mi @ (F - Gm.T @ nu)
+            a = Mi(F)
         return a, -nu, Gm
 
     def _motor_speeds(self, t, h=1e-5):
@@ -501,8 +634,20 @@ class Dynamics:
 
     def step(self, x, u, t, dt):
         """Runge-Kutta 4 on (pose, velocities); the pose moves in the cog
-        coordinates (``displace``). Exact under constant forces."""
+        coordinates (``displace``). Exact under constant forces.
+        ``self.method = "symplectic"``: semi-implicit Euler (velocities, then
+        the pose with the new ones), one evaluation a step — for stiff
+        contacts at a small step, where it tracks a fine reference closely;
+        ``"rk2"``: the midpoint rule."""
         a1, lam, _ = self.accelerations(x, u, t)
+        method = getattr(self, "method", "rk4")
+        if method == "symplectic":             # semi-implicit Euler: one evaluation
+            u_new = u + dt * a1
+            return self.displace(x, dt * u_new), u_new, a1, lam
+        if method == "rk2":                     # midpoint: two evaluations
+            um = u + 0.5 * dt * a1
+            am = self.accelerations(self.displace(x, 0.5 * dt * u), um, t + 0.5 * dt)[0]
+            return self.displace(x, dt * um), u + dt * am, a1, lam
         u2 = u + 0.5 * dt * a1
         a2 = self.accelerations(self.displace(x, 0.5 * dt * u), u2, t + 0.5 * dt)[0]
         u3 = u + 0.5 * dt * a2

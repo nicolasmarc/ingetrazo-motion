@@ -9,6 +9,18 @@
   drawn (wait cursor, « Calcul des masses… »), and the faces are read 3.5×
   faster (triangles and convex quads indexed directly; holes and other
   faces still go through IngeTrazo's triangulation, same area and volume).
+- **Dynamics with shocks about 4× faster, and closer to the truth**: shocks
+  are integrated by semi-implicit Euler at 0.1 ms (one evaluation a step)
+  instead of Runge-Kutta 4 at 0.2 ms (four). On Newton's cradle, two much
+  finer references (RK4 and semi-implicit at 0.1 ms) agree with each other
+  and with the new setting at the second shock, where the old one was off
+  (ball 1 at 41 mm/s instead of 681). The mass matrix is kept as blocks
+  (no dense solve), the pivots' rows are computed all at once, rotations
+  written out. Measured here: cradle 4 s in about 50 s (was about 4 min),
+  dominoes 3 s in about 40 s (about 3 min).
+- **Video export about 4.7× faster per frame** (the chain: 2.2 s → 0.46 s):
+  faces shaded in one go per part, pens and brushes made once per colour;
+  the frames are identical to the pixel.
 - **A long dynamic run no longer freezes the window** (dominoes with
   shocks: 15 000 steps of 0.2 ms): a progress window with « Annuler »;
   cancelled, it waits for ▶ or « Valider » to run again. The parts' turns

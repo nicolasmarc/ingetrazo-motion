@@ -1217,14 +1217,19 @@ class MotionPanel(QWidget):
                     motors[name] = ("couple", (lambda t, v=v: v))
                 sim = dict(duree=T, dt=0.002, params=dict(motors=motors))
                 if ms.get("chocs"):            # stiff contacts: a finer step
-                    sim["dt"] = 2e-4
-                    sim["params"]["contacts"] = dict(dt=2e-4)
+                    # semi-implicit Euler at 0.1 ms: one evaluation a step,
+                    # and it follows a much finer reference better than
+                    # Runge-Kutta at 0.2 ms did (Newton's cradle, 2nd shock)
+                    sim["dt"] = 1e-4
+                    sim["method"] = "symplectic"
+                    sim["params"]["contacts"] = dict(dt=1e-4)
         if not sim:
             return None
         if getattr(self, "_sim_cache", (None,))[0] is not self.mech:
             from . import dynamics
             m = self.mechanism()
             dyn = dynamics.Dynamics(m, **sim.get("params", {}))
+            dyn.method = sim.get("method", "rk4")
             dt = sim.get("dt", 0.002)
             every = max(1, int(round(1.0 / (30 * dt))))
             steps = int(round(sim["duree"] / dt))

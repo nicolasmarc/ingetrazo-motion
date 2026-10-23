@@ -8,18 +8,24 @@ Lengths are in whatever unit the model uses (IngeTrazo: metres or mm),
 angles in radians.
 """
 from dataclasses import dataclass, field
+import math
 import numpy as np
 
 
 def rotation(w):
-    """Rodrigues: rotation matrix of rotation vector ``w``."""
-    th = float(np.linalg.norm(w))
+    """Rodrigues: rotation matrix of rotation vector ``w`` (written out:
+    the solvers call it for every part at every step)."""
+    x, y, z = float(w[0]), float(w[1]), float(w[2])
+    th = math.sqrt(x * x + y * y + z * z)
     if th < 1e-12:
-        K = _skew(w)
-        return np.eye(3) + K + 0.5 * K @ K
-    k = np.asarray(w, float) / th
-    K = _skew(k)
-    return np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * K @ K
+        s, c = 1.0, 0.5
+    else:
+        x, y, z = x / th, y / th, z / th
+        s, c = math.sin(th), 1.0 - math.cos(th)
+    xx, yy, zz, xy, xz, yz = x * x, y * y, z * z, x * y, x * z, y * z
+    return np.array([[1.0 - c * (yy + zz), -s * z + c * xy, s * y + c * xz],
+                     [s * z + c * xy, 1.0 - c * (xx + zz), -s * x + c * yz],
+                     [-s * y + c * xz, s * x + c * yz, 1.0 - c * (xx + yy)]])
 
 
 def rotations(W):

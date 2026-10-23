@@ -63,6 +63,14 @@ def _zeta(e):
     return -le / np.sqrt(math.pi ** 2 + le * le)
 
 
+def _cross(a, b):
+    """np.cross of (n, 3) rows, without its general-purpose overhead."""
+    out = np.empty(np.broadcast_shapes(a.shape, b.shape))
+    out[..., 0] = a[..., 1] * b[..., 2] - a[..., 2] * b[..., 1]
+    out[..., 1] = a[..., 2] * b[..., 0] - a[..., 0] * b[..., 2]
+    out[..., 2] = a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+    return out
+
 class Impacts:
     """Contact forces between the parts of ``dyn.m`` (a :class:`Dynamics`).
 
@@ -133,15 +141,17 @@ class Impacts:
         mv = self.box_k >= 0
         if mv.any():
             k = self.box_k[mv]
-            bodies = self.dyn.bodies
-            idx = np.array([b.index for b in bodies], int)[k]
+            if getattr(self, "_moving", None) is None:      # fixed for the run
+                bodies = self.dyn.bodies
+                self._moving = (np.array([b.index for b in bodies], int)[k],
+                                np.array([b.center for b in bodies], float).reshape(-1, 3)[k])
+            idx, c0 = self._moving
             q = np.asarray(x, float).reshape(-1, 6)[idx]
-            c0 = np.array([b.center for b in bodies], float).reshape(-1, 3)[k]
             t = c0 + q[:, :3]
             Rk = Rb[k]
             C[mv] = t + np.einsum("nij,nj->ni", Rk, self.box_c[mv] - c0)
             R[mv] = Rk @ self.box_R[mv]
-            P[mv] = t[:, None, :] + np.einsum("nij,nsj->nsi", Rk, self.box_pts[mv] - c0[:, None, :])
+            P[mv] = t[:, None, :] + (self.box_pts[mv] - c0[:, None, :]) @ np.transpose(Rk, (0, 2, 1))
         return C, R, P
 
     def forces(self, x, u, F, Rb=None, cogs=None):
@@ -172,7 +182,7 @@ class Impacts:
         if not len(ia):
             return None
         pts = P[ia]                                   # (n, s, 3)
-        loc = np.einsum("nij,nsi->nsj", R[ib], pts - C[ib][:, None, :])
+        loc = (pts - C[ib][:, None, :]) @ R[ib]
         h = self.box_h[ib][:, None, :]
         depth = h - np.abs(loc)
         inside = np.all(depth > 0, axis=2)
@@ -189,8 +199,8 @@ class Impacts:
         p = pts[pn, ps]
         # stiffness shared among the points of one box pair
         pair = a_box * self.nb + b_box
-        _, inv, cnt = np.unique(pair, return_inverse=True, return_counts=True)
-        return a_box, b_box, p, n, d, cnt[inv].astype(float), np.zeros(len(d), bool)
+        cnt = np.bincount(pair, minlength=self.nb * self.nb)
+        return a_box, b_box, p, n, d, cnt[pair].astype(float), np.zeros(len(d), bool)
 
     def _balls(self, C, R, ov):
         """A ball (a sphere group) against another ball or a box: exact, one
@@ -252,7 +262,7 @@ class Impacts:
             ok = k >= 0
             kk = np.where(ok, k, 0)
             r = np.where(ok[:, None], p - cogs[kk], 0.0) if nbod else np.zeros_like(p)
-            v = (U[kk, :3] + np.cross(U[kk, 3:], r)) if nbod else np.zeros_like(p)
+            v = (U[kk, :3] + _cross(U[kk, 3:], r)) if nbod else np.zeros_like(p)
             return np.where(ok[:, None], v, 0.0), r
 
         va, ra = vel(ka)
@@ -283,8 +293,8 @@ class Impacts:
         f = fn[:, None] * n - ft_mag[:, None] * tdir    # on part a
         G = np.zeros((max(nbod, 1), 6))
         oa, ob = ka >= 0, kb >= 0
-        np.add.at(G, ka[oa], np.hstack([f[oa], np.cross(ra[oa], f[oa])]))
-        np.add.at(G, kb[ob], -np.hstack([f[ob], np.cross(rb[ob], f[ob])]))
+        np.add.at(G, ka[oa], np.hstack([f[oa], _cross(ra[oa], f[oa])]))
+        np.add.at(G, kb[ob], -np.hstack([f[ob], _cross(rb[ob], f[ob])]))
         F[:6 * nbod] += G[:nbod].reshape(-1)
         self.count = len(f)
         self.deepest = max(self.deepest, float(d.max()))
