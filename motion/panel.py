@@ -555,8 +555,33 @@ class MotionPanel(QWidget):
             pass
 
     # ---- data ---------------------------------------------------------------------
+    def _doc_key(self):
+        """What the mechanism depends on: the scene's version (geometry) and
+        the document data. None while Motion itself hides the moving parts
+        for a picture (the version then takes a value of its own)."""
+        import json
+        sc = self._scene()
+        ver = getattr(sc, "version", None)
+        if getattr(self, "_real_version", None) is not None or (isinstance(ver, int) and ver < 0):
+            return None
+        try:
+            data = json.dumps(self.app.document_data(default=None), sort_keys=True)
+        except Exception:
+            data = None
+        return (ver, data, self.source)
+
     def reload(self):
-        """The document changed (edit, undo, New, Open)."""
+        """The document changed (edit, undo, New, Open). IngeTrazo also sends
+        this signal when it only redraws (a version change seen at paint
+        time, e.g. while a video is rendered): then nothing is rebuilt."""
+        if getattr(self, "_quiet", 0):
+            return
+        key = self._doc_key()
+        if key is None:
+            return
+        if key == getattr(self, "_last_key", None) and self.mech is not None:
+            return
+        self._last_key = key
         if self.source == "model":
             self.data = doc.normalized(self.app.document_data(default=None))
             self.jeu.blockSignals(True)
@@ -622,6 +647,9 @@ class MotionPanel(QWidget):
                 segs = [s for s in segs if len(s)]
                 if segs:
                     self.body_segments[b["name"]] = np.vstack(segs)
+            if getattr(self, "_masses_pending", False):     # built before the timer:
+                self._masses_pending = False               # show them now
+                self._show_masses(getattr(self.mech, "masses", {}) or {})
         if self.source != "model":
             self.body_segments = {}
         return self.mech
@@ -876,6 +904,10 @@ class MotionPanel(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
         self.say("")
+        self._show_masses(masses)
+
+    def _show_masses(self, masses):
+        """Masses in the list and under the material, once they are known."""
         for i in range(self.tree.topLevelItemCount()):
             it = self.tree.topLevelItem(i)
             txt = self._mass_text(masses.get(it.data(0, Qt.UserRole)))
@@ -1225,6 +1257,8 @@ class MotionPanel(QWidget):
                     sim["params"]["contacts"] = dict(dt=1e-4)
         if not sim:
             return None
+        if getattr(self, "_sim_running", False):
+            return None                        # asked again while it runs
         if getattr(self, "_sim_cache", (None,))[0] is not self.mech:
             from . import dynamics
             m = self.mechanism()
@@ -1234,9 +1268,11 @@ class MotionPanel(QWidget):
             every = max(1, int(round(1.0 / (30 * dt))))
             steps = int(round(sim["duree"] / dt))
             prog = self._sim_progress(steps)
+            self._sim_running = True
             try:
                 rows = dyn.run(sim["duree"], dt=dt, every=every, progress=prog)
             finally:
+                self._sim_running = False
                 if prog is not None:
                     prog.close()
             if rows is None:                   # cancelled: not again until asked
@@ -1920,6 +1956,7 @@ class MotionPanel(QWidget):
         render = getattr(vp, "render_image", None)
         hide = [g for g in self._moving_groups() if not g.hidden] if shaded is not None else []
         if callable(render):
+            self._quiet = getattr(self, "_quiet", 0) + 1
             try:
                 for g in hide:
                     g.hidden = True
@@ -1933,6 +1970,7 @@ class MotionPanel(QWidget):
                     g.hidden = False
                 if hide:
                     self._refresh_view_cache(False)
+                self._quiet -= 1
         lw, lh = max(vp.width(), 1), max(vp.height(), 1)
         rendered = img is not None and not img.isNull()
         if not rendered:                                 # no GL here
@@ -2006,6 +2044,9 @@ class MotionPanel(QWidget):
         and back when ``aller_retour``. A dynamic simulation plays in real
         time, or ``ralenti`` times slower (its poses interpolated)."""
         from . import render, video
+        if self.play_btn.isChecked():          # no playing behind the frames
+            self.play_btn.setChecked(False)
+        self.timer.stop()
         m = self.mechanism()
         poses = self.simulation()
         if m.driver is None and poses is None:

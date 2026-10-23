@@ -3,6 +3,15 @@
 ## 0.8.0 — unreleased
 
 ### Fixed
+- **Video export of a dynamic model no longer re-runs the simulation at
+  every frame** (Newton's cradle: two progress windows taking turns, no
+  end). Hiding the moving parts for the IngeTrazo half makes IngeTrazo
+  resync at paint time and send its « document changed » signal; Motion
+  took it for an edit and rebuilt everything. A change is now one of the
+  scene's geometry or of the document data; a redraw alone rebuilds
+  nothing. Playing stops while the frames are rendered, and a simulation is
+  never started inside another one. Tested with that signal sent at every
+  frame: 1 run instead of one per frame, and a real edit still re-runs it.
 - **Opening a big model no longer freezes the window** (the spider, 133
   parts, ~300 000 faces): the masses were computed inside IngeTrazo's
   document-changed signal. They are now computed right after the window is
