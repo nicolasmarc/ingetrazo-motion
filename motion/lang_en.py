@@ -13,6 +13,7 @@ EN = {
         "Scans the parts (the selection, else the whole model) and proposes joints: shafts in "
         "bores (pivots), flat contacts (sliders), gears. Nothing is applied until you confirm.",
     "Calcul des masses…": "Computing masses…",
+    "Glisser pour agrandir la liste": "Drag to enlarge the list",
     "Nom": "Name",
     "Type": "Type",
     "Détail": "Detail",

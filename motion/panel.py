@@ -330,7 +330,23 @@ class MotionPanel(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.itemSelectionChanged.connect(self._item_selected)
-        lay.addWidget(self.tree, 1)
+        self.tree.setMinimumHeight(60)
+        # The list and everything under it share a splitter: drag the handle
+        # to give the list more room (a mechanism with many joints).
+        from PySide6.QtWidgets import QSplitter
+        self.split = QSplitter(Qt.Vertical)
+        self.split.setChildrenCollapsible(False)
+        self.split.setHandleWidth(8)
+        self.split.addWidget(self.tree)
+        lower = QWidget()
+        self.split.addWidget(lower)
+        self.split.setStretchFactor(0, 1)
+        self.split.setStretchFactor(1, 0)
+        self.split.handle(1).setToolTip(_T("Glisser pour agrandir la liste"))
+        self.split.handle(1).setCursor(Qt.SplitVCursor)
+        lay.addWidget(self.split, 1)
+        lay = QVBoxLayout(lower)                 # the rest goes under the handle
+        lay.setContentsMargins(0, 0, 0, 0)
 
         row = QHBoxLayout()
         self.delete_btn = QToolButton()

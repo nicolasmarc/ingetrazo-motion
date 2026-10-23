@@ -9,6 +9,8 @@
   drawn (wait cursor, « Calcul des masses… »), and the faces are read 3.5×
   faster (triangles and convex quads indexed directly; holes and other
   faces still go through IngeTrazo's triangulation, same area and volume).
+- **The list of parts and joints can be enlarged**: drag the handle under
+  the list to give it the room a mechanism with many joints needs.
 
 ### Added
 - **Shocks between free parts** (`motion.impacts`, « Chocs » next to
