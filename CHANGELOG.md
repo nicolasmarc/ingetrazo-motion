@@ -3,6 +3,10 @@
 ## 0.8.0 — unreleased
 
 ### Fixed
+- **No grey box around the frame while playing** (the spider: a big cube
+  around the shell): the lighter overlay keeps no outline for fixed parts,
+  and the drawing then fell back on their box; fixed parts of the model are
+  now never drawn over it.
 - **Collisions on the real surfaces in IngeTrazo's Windows build**: it has
   no scipy, so the surface checks were off and Motion fell back to the
   parts' bounding boxes (the spider: the shell's box swallowing the legs,

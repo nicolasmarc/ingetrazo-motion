@@ -1901,6 +1901,8 @@ class MotionPanel(QWidget):
         if self.source == "model" and not np.any(x):
             bodies = []                          # drawn pose: the model shows the parts
         for body in bodies:
+            if body.fixed and self.source == "model":
+                continue                         # the model shows the frame
             q = m.pose(x, body)
             color = QColor(220, 40, 40) if body.name in hits else (
                 QColor(140, 140, 140) if body.fixed else acc)

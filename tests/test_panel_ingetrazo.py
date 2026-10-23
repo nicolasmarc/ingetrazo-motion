@@ -747,3 +747,30 @@ def test_clicking_the_list_shows_the_item_in_the_model():
     assert panel.tree.height() == h0 + 150 or panel.tree.maximumHeight() == h0 + 150
     panel.tree.setFixedHeight(h0)
     _reset(win, panel)
+
+
+def test_the_frame_is_never_drawn_over_the_model():
+    """The overlay leaves the fixed parts to IngeTrazo (no box around them),
+    the drawn pose included or not."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    panel.set_source("chaise")
+    panel.copy_example(confirm=True)
+    m = panel.mechanism()
+    drawn = []
+    panel._draw_segments = lambda p, pts, c, w: drawn.append(len(pts))
+    from PySide6.QtGui import QImage, QPainter
+    img = QImage(400, 300, QImage.Format_ARGB32)
+    panel._force_paint = True
+    panel._scrub(500)
+    p = QPainter(img)
+    panel.paint(win.viewport, p)
+    p.end()
+    panel._force_paint = False
+    del panel._draw_segments
+    n_fixed = sum(len(v) for k, v in panel.body_segments.items() if k == m.ground.name)
+    assert n_fixed == 0 and len(drawn) == len(m.bodies)
+    _reset(win, panel)
