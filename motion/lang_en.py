@@ -301,8 +301,13 @@ EN = {
         "Cylindrical — the TWO parts (a shaft in its bore) or ONE edge on the axis: the part turns and slides.",
     "Rotule (Ball) — sélectionner les DEUX pièces (une sphère dans une sphère creuse), ou des arêtes autour du centre (un petit cercle) : toutes les rotations.":
         "Ball joint — select the TWO parts (a ball in a socket), or edges around the centre (a small circle): every rotation.",
-    "Encastrement (Lock) — des arêtes au point de liaison : les deux pièces n'en font qu'une.":
-        "Lock — edges at the joint point: the two parts move as one.",
+    "Encastrement (Lock) — les DEUX pièces, ou des arêtes au point de liaison : les deux pièces "
+    "n'en font qu'une.":
+        "Lock — the TWO parts, or edges at the joint point: the two parts move as one.",
+    "sélectionner les groupes de DEUX pièces (ou des arêtes au point de liaison)":
+        "select the groups of TWO parts (or edges at the joint point)",
+    "{name} : {a} ↔ {b} — les deux pièces n'en font plus qu'une.":
+        "{name}: {a} ↔ {b} — the two parts now move as one.",
     "Liaison élastique (Elastic) — des arêtes au point de liaison : un silentbloc, rigide en "
     "cinématique, ressorts et amortisseurs en dynamique.":
         "Elastic joint — edges at the joint point: a rubber mount, rigid in kinematics, "

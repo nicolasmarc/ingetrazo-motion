@@ -27,6 +27,11 @@
   Rotule accept two selected parts instead of an edge. On the spider, 9 of
   its 14 pivots / ball joints are found with the same axis; where the
   shapes hold no shaft in a bore, Motion says so.
+- **The part clicked in the list stands out in the model**: its edges
+  drawn thick over the model, fixed parts included (IngeTrazo's selection
+  box alone was lost in a big model).
+- **Encastrement from two selected parts**: no edge needed (« Liaison » →
+  Encastrement, or « Plus… » → Encastrement); the point goes where they meet.
 - **Ball joints in the automatic detection** (a ball in a spherical socket).
 
 ### Fixed

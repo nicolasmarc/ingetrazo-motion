@@ -84,6 +84,7 @@ def _reset(win, panel):
     scene = win.viewport.scene
     scene.groups.clear()
     scene.selection.clear()
+    panel._highlight(None)
     panel.set_source("model")
     panel.app.set_document_data(None)
 
@@ -753,6 +754,41 @@ def test_clicking_the_list_shows_the_item_in_the_model():
     _reset(win, panel)
 
 
+def test_a_part_clicked_in_the_list_stands_out_in_the_model():
+    """At the drawn pose the overlay draws nothing, except the part clicked
+    in the list (fixed or moving): its edges, thick, over the model."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    panel.set_source("chaise")
+    data = panel.copy_example(confirm=True)
+    from PySide6.QtGui import QImage, QPainter
+
+    def drawn_now():
+        out = []
+        panel._draw_segments = lambda p, pts, c, w: out.append((len(pts), w))
+        img = QImage(400, 300, QImage.Format_ARGB32)
+        panel._force_paint = True
+        p = QPainter(img)
+        panel.paint(win.viewport, p)
+        p.end()
+        panel._force_paint = False
+        del panel._draw_segments
+        return out
+
+    panel._scrub(0)
+    panel.x = np.zeros(panel.mechanism().n)
+    assert drawn_now() == []                         # nothing clicked: the model alone
+    for b in (data["bodies"][0], data["bodies"][1]):  # the frame, then a moving part
+        it = panel.tree.findItems(b["name"], Qt_MatchExactly())[0]
+        panel.tree.itemClicked.emit(it, 0)
+        out = drawn_now()
+        assert len(out) == 1 and out[0][0] > 0 and out[0][1] == 3.0, (b["name"], out)
+    _reset(win, panel)
+
+
 def test_the_frame_is_never_drawn_over_the_model():
     """The overlay leaves the fixed parts to IngeTrazo (no box around them),
     the drawn pose included or not."""
@@ -858,6 +894,41 @@ def test_new_file_brings_the_panel_back_to_the_document():
     win.viewport.notify_scene_changed()
     assert panel.source == "chaise"
     panel.set_source("model")
+
+
+def test_lock_from_two_selected_parts():
+    """Encastrement with two parts selected and no edge: no shape to find,
+    the two parts become one (from « Liaison » or from « Plus… »)."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    base = _box_group("Socle", (0, 0, 0), (0.4, 0.2, 0.05))
+    a = _box_group("Bras", (0, 0, 0.05), (0.3, 0.05, 0.1))
+    b = _box_group("Patte", (0.3, 0, 0.05), (0.35, 0.05, 0.2))
+    scene.groups += [base, a, b]
+    win.viewport.notify_scene_changed()
+    _select(win, base); panel._action("parts")
+    _select(win, a); panel._action("parts")
+    _select(win, b); panel._action("parts")
+    _select(win, a, b)
+    panel._auto_kind = "lock"
+    try:
+        panel._action("joint")
+    finally:
+        panel._auto_kind = None
+    js = panel.app.document_data()["joints"]
+    assert [j["kind"] for j in js] == ["lock"], panel.status.text()
+    assert {js[0]["a"], js[0]["b"]} == {"pièce1", "pièce2"}
+    assert abs(js[0]["point"][0] - 0.3) < 1e-6        # where they meet
+    _select(win, base, a)
+    panel._action("lock")                              # the tool under « Plus… »
+    js = panel.app.document_data()["joints"]
+    assert [j["kind"] for j in js] == ["lock", "lock"], panel.status.text()
+    assert js[1]["a"] == "fixe1"                       # the frame first
+    _reset(win, panel)
 
 
 def test_joint_from_two_selected_parts():

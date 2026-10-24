@@ -93,7 +93,8 @@ TIPS = {
                    "sur l'axe : la pièce tourne et coulisse.",
     "ball": "Rotule (Ball) — sélectionner les DEUX pièces (une sphère dans une sphère creuse), ou des "
             "arêtes autour du centre (un petit cercle) : toutes les rotations.",
-    "lock": "Encastrement (Lock) — des arêtes au point de liaison : les deux pièces n'en font qu'une.",
+    "lock": "Encastrement (Lock) — les DEUX pièces, ou des arêtes au point de liaison : les deux "
+            "pièces n'en font qu'une.",
     "elastic": "Liaison élastique (Elastic) — des arêtes au point de liaison : un silentbloc, "
                "rigide en cinématique, ressorts et amortisseurs en dynamique.",
     "annular": "Linéaire annulaire (Annular) — UNE arête sur l'axe de l'alésage, plus un cercle "
@@ -1494,6 +1495,9 @@ class MotionPanel(QWidget):
         x = found if (found is not None and found.kind == k) else self._find_between(bodies, k)
         if x is None and found is not None:
             x = found                              # another kind on the same point / axis
+        if x is None and k == "lock":              # nothing to find: they become one
+            self._lock_parts(bodies)
+            return
         if x is None:
             raise ValueError(_T("{a} ↔ {b} : rien trouvé d'après les formes — sélectionner "
                                 "une arête sur l'axe.", a=bodies[0]["name"], b=bodies[1]["name"]))
@@ -1581,7 +1585,40 @@ class MotionPanel(QWidget):
         self._point_joint("ball")
 
     def _do_lock(self):
+        if self.source == "model":
+            bodies, groups = self._selected_bodies()
+            _, segs = selection(self._scene())
+            if not segs and groups:                # two parts selected: no edge needed
+                if len(bodies) != 2:
+                    raise ValueError(_T("sélectionner les groupes de DEUX pièces "
+                                        "(ou des arêtes au point de liaison)"))
+                self._lock_parts(bodies)
+                return
         self._point_joint("lock")
+
+    def _lock_parts(self, bodies):
+        """Encastrement between two parts: they move as one, wherever the
+        point is; it is put where they meet (the middle of their common
+        box), else halfway between them."""
+        by = groups_by_uid(self._scene())
+        boxes = []
+        for b_ in bodies:
+            P = [group_points(by[u]) for u in b_["groups"] if u in by]
+            P = np.vstack([p for p in P if len(p)]) if any(len(p) for p in P) else None
+            if P is None:
+                raise ValueError(_T("pièce sans géométrie"))
+            boxes.append((P.min(0), P.max(0)))
+        lo, hi = np.maximum(boxes[0][0], boxes[1][0]), np.minimum(boxes[0][1], boxes[1][1])
+        if np.all(lo <= hi):
+            c = 0.5 * (lo + hi)
+        else:
+            c = 0.25 * (boxes[0][0] + boxes[0][1] + boxes[1][0] + boxes[1][1])
+        a, b = bodies[0]["name"], bodies[1]["name"]
+        if bodies[1]["fixed"] and not bodies[0]["fixed"]:
+            a, b = b, a
+        d, name = doc.add_joint(self.data, "lock", a, b, point=c)
+        self._store(d, _T("{name} : {a} ↔ {b} — les deux pièces n'en font plus qu'une.",
+                          name=name, a=a, b=b))
 
     def _do_elastic(self):
         self._point_joint("elastic")
@@ -2604,8 +2641,17 @@ class MotionPanel(QWidget):
             for a, b in self.frames[k].get("hits", []):
                 hits.update((a, b))
         bodies = [m.ground] + m.bodies if wire else []
+        hl = set(getattr(self, "_hl_bodies", ()) or ())
         if self.source == "model" and not np.any(x):
-            bodies = []                          # drawn pose: the model shows the parts
+            # drawn pose: the model shows the parts; only the ones clicked in
+            # the list stand out (a small selection box is lost in a big model)
+            bodies = [b for b in bodies if b.name in hl and not b.fixed]
+        if wire and self.source == "model" and hl:
+            for b_ in self.data["bodies"]:       # fixed parts: their own edges
+                if b_["fixed"] and b_["name"] in hl:
+                    segs = self._fixed_segments(b_)
+                    if len(segs):
+                        self._draw_segments(painter, segs.reshape(-1, 3), acc, 3.0)
         for body in bodies:
             if body.fixed and self.source == "model":
                 continue                         # the model shows the frame
@@ -3087,6 +3133,19 @@ class MotionPanel(QWidget):
                     pass
             self.app.viewport.update()
         return out, writer.label
+
+    def _fixed_segments(self, b_):
+        """Edges of a fixed part's groups (for its highlight), cached."""
+        key = (b_["name"], tuple(b_["groups"]))
+        cache = getattr(self, "_fixed_seg_cache", None)
+        if cache is None or cache[0] is not self.mech:
+            cache = self._fixed_seg_cache = (self.mech, {})
+        if key not in cache[1]:
+            by = groups_by_uid(self._scene())
+            segs = [group_segments(by[u]) for u in b_["groups"] if u in by]
+            segs = [s for s in segs if len(s)]
+            cache[1][key] = _lighter(np.vstack(segs)) if segs else np.zeros((0, 2, 3))
+        return cache[1][key]
 
     def _draw_segments(self, painter, pts, color, width):
         px, py, ok = self.app.world_to_pixels(pts)
