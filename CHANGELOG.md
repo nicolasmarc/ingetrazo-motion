@@ -34,6 +34,17 @@
 - **Gears in one gesture**: two toothed wheels selected, « Liaison »:
   Couplage proposed with the teeth counted, the missing pivots with the
   frame made; the first wheel selected drives.
+- **« Contact »** (under « Plus… », or « Liaison » with several parts):
+  a part held by a single pivot (or slider) is pushed by the others — it
+  stands still, then turns just enough, the way the push goes, never to be
+  gone through (cam, ratchet, Geneva wheel). Several pushed parts are
+  settled together (a pawl with play and the wheel it drives); the pawl
+  gives way first, its stops on its carrier (a pin in an arc slot) found
+  from the shapes. Any part of the mechanism can stop a pushed one. An
+  optional weight (« pesanteur_contact », off by default) lets a part held
+  by the frame fall back when nothing holds it. Quasi-static: the
+  behaviour of Nicolas's Geneva model (weight, play, momentum) still needs
+  true dynamics with contacts on the real surfaces.
 - **A boss blended into its plate** (the Geneva model's « Couronne »):
   no smooth region shows the round alone; its axis is now found as a
   circle in cuts across the part (« Axe », « Moteur », « Liaison »).

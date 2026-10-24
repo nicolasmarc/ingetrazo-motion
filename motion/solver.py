@@ -16,6 +16,8 @@ def rows_of(j):
 
 
 def _joint_residual(mech, j, x):
+    if getattr(j, "placed", False):          # its part is placed by a contact rule
+        return np.zeros(rows_of(j))
     if j.kind == "coupling":
         return np.array([mech.continuous_value(j.jb, x)
                          - j.ratio * mech.continuous_value(j.ja, x)])

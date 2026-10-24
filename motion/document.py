@@ -605,7 +605,17 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             for p_ in pushers:
                 m.contacts.add(frozenset((name, p_.name)))
         if members:
-            m.followers.append(PushGroup(members))
+            # any part may stop a pushed one (the rod a hanging pawl falls
+            # onto), not only those named: the pushers are every other part
+            mine = {id(mm.body) for mm in members}
+            for mm in members:
+                named = {id(p_) for p_ in mm.pushers}
+                mm.pushers += [b_ for b_ in [m.ground] + m.bodies
+                               if id(b_) not in named and b_ is not mm.body
+                               and b_ is not mm.carrier]
+            group = PushGroup(members)
+            group.gravity = bool((d.get("simulation") or {}).get("pesanteur_contact", False))
+            m.followers.append(group)
     if not (d.get("simulation") or {}).get("active") and fixed:
         # in kinematics a moving part tied to nothing fixed has no position
         # of its own: the solver turns it with its neighbours at random

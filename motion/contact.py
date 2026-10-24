@@ -265,13 +265,13 @@ class Surfaces:
     def has(self, body):
         return body.name in self.data
 
-    def _resting(self, a, b):
+    def _resting(self, a, b, factor=1.5):
         """Points of a and of b that lie against the other in the drawn
-        position (masks)."""
-        key = (a.name, b.name)
+        position, within ``factor`` sampling steps (masks)."""
+        key = (a.name, b.name, factor)
         if key not in self._skip:
             A, B = self.data[a.name], self.data[b.name]
-            r = 1.5 * self.h
+            r = factor * self.h
             if _box_gap(A["lo"], A["hi"], B["lo"], B["hi"]) > r:
                 ma, mb = np.zeros(len(A["P"]), bool), np.zeros(len(B["P"]), bool)
             else:
@@ -289,7 +289,7 @@ class Surfaces:
             return None
         A, B = self.data[a.name], self.data[b.name]
         if resting:
-            ma, mb = self._resting(a, b)
+            ma, mb = self._resting(a, b, 1.5 if resting is True else float(resting))
         else:
             ma, mb = np.zeros(len(A["P"]), bool), np.zeros(len(B["P"]), bool)
         # b's free points, carried into a's drawn position
@@ -321,6 +321,24 @@ class Surfaces:
         return (float(d[k]), pa, pb, A["groups"][A["lab"][ia[k]]],
                 B["groups"][B["lab"][idx_b[k]]])
 
+
+    def overlap_count(self, a, b, qa, qb):
+        """How many sampled points of a lie inside b (just under its
+        surface) at poses qa, qb: steady while a turns about a hub of b,
+        rising when it runs into something (a pin into the end of its slot)."""
+        A, B = self.data[a.name], self.data[b.name]
+        W = _apply(a, qa, A["P"])
+        L = _unapply(b, qb, W)
+        reach = 2.0 * self.h
+        near = np.all((L >= B["lo"] - reach) & (L <= B["hi"] + reach), axis=1)
+        if not near.any():
+            return 0
+        Q = L[near]
+        d, _ = B["tree"].query(Q, k=1, distance_upper_bound=reach)
+        Q = Q[np.isfinite(d)]
+        if not len(Q):
+            return 0
+        return int(np.count_nonzero(self._inside_many(B, Q)))
 
     def _signed(self, A, Q, k=16):
         """Signed distance of points Q (in A's drawn frame) to A's surface:

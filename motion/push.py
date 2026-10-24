@@ -38,14 +38,67 @@ class Pushed:
 
     def __init__(self, body, joint, pushers):
         self.body, self.joint = body, joint
+        joint.placed = True                     # the solver leaves it to the contact
         self.carrier = joint.a if joint.b is body else joint.b
         self.kind = "slider" if joint.kind == "slider" else "pivot"
         self.point = np.asarray(joint.point, float)       # reference pose
         ax = np.asarray(joint.axis, float)
         self.axis = ax / max(np.linalg.norm(ax), 1e-12)
         self.sign = 1.0 if joint.b is body else -1.0       # body turns +v about +axis
-        self.pushers = list(pushers)
+        # the carrier among the pushers: what stops the part on it (the ends
+        # of a slot its pin runs in) becomes its stops, found once; rubbing
+        # along the slot's sides or round its hub is not a push
+        self.on_carrier = any(p is self.carrier for p in pushers)
+        self.pushers = [p for p in pushers if p is not self.carrier]
+        lim = getattr(joint, "limits", None)
+        self.limits = None
+        if lim:
+            lo, hi = sorted(lim)
+            self.limits = (lo, hi) if joint.b is body else (-hi, -lo)
         self.value = 0.0
+        self.cog = None                      # reference pose; set by the group
+
+    def height(self, mech, x, v):
+        """Height (z) of its centre of gravity at ``v``: what its weight
+        lowers when nothing holds it."""
+        q = self.pose_of(mech, x, v)
+        return float(self.body.world_point(q, self.cog)[2])
+
+    def clamp(self, v):
+        if self.limits is None:
+            return v
+        return min(max(v, self.limits[0]), self.limits[1])
+
+    def find_stops(self, mech, S, x):
+        """Stops on the carrier: turned (or slid) both ways from as drawn
+        until it really goes into the carrier (deeper than 1.5 sampling
+        steps: rubbing is not a stop)."""
+        if not self.on_carrier or not (S.has(self.body) and S.has(self.carrier)):
+            return
+        P = S.data[self.body.name]["P"]
+        d = P - self.point
+        r = float(np.max(np.linalg.norm(d - np.outer(d @ self.axis, self.axis), axis=1))) \
+            if self.kind == "pivot" else 1.0
+        step = (1.0 * S.h) / max(r, 1e-4)
+        span = math.pi if self.kind == "pivot" else 0.5 * float(np.ptp(P @ self.axis))
+        qc = mech.pose(x, self.carrier)
+        base = S.overlap_count(self.body, self.carrier, self.pose_of(mech, x, 0.0), qc)
+        margin = max(4, int(0.1 * base))
+        stops = []
+        for sgn in (-1.0, 1.0):
+            v, last = 0.0, 0.0
+            while abs(v) < span:
+                v += sgn * step
+                n = S.overlap_count(self.body, self.carrier, self.pose_of(mech, x, v), qc)
+                if n > base + margin:                    # runs into the carrier
+                    break
+                last = v
+            stops.append(last - sgn * step if last != 0.0 else 0.0)   # just before it
+        lo, hi = stops
+        if self.limits is not None:
+            lo, hi = max(lo, self.limits[0]), min(hi, self.limits[1])
+        self.limits = (lo, hi)
+        self.on_carrier = False
 
     def pose_of(self, mech, x, v):
         """Pose (6) of the body at angle (or travel) ``v`` on its carrier
@@ -92,6 +145,11 @@ class PushGroup:
             for m in ready:
                 order.append(m)
                 left.remove(m)
+        # who gives way first: a part with play on a moving carrier (a pawl)
+        # turns until its stop before it drives a part on the frame (the
+        # wheel) — kept stable, carriers still before what they carry
+        rank = {id(m): k for k, m in enumerate(order)}
+        order.sort(key=lambda m: (m.carrier.fixed, rank[id(m)]))
         self.members = order
         self.bodies = [m.body for m in order]
         self.name = name
@@ -128,14 +186,17 @@ class PushGroup:
                 lb, hb = self._box(p, mech.pose(x, p))
                 if np.any(lb - reach > ha) or np.any(la - reach > hb):
                     continue                    # boxes apart: nothing to touch
-            r = S.pair(m.body, p, qa, mech.pose(x, p), reach, resting=False)
+            # what touches as drawn (two pawls on one hub) is the assembly,
+            # not a push
+            # (as tight as the sampling allows: a roller 1 mm off still pushes)
+            r = S.pair(m.body, p, qa, mech.pose(x, p), reach, resting=0.75)
             if r is not None and r[0] < best:
                 best, pt = r[0], r[1]
         return best, pt
 
     def _free(self, mech, S, x, m, reach, tol):
         """``m``'s value nearest its own where nothing goes into it, found
-        the way the push goes; (value, pushed)."""
+        the way the push goes, within its stops; (value, pushed)."""
         v = m.value
         g, pt = self._gap(mech, S, x, m, v, reach)
         if g >= -tol:
@@ -150,6 +211,8 @@ class PushGroup:
         for k in range(1, 120):
             w = v + sgn * k * step
             gk = self._gap(mech, S, x, m, w, reach)[0]
+            if m.clamp(w) != w:                 # on its stop: it pushes back instead
+                return m.clamp(w), True
             if gk >= 0.0:
                 lo, hi = v + sgn * (k - 1) * step, w
                 for _ in range(8):
@@ -177,6 +240,15 @@ class PushGroup:
         if S is None or not S.data:
             return self._write(mech, x)
         reach, tol = 2.0 * S.h, S.tol
+        if self._x is None:                      # as drawn: the stops on the carriers
+            x0 = self._write(mech, x.copy())
+            for m in self.members:
+                m.find_stops(mech, S, x0)
+                if m.cog is None:                # its own, else the middle of its surface
+                    com = getattr(m.body, "com", None)
+                    m.cog = (np.asarray(com, float) if com is not None
+                             else S.data[m.body.name]["P"].mean(axis=0)
+                             if S.has(m.body) else m.body.center)
         prev = self._x if self._x is not None and len(self._x) == len(x) else None
         n = 1
         if prev is not None:                     # no point moves more than 0.8 h a sub-step
@@ -207,6 +279,38 @@ class PushGroup:
                         xs = self._write(mech, xs)
                 if not moved:
                     break
+        if self.gravity:
+            x = self._write(mech, x)
+            for _ in range(2):                    # pushed parts resting on each other
+                for m in self.members:
+                    if not m.carrier.fixed:
+                        continue                  # a pawl rides its carrier: held by it
+                    self._fall(mech, S, x, m, reach, tol)
+                    x = self._write(mech, x)
         x = self._write(mech, x)
         self._x = x.copy()
         return x
+
+    gravity = True
+    fall_steps = 12                               # a little at each position, not a drop
+
+    def _fall(self, mech, S, x, m, reach, tol):
+        """Let ``m`` go down under its weight until it rests on something
+        (a pushing part, another pushed part) or on its stop."""
+        g, pt = self._gap(mech, S, x, m, m.value, reach)
+        step = 0.5 * S.h / m.lever(pt if pt is not None else
+                                   m.body.world_point(m.pose_of(mech, x, m.value), m.cog),
+                                   mech, x)
+        h0 = m.height(mech, x, m.value)
+        sgn = -1.0 if m.height(mech, x, m.value + step) > h0 else 1.0
+        if abs(m.height(mech, x, m.value + sgn * step) - h0) < 1e-7:
+            return                                # balanced (its weight on the axis)
+        v = m.value
+        for _ in range(self.fall_steps):
+            w = m.clamp(v + sgn * step)
+            if w == v or m.height(mech, x, w) >= m.height(mech, x, v):
+                break
+            if self._gap(mech, S, x, m, w, reach)[0] < 0.0:
+                break                             # it lands on something
+            v = w
+        m.value = v

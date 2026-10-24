@@ -26,6 +26,7 @@ def _build():
     d, pv = doc.add_joint(d, "pivot", "bati", "volet", point=(0.10, 0, 0), axis=(0, 1, 0))
     d, c = doc.add_joint(d, "contact", "volet", "bras")
     d = doc.add_driver(d, pa, 0.0, math.radians(80))
+    d["simulation"]["pesanteur_contact"] = False      # the flap stands on its own
     m, problems = doc.build(d, lambda u: tris[u].reshape(-1, 3), lambda u: u,
                             triangles_of_group=tris.get)
     return m, problems, d
