@@ -34,6 +34,9 @@
 - **Gears in one gesture**: two toothed wheels selected, « Liaison »:
   Couplage proposed with the teeth counted, the missing pivots with the
   frame made; the first wheel selected drives.
+- **A boss blended into its plate** (the Geneva model's « Couronne »):
+  no smooth region shows the round alone; its axis is now found as a
+  circle in cuts across the part (« Axe », « Moteur », « Liaison »).
 - **Helical wheels** (Nicolas's Geneva model): their teeth are counted in
   thin slices across the axis — over the whole face the twisted teeth
   fill the tip circle. The orange wheel turned about its crank pin

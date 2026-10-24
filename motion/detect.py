@@ -552,7 +552,82 @@ def _regular_teeth(points, centre, axis, z, share=0.45):
     return near / total >= share                                         # sharper shape
 
 
-def own_axis(part, min_teeth=6, near=None):
+def _slice(T, axis, h):
+    """Segments where the plane (axis · x = h) cuts the triangles T (n, 3, 3)."""
+    d = T @ axis - h                                   # (n, 3)
+    out = []
+    for i, j in ((0, 1), (1, 2), (2, 0)):
+        cross = (d[:, i] < 0) != (d[:, j] < 0)
+        if cross.any():
+            a, b = T[cross, i], T[cross, j]
+            s = (d[cross, i] / (d[cross, i] - d[cross, j]))[:, None]
+            out.append((np.nonzero(cross)[0], a + s * (b - a)))
+    if not out:
+        return np.zeros((0, 2, 3))
+    idx = np.concatenate([k for k, _ in out])
+    pts = np.concatenate([p for _, p in out])
+    order = np.argsort(idx, kind="stable")
+    idx, pts = idx[order], pts[order]
+    keep = np.nonzero(np.diff(idx) == 0)[0]            # two crossings: one segment
+    return np.stack([pts[keep], pts[keep + 1]], axis=1)
+
+
+def round_outlines(T, axis, levels=5, min_r=1e-3):
+    """Circles among the outlines of a part cut across ``axis`` (a boss or
+    a bore blended into its plate by fillets, that no smooth region shows
+    alone): [(centre, radius)], the best fitted first."""
+    T = np.asarray(T, float).reshape(-1, 3, 3)
+    if not len(T):
+        return []
+    h = T.reshape(-1, 3) @ axis
+    lo, hi = float(h.min()), float(h.max())
+    u, v = _basis(axis)
+    found = []
+    for f in np.linspace(0.15, 0.85, levels):
+        S = _slice(T, axis, lo + f * (hi - lo))
+        if len(S) < 8:
+            continue
+        # outlines: segments joined end to end (union of shared ends)
+        key = np.round(S.reshape(-1, 3) / 1e-6).astype(np.int64)
+        _, inv = np.unique(key, axis=0, return_inverse=True)
+        inv = inv.reshape(-1, 2)
+        parent = list(range(int(inv.max()) + 1))
+
+        def root(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+        for a, b in inv:
+            ra, rb = root(int(a)), root(int(b))
+            if ra != rb:
+                parent[ra] = rb
+        comp = np.array([root(int(a)) for a in inv[:, 0]])
+        for c in np.unique(comp):
+            seg = S[comp == c]
+            if len(seg) < 8:
+                continue
+            Q = seg.reshape(-1, 3)
+            x, y = Q @ u, Q @ v
+            A = np.column_stack([x, y, np.ones_like(x)])
+            sol, *_ = np.linalg.lstsq(A, x * x + y * y, rcond=None)
+            cx, cy = sol[0] / 2, sol[1] / 2
+            r2 = sol[2] + cx * cx + cy * cy
+            if r2 <= min_r * min_r:
+                continue
+            r = float(np.sqrt(r2))
+            rr = np.hypot(x - cx, y - cy)
+            ang = np.sort(np.arctan2(y - cy, x - cx))
+            gap = np.max(np.diff(np.concatenate([ang, ang[:1] + 2 * np.pi])))
+            if np.sqrt(np.mean((rr - r) ** 2)) > 0.01 * r or gap > np.radians(60):
+                continue
+            centre = cx * u + cy * v + (lo + f * (hi - lo)) * axis
+            found.append((centre, r, float(np.sqrt(np.mean((rr - r) ** 2)) / r)))
+    found.sort(key=lambda t: t[2])
+    return [(c, r) for c, r, _ in found]
+
+
+def own_axis(part, min_teeth=6, near=None, triangles=None):
     """The axis a part turns about by itself, read from its shape alone
     (no shaft needed in a bore): a toothed wheel's (the centre of its
     teeth), else its largest bore, else its largest round outside (a
@@ -601,7 +676,23 @@ def own_axis(part, min_teeth=6, near=None):
         return float(np.min(np.linalg.norm(d - np.outer(d @ ax, ax), axis=1)))
 
     if not round_:
-        return None
+        # a boss or a bore blended into the plate: circles in its sections
+        if triangles is None:
+            return None
+        circles = []
+        for k, ax in enumerate([np.eye(3)[k] for k in range(3)] + [_unit(V[:, k]) for k in range(3)]):
+            circles += [(c, r, ax, k >= 3) for c, r in round_outlines(triangles, ax)]
+        if not circles:
+            return None
+
+        def cgap(t):
+            if Q is None:
+                return 0.0
+            d = Q - t[0]
+            return float(np.min(np.linalg.norm(d - np.outer(d @ t[2], t[2]), axis=1)))
+        # the model's own axes first, then nearest the frame (to the mm), the largest
+        c, r, ax, _ = min(circles, key=lambda t: (t[3], round(cgap(t), 3), -t[1]))
+        return (mid(c, ax), ax, "round", f"contour rond Ø {2000 * r:.1f} mm")
     # the round shape nearest the part it turns in (its pin or its bore
     # is there); else a bore before a round outside, the largest first
     c = min(round_, key=lambda c: (round(gap(c), 4), c.convex, -c.radius, -c.span))

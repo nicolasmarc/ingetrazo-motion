@@ -1808,7 +1808,11 @@ class MotionPanel(QWidget):
         part = detect.merge_parts(body["name"], body["name"],
                                   [self._detect_part_cached(by[u]) for u in body["groups"]
                                    if u in by])
-        return detect.own_axis(part, near=self._points_of(near) if near is not None else None)
+        T = [np.asarray(self._triangles(by, u), float).reshape(-1, 3, 3)
+             for u in body["groups"] if u in by]
+        T = [t for t in T if len(t)]
+        return detect.own_axis(part, near=self._points_of(near) if near is not None else None,
+                               triangles=np.concatenate(T) if T else None)
 
     def _own_axis_pivot(self, bodies):
         """A pivot between two parts on the moving one's own axis (a wheel,

@@ -202,3 +202,27 @@ def test_teeth_of_a_helical_wheel():
     pt, axis, kind, det = detect.own_axis(part)
     assert kind == "gear" and abs(abs(axis @ ax) - 1) < 1e-9
     assert np.linalg.norm((pt - centre) - ((pt - centre) @ ax) * ax) < 2e-4
+
+
+def test_a_boss_seen_in_the_sections():
+    # a plate with a round boss, all of one smooth piece (no cylinder of
+    # its own to fit): the boss is a circle in the cuts across its axis
+    n, R, c = 48, 0.007, np.array([-0.026, 0.0, 0.152])
+    T = []
+    ring = [c + R * np.array([math.cos(a), 0, math.sin(a)])
+            for a in np.linspace(0, 2 * math.pi, n, endpoint=False)]
+    for i in range(n):                                  # the boss: a tube 10 mm long
+        a, b = ring[i], ring[(i + 1) % n]
+        a2, b2 = a + (0, 0.010, 0), b + (0, 0.010, 0)
+        T += [(a, b, b2), (a, b2, a2)]
+    plate = [(-0.05, 0.0, 0.10), (0.07, 0.0, 0.10), (0.07, 0.0, 0.20), (-0.05, 0.0, 0.20)]
+    T += [(plate[0], plate[1], plate[2]), (plate[0], plate[2], plate[3])]
+    T = np.array(T, float)
+    found = detect.round_outlines(T, np.array([0.0, 1.0, 0.0]))
+    assert found, "no circle"
+    centre, r = found[0]
+    assert abs(r - R) < 2e-4 and np.hypot(centre[0] - c[0], centre[2] - c[2]) < 1e-4
+    part = detect.Part(key="c", name="c", points=T.reshape(-1, 3),
+                       lo=T.reshape(-1, 3).min(0), hi=T.reshape(-1, 3).max(0))
+    pt, ax, kind, det = detect.own_axis(part, triangles=T)
+    assert abs(abs(ax[1]) - 1) < 1e-9 and np.hypot(pt[0] - c[0], pt[2] - c[2]) < 1e-4, det
