@@ -81,11 +81,13 @@ def add_joint(data, kind, a, b, point=None, axis=None, rail=None,
             "cylindrical": "pivot glissant", "ball": "rotule", "lock": "encastrement",
             "elastic": "élastique", "annular": "linéaire annulaire",
             "pointplane": "ponctuelle", "planar": "appui plan",
-            "screw": "hélicoïdale"}[kind]
+            "screw": "hélicoïdale", "contact": "contact"}[kind]
     stem = _T(stem)
     j = {"kind": kind, "name": name or unique_name(d, stem), "a": a, "b": b,
          "limits": list(limits) if limits is not None else None}
-    if kind == "guide":
+    if kind == "contact":                      # a: the part pushed, b: the one pushing
+        pass
+    elif kind == "guide":
         j["rail"] = [list(map(float, p)) for p in rail]
         j["point"] = list(map(float, point))
     elif kind in ("ball", "lock", "elastic"):
@@ -537,7 +539,7 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             problems.append(_T("{name} : relie une pièce à elle-même", name=j['name']))
             continue
         lim = tuple(j["limits"]) if j.get("limits") else None
-        if j["kind"] == "coupling":
+        if j["kind"] in ("coupling", "contact"):
             continue                      # after every other joint
         k = j["kind"]
         if k == "pivot":
@@ -577,6 +579,33 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             problems.append(_T("{name} : liaison couplée inconnue", name=j['name']))
             continue
         joints[j["name"]] = m.couple(ja, jb, j["ratio"], j["name"])
+    pushed = {}
+    for j in d["joints"]:                     # contacts: a part pushed by others
+        if j["kind"] == "contact" and j["a"] in bodies and j["b"] in bodies:
+            pushed.setdefault(j["a"], []).append(bodies[j["b"]])
+    m.contacts = set()
+    if pushed:
+        from .push import Pushed, PushGroup
+        members = []
+        for name, pushers in pushed.items():
+            body = bodies[name]
+            own = [mj for mj in joints.values()
+                   if mj.kind in ("pivot", "slider") and body in (mj.a, mj.b)]
+            # its pivot (or slider) with its carrier — the frame first — and
+            # no other joint holding it (parts it carries are fine)
+            own.sort(key=lambda mj: not (mj.b if mj.a is body else mj.a).fixed)
+            others = [mj for mj in joints.values() if mj.kind != "coupling"
+                      and body in (mj.a, mj.b) and mj is not (own[0] if own else None)
+                      and not (mj.a is body and mj.b.name not in pushed)]
+            if body.fixed or not own or others:
+                problems.append(_T("contact : {p} doit tenir à une autre pièce par un seul "
+                                   "pivot (ou une glissière), sans autre liaison", p=name))
+                continue
+            members.append(Pushed(body, own[0], pushers))
+            for p_ in pushers:
+                m.contacts.add(frozenset((name, p_.name)))
+        if members:
+            m.followers.append(PushGroup(members))
     if not (d.get("simulation") or {}).get("active") and fixed:
         # in kinematics a moving part tied to nothing fixed has no position
         # of its own: the solver turns it with its neighbours at random

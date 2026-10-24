@@ -323,6 +323,24 @@ EN = {
         "{p}: no axis found (no teeth, bore or round shape)",
     "{p} : {d}": "{p}: {d}",
     "Axe — ": "Axis — ",
+    "Contact": "Contact",
+    "sélectionner la pièce poussée et celle(s) qui la poussent":
+        "select the part that is pushed and the one(s) pushing it",
+    "aucune des pièces ne peut être poussée : il lui faut un seul pivot (ou une glissière) et "
+    "aucun moteur":
+        "none of these parts can be pushed: it needs a single pivot (or slider) and no driver",
+    "Contact : déjà en place.": "Contact: already there.",
+    "Contact : {p} poussée par {o}.": "Contact: {p} pushed by {o}.",
+    "Pièce poussée :": "Part pushed:",
+    "Contact — sélectionner la pièce poussée (tenue au bâti par son seul pivot) et celles qui la "
+    "poussent : elle reste immobile, puis tourne juste assez pour ne jamais être traversée (croix "
+    "de Genève, cliquet, came).":
+        "Contact — select the part that is pushed (held on the frame by its pivot alone) and those "
+        "that push it: it stands still, then turns just enough never to be gone through (Geneva "
+        "wheel, ratchet, cam).",
+    "contact : {p} doit tenir à une autre pièce par un seul pivot (ou une glissière), sans autre "
+    "liaison":
+        "contact: {p} must hold to another part by a single pivot (or slider), with no other joint",
     "Coché : cette liaison est un moteur, de la première valeur à la seconde. Plusieurs moteurs "
     "possibles : même 0–100 %, chacun sa course.":
         "Ticked: this joint is a driver, from the first value to the second. Several drivers "

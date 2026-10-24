@@ -280,14 +280,18 @@ class Surfaces:
             self._skip[key] = (ma, mb)
         return self._skip[key]
 
-    def pair(self, a, b, qa, qb, reach):
+    def pair(self, a, b, qa, qb, reach, resting=True):
         """Smallest distance (< reach) between the free points of a and b
         at poses qa, qb: (distance, point a, point b, group a, group b) or
-        None."""
+        None. ``resting=False``: the points lying against each other as
+        drawn count too (a contact that pushes)."""
         if frozenset((a.name, b.name)) in self._gears:
             return None
         A, B = self.data[a.name], self.data[b.name]
-        ma, mb = self._resting(a, b)
+        if resting:
+            ma, mb = self._resting(a, b)
+        else:
+            ma, mb = np.zeros(len(A["P"]), bool), np.zeros(len(B["P"]), bool)
         # b's free points, carried into a's drawn position
         Pb = B["P"][~mb]
         if not len(Pb):

@@ -119,6 +119,8 @@ def _joined(mech):
     for j in mech.joints:
         if j.kind != "coupling":           # a ratio joins no parts together
             out.setdefault(frozenset((j.a.name, j.b.name)), []).append(j)
+    for pair in getattr(mech, "contacts", ()) or ():
+        out.setdefault(pair, [])           # a contact: touching is its job
     return out
 
 

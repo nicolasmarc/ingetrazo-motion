@@ -188,6 +188,9 @@ def sweep(mech, steps=51, progress=None):
     ``progress(i, steps)`` after each step; False stops (None returned)."""
     j, lo, hi = mech.driver
     out, x = [], None
+    for f in getattr(mech, "followers", []):   # pushed parts start as drawn
+        if hasattr(f, "reset") and not getattr(f, "dynamic", False):
+            f.reset()
     # every motor that is a pivot is followed in steps of at most 0.4 rad,
     # whatever ``steps`` (several turns in few steps would lose count)
     sub = 1

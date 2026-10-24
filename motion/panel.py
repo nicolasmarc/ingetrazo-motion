@@ -53,7 +53,7 @@ KIND_NAMES = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot
               "cylindrical": "Pivot glissant", "ball": "Rotule", "lock": "Encastrement",
               "elastic": "Liaison élastique", "annular": "Linéaire annulaire",
               "pointplane": "Ponctuelle", "planar": "Appui plan", "screw": "Hélicoïdale",
-              "coupling": "Couplage"}
+              "coupling": "Couplage", "contact": "Contact"}
 
 
 def _detail(text):
@@ -89,6 +89,9 @@ TIPS = {
               "dans la liste, avec la course indiquée.",
     "validate": "Valider (Validate) — de 0 à 100 % : collisions, butées, jeu minimal.",
     "trajectory": "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.",
+    "contact": "Contact — sélectionner la pièce poussée (tenue au bâti par son seul pivot) et "
+               "celles qui la poussent : elle reste immobile, puis tourne juste assez pour ne "
+               "jamais être traversée (croix de Genève, cliquet, came).",
     "axis": "Axe (Axis) — sélectionner une pièce : son axe (centre de la denture, alésage, forme "
             "ronde) tracé en ligne de construction, pour le vérifier ou s'en servir avec « Liaison ».",
     "coupling": "Couplage (Coupling) — engrenage, pignon-crémaillère, roulement : deux liaisons "
@@ -1159,7 +1162,7 @@ class MotionPanel(QWidget):
         self.copy_btn.setVisible(not editable and self.source not in NOT_COPYABLE)
         for n in ("fixed", "moving", "pivot", "slider", "guide",
                   "cylindrical", "ball", "lock", "elastic",
-                  "annular", "pointplane", "planar", "screw", "coupling", "axis"):
+                  "annular", "pointplane", "planar", "screw", "coupling", "axis", "contact"):
             self.buttons[n].setEnabled(editable)
         for n in ("parts", "joint"):
             self.main_buttons[n].setEnabled(editable)
@@ -1608,7 +1611,7 @@ class MotionPanel(QWidget):
         self._do_fixed(not has_frame)
 
     JOINT_KINDS = ("pivot", "slider", "cylindrical", "ball", "lock", "elastic",
-                   "annular", "pointplane", "planar", "screw")
+                   "annular", "pointplane", "planar", "screw", "contact")
 
     def _do_joint(self, kind=None):
         """Liaison: two parts selected → the joint found from their shapes,
@@ -1629,6 +1632,9 @@ class MotionPanel(QWidget):
             if k:
                 self._action(k)
             return
+        if len(bodies) > 2 and (kind in (None, "contact")):
+            self._make_contact(bodies)             # one pushed, the others pushing
+            return
         if len(bodies) != 2:
             raise ValueError(_T("sélectionner DEUX pièces (ou une arête sur l'axe)"))
         found = None
@@ -1641,6 +1647,9 @@ class MotionPanel(QWidget):
             found = self._own_axis_pivot(bodies)   # no shaft drawn: the part's own axis
         k = kind or self._ask_kind(found, bodies, gears)
         if not k:
+            return
+        if k == "contact":
+            self._make_contact(bodies)
             return
         if k == "coupling":
             if gears is None:
@@ -1696,7 +1705,7 @@ class MotionPanel(QWidget):
         form.addRow(bb)
         if not dlg.exec():
             return None
-        if found is None and bodies and combo.currentData() not in ("lock", "coupling"):
+        if found is None and bodies and combo.currentData() not in ("lock", "coupling", "contact"):
             return None                            # nothing to put it on
         return combo.currentData()
 
@@ -1781,6 +1790,66 @@ class MotionPanel(QWidget):
             said.append(_T("{p} : {d}", p=b_["name"], d=det))
         self.app.viewport.update()
         self.say(_T("Axe — ") + " ; ".join(said))
+
+    def _do_contact(self):
+        if self.source != "model":
+            return
+        self._ensure_parts()
+        bodies, _ = self._selected_bodies()
+        if len(bodies) < 2:
+            raise ValueError(_T("sélectionner la pièce poussée et celle(s) qui la poussent"))
+        self._make_contact(bodies)
+
+    def _make_contact(self, bodies):
+        """Contact: one of ``bodies`` is pushed by the others. It is the one
+        held by a single pivot (or slider) and driven by nothing (asked when
+        several are); with no pivot yet, its pivot with the frame is found
+        from its shape and made."""
+        motors = {x["joint"] for x in self.data["drivers"]}
+
+        def holds(b_):
+            return [j for j in self.data["joints"] if j["kind"] not in ("coupling", "contact")
+                    and b_["name"] in (j["a"], j["b"])]
+        cands = [b_ for b_ in bodies if not b_["fixed"]
+                 and len([j for j in holds(b_) if j["kind"] in ("pivot", "slider")]) <= 1
+                 and not any(j["name"] in motors for j in holds(b_))]
+        if not cands:
+            raise ValueError(_T("aucune des pièces ne peut être poussée : il lui faut un seul "
+                                "pivot (ou une glissière) et aucun moteur"))
+        pushed = cands[0] if len(cands) == 1 else self._ask_pushed(cands)
+        if pushed is None:
+            return
+        made = ""
+        if not [j for j in holds(pushed) if j["kind"] in ("pivot", "slider")]:
+            fx = self._frame_pivot(pushed)
+            if fx is None:
+                raise ValueError(_T("{p} : aucun pivot trouvé avec le bâti — sélectionner une "
+                                    "arête sur son axe, puis « Liaison ».", p=pushed["name"]))
+            fr, x = fx
+            self._make_found([fr, pushed], "pivot", x)
+            made = _T("pivot trouvé d'après les formes ({d}), ", d=x.detail)
+        d = self.data
+        have = {(j["a"], j["b"]) for j in d["joints"] if j["kind"] == "contact"}
+        names = []
+        for b_ in bodies:
+            if b_ is pushed or (pushed["name"], b_["name"]) in have:
+                continue
+            d, n = doc.add_joint(d, "contact", pushed["name"], b_["name"])
+            names.append(b_["name"])
+        if not names:
+            self.say(made + _T("Contact : déjà en place."))
+            return
+        self._store(d, made + _T("Contact : {p} poussée par {o}.", p=pushed["name"],
+                                 o=", ".join(names)))
+
+    def _ask_pushed(self, cands):
+        auto = getattr(self, "_auto_pushed", None)          # tests
+        if auto is not None:
+            return next((b_ for b_ in cands if b_["name"] == auto), None)
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getItem(self, _T("Contact"), _T("Pièce poussée :"),
+                                        [b_["name"] for b_ in cands], 0, False)
+        return next((b_ for b_ in cands if b_["name"] == name), None) if ok else None
 
     def _do_lock(self):
         if self.source == "model":
