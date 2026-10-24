@@ -34,3 +34,12 @@ def _texts():
 def test_every_new_text_has_its_english():
     missing = {t: where for t, where in _texts().items() if t not in EN}
     assert not missing, "\n".join(f"{w}: {t!r}" for t, w in missing.items())
+
+
+def test_no_text_is_translated_twice():
+    tree = ast.parse(open(os.path.join(ROOT, "motion", "lang_en.py"), encoding="utf-8").read())
+    d = next(n.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
+             and isinstance(n.value, ast.Dict))
+    keys = [k.value for k in d.keys if isinstance(k, ast.Constant)]
+    twice = sorted({k for k in keys if keys.count(k) > 1})
+    assert not twice, twice

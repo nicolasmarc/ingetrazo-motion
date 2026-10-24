@@ -89,6 +89,8 @@ TIPS = {
               "dans la liste, avec la course indiquée.",
     "validate": "Valider (Validate) — de 0 à 100 % : collisions, butées, jeu minimal.",
     "trajectory": "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.",
+    "axis": "Axe (Axis) — sélectionner une pièce : son axe (centre de la denture, alésage, forme "
+            "ronde) tracé en ligne de construction, pour le vérifier ou s'en servir avec « Liaison ».",
     "coupling": "Couplage (Coupling) — engrenage, pignon-crémaillère, roulement : deux liaisons "
                 "de la liste dont l'une entraîne l'autre selon un rapport.",
     "cylindrical": "Pivot glissant (Cylindrical) — les DEUX pièces (arbre dans l'alésage) ou UNE arête "
@@ -627,7 +629,9 @@ class MotionPanel(QWidget):
         row.addWidget(self.copy_btn)
         lay.addLayout(row)
 
-        mrow = QHBoxLayout()
+        self.mat_row = QWidget()
+        mrow = QHBoxLayout(self.mat_row)
+        mrow.setContentsMargins(0, 0, 0, 0)
         mrow.addWidget(QLabel(_T("Matériau")))
         self.mat_combo = QComboBox()
         self.mat_combo.setToolTip(_T("Matériau de la pièce choisie dans la liste (ou des groupes "
@@ -640,12 +644,13 @@ class MotionPanel(QWidget):
         self.mat_new.setToolTip(_T("Ajouter un matériau (ou corriger une valeur) pour ce document."))
         self.mat_new.clicked.connect(self._material_dialog)
         mrow.addWidget(self.mat_new)
-        lay.addLayout(mrow)
+        lay.addWidget(self.mat_row)
         self.mass_label = QLabel("")
         self.mass_label.setWordWrap(True)
         lay.addWidget(self.mass_label)
 
         box = QGroupBox(_T("Liaison choisie"))
+        self.joint_box = box
         form = QFormLayout(box)
         self.joint_form = form
         self.combo_a, self.combo_b = QComboBox(), QComboBox()
@@ -659,6 +664,11 @@ class MotionPanel(QWidget):
         lr.addWidget(self.lim_hi)
         form.addRow(lr)
         self.lim_row = lr
+        self.motor_on = QCheckBox(_T("Moteur"))
+        self.motor_on.setToolTip(_T("Coché : cette liaison est un moteur, de la première valeur "
+                                   "à la seconde. Plusieurs moteurs possibles : même 0–100 %, "
+                                   "chacun sa course."))
+        form.addRow(self.motor_on)
         self.drv_lo, self.drv_hi = self._spin(), self._spin()
         dr = QHBoxLayout()
         dr.addWidget(self.drv_lo)
@@ -666,12 +676,8 @@ class MotionPanel(QWidget):
         dr.addWidget(self.drv_hi)
         self.unit = QLabel("")
         dr.addWidget(self.unit)
-        form.addRow(_T("Course moteur"), dr)
+        form.addRow(_T("Course"), dr)
         self.drv_row = dr
-        self.motor_on = QCheckBox(_T("Moteur (plusieurs possibles : même 0–100 %, chacun sa course)"))
-        self.motor_on.setToolTip(_T("Coché : cette liaison est un moteur. Vitesse = course ; "
-                                   "déphasage = valeur de départ."))
-        form.addRow(self.motor_on)
         self.k_spin, self.c_spin, self.tq_spin = QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox()
         for w_, hi_ in ((self.k_spin, 1e9), (self.c_spin, 1e7), (self.tq_spin, 1e6)):
             w_.setRange(-hi_ if w_ is self.tq_spin else 0.0, hi_)
@@ -699,6 +705,16 @@ class MotionPanel(QWidget):
         self.apply_btn.setText(_T("Appliquer"))
         self.apply_btn.clicked.connect(self._apply_joint)
         form.addRow(self.apply_btn)
+        # every change applies at once (one undo step each): no « Appliquer »
+        for cb in (self.motor_on, self.lim_on, self.tq_on):
+            cb.toggled.connect(self._sync_enabled)
+            cb.toggled.connect(self._auto_apply)
+        for sp in (self.drv_lo, self.drv_hi, self.lim_lo, self.lim_hi, self.k_spin,
+                   self.c_spin, self.tq_spin):
+            sp.editingFinished.connect(self._auto_apply)
+        for c in (self.combo_a, self.combo_b):
+            c.activated.connect(self._auto_apply)
+        self._sync_enabled()
         lay.addWidget(box)
 
         play = QHBoxLayout()
@@ -1077,7 +1093,7 @@ class MotionPanel(QWidget):
         self.copy_btn.setVisible(not editable and self.source not in NOT_COPYABLE)
         for n in ("fixed", "moving", "pivot", "slider", "guide",
                   "cylindrical", "ball", "lock", "elastic",
-                  "annular", "pointplane", "planar", "screw", "coupling"):
+                  "annular", "pointplane", "planar", "screw", "coupling", "axis"):
             self.buttons[n].setEnabled(editable)
         for n in ("parts", "joint"):
             self.main_buttons[n].setEnabled(editable)
@@ -1328,7 +1344,7 @@ class MotionPanel(QWidget):
         for w in (self.c_label, self.c_spin):
             w.setVisible("c" in f)
         form.setRowVisible(self.tq_row, "t" in f)
-        form.setRowVisible(self.apply_btn, kind is not None)
+        form.setRowVisible(self.apply_btn, False)          # changes apply at once
         if kind == "elastic":
             self.k_label.setText(_T("Raideur"))
             self.k_spin.setToolTip(_T("Raideur en translation (N/m) ; en rotation : 1 % de cette "
@@ -1374,6 +1390,29 @@ class MotionPanel(QWidget):
             pass
 
     def _item_selected(self):
+        """The fields follow the item chosen (filling them applies nothing)."""
+        was = getattr(self, "_loading", False)
+        self._loading = True
+        try:
+            self._item_selected_fill()
+        finally:
+            self._loading = was
+        self._sync_enabled()
+        name = self._chosen()
+        is_joint = (self._joint_record(name) is not None if self.source == "model" else
+                    any(j.name == name for j in self.mechanism().joints))
+        # a joint chosen: its settings, no material (that is a part's)
+        self.mat_row.setVisible(not is_joint)
+        self.mass_label.setVisible(not is_joint)
+        if is_joint:
+            kind = (self._joint_record(name)["kind"] if self.source == "model" else
+                    next(j.kind for j in self.mechanism().joints if j.name == name))
+            self.joint_box.setTitle(_T("Liaison choisie : {n} — {k}", n=name,
+                                       k=_T(KIND_NAMES.get(kind, kind))))
+        else:
+            self.joint_box.setTitle(_T("Liaison choisie"))
+
+    def _item_selected_fill(self):
         name = self._chosen()
         self._fill_curve_choices()
         if getattr(self, "_hl_point", None) is not None or getattr(self, "_hl_bodies", None):
@@ -1410,6 +1449,15 @@ class MotionPanel(QWidget):
         self.tq_spin.setValue(tq or 0.0)
 
     def _show_travel(self, kind, mj, rec):
+        was = getattr(self, "_loading", False)
+        self._loading = True
+        try:
+            self._show_travel_fill(kind, mj, rec)
+        finally:
+            self._loading = was
+        self._sync_enabled()
+
+    def _show_travel_fill(self, kind, mj, rec):
         self.unit.setText("°" if self._is_angle(kind) else "mm")
         m = self.mechanism()
         mine = None
@@ -1492,6 +1540,8 @@ class MotionPanel(QWidget):
             if found is not None:
                 break
         gears = self._gear_pair(bodies) if found is None else None
+        if found is None and gears is None:
+            found = self._own_axis_pivot(bodies)   # no shaft drawn: the part's own axis
         k = kind or self._ask_kind(found, bodies, gears)
         if not k:
             return
@@ -1508,6 +1558,7 @@ class MotionPanel(QWidget):
         if x is None and k == "lock":              # nothing to find: they become one
             self._lock_parts(bodies)
             return
+
         if x is None:
             raise ValueError(_T("{a} ↔ {b} : rien trouvé d'après les formes — sélectionner "
                                 "une arête sur l'axe.", a=bodies[0]["name"], b=bodies[1]["name"]))
@@ -1598,6 +1649,42 @@ class MotionPanel(QWidget):
             return
         self._point_joint("ball")
 
+    def _do_axis(self):
+        """Axe: each selected part's own axis drawn as a construction line
+        (one undo step each), its finding said in the status line."""
+        if self.source != "model":
+            return
+        bodies, groups = self._selected_bodies()
+        if not groups:
+            raise ValueError(_T("sélectionner une pièce"))
+        from . import detect
+        targets = list(bodies)
+        used = {u for b_ in bodies for u in b_["groups"]}
+        for g in groups:                         # a group not yet in a part
+            if g.uid not in used:
+                targets.append({"name": getattr(g, "name", "") or g.uid, "groups": [g.uid],
+                                "fixed": False})
+        from PySide6.QtGui import QVector3D
+        try:
+            from core.guide import Guide
+            from core.history import AddGuideCommand
+        except Exception:                        # another IngeTrazo: say it, draw nothing
+            Guide = AddGuideCommand = None
+        said = []
+        for b_ in targets:
+            r = self._axis_of(b_)
+            if r is None:
+                said.append(_T("{p} : pas d'axe trouvé (ni denture, ni alésage, ni forme ronde)",
+                               p=b_["name"]))
+                continue
+            pt, ax, _kind, det = r
+            if Guide is not None:
+                self.app.viewport.history.execute(AddGuideCommand(
+                    Guide(QVector3D(*map(float, pt)), QVector3D(*map(float, ax)))))
+            said.append(_T("{p} : {d}", p=b_["name"], d=det))
+        self.app.viewport.update()
+        self.say(_T("Axe — ") + " ; ".join(said))
+
     def _do_lock(self):
         if self.source == "model":
             bodies, groups = self._selected_bodies()
@@ -1609,6 +1696,61 @@ class MotionPanel(QWidget):
                 self._lock_parts(bodies)
                 return
         self._point_joint("lock")
+
+    def _points_of(self, body):
+        by = groups_by_uid(self._scene())
+        P = [group_points(by[u]) for u in body["groups"] if u in by]
+        P = [p for p in P if len(p)]
+        return np.vstack(P) if P else np.zeros((0, 3))
+
+    def _axis_of(self, body, near=None):
+        """The part's own axis (detect.own_axis): its teeth, its largest
+        bore (the one nearest ``near``), its round outside; or None."""
+        from . import detect
+        by = groups_by_uid(self._scene())
+        part = detect.merge_parts(body["name"], body["name"],
+                                  [self._detect_part_cached(by[u]) for u in body["groups"]
+                                   if u in by])
+        return detect.own_axis(part, near=self._points_of(near) if near is not None else None)
+
+    def _own_axis_pivot(self, bodies):
+        """A pivot between two parts on the moving one's own axis (a wheel,
+        a bored link whose pin is not drawn): a proposal, or None."""
+        from . import detect
+        for b_ in [b_ for b_ in bodies[::-1] if not b_["fixed"]]:
+            other = bodies[0] if b_ is bodies[1] else bodies[1]
+            r = self._axis_of(b_, near=other)
+            if r is not None:
+                return detect.Proposal("pivot", other["name"], b_["name"], r[0], r[1], 0.5,
+                                       _T("axe propre de la pièce : {d}", d=r[3]))
+        return None
+
+    def _frame_pivot(self, body):
+        """(frame, proposal) for a pivot of ``body`` in the frame: a shaft in
+        a bore, else the part's own axis (a wheel on a pin that is not
+        drawn); None when neither."""
+        from . import detect
+        frames = [b for b in self.data["bodies"] if b["fixed"]]
+        if not frames:
+            return None
+        for fr in frames:
+            x = self._find_between([fr, body], "pivot")
+            if x is not None:
+                return fr, x
+        P = self._points_of(body)
+        c = P.mean(axis=0) if len(P) else np.zeros(3)
+
+        def dist(fr):
+            Q = self._points_of(fr)
+            return float(np.min(np.linalg.norm(Q[:: max(1, len(Q) // 2000)] - c, axis=1))) \
+                if len(Q) else math.inf
+        fr = min(frames, key=dist)
+        r = self._axis_of(body, near=fr)
+        if r is None:
+            return None
+        pt, ax, _kind, det = r
+        return fr, detect.Proposal("pivot", fr["name"], body["name"], pt, ax, 0.5,
+                                   _T("axe propre de la pièce : {d}", d=det))
 
     def _turning_joint(self, body):
         """A part's pivot (with the frame first): its record, or None."""
@@ -1623,7 +1765,6 @@ class MotionPanel(QWidget):
         shapes with the frame when missing): dict(za, zb, src) or None."""
         from . import detect
         by = groups_by_uid(self._scene())
-        frames = [b for b in self.data["bodies"] if b["fixed"]]
         wheels = []
         for b_ in bodies:
             if b_["fixed"]:
@@ -1632,13 +1773,10 @@ class MotionPanel(QWidget):
             if j is not None and j.get("axis") is not None:
                 pt, ax, src = np.asarray(j["point"], float), np.asarray(j["axis"], float), j
             else:
-                x = None
-                for fr in frames:
-                    x = self._find_between([fr, b_], "pivot")
-                    if x is not None:
-                        break
-                if x is None:
+                fx = self._frame_pivot(b_)
+                if fx is None:
                     return None
+                fr, x = fx
                 pt, ax, src = np.asarray(x.point, float), np.asarray(x.axis, float), (fr, x)
             ax = ax / max(np.linalg.norm(ax), 1e-12)
             P = [group_points(by[u]) for u in b_["groups"] if u in by]
@@ -2105,14 +2243,13 @@ class MotionPanel(QWidget):
         j = (grounded or mine or [None])[0]
         made = ""
         if j is None:
-            for fr in [b for b in self.data["bodies"] if b["fixed"]]:
-                x = self._find_between([fr, part], "pivot")
-                if x is not None:
-                    self._make_found([fr, part], "pivot", x)
-                    j = next(k for k in self.data["joints"][::-1]
-                             if k["kind"] == "pivot" and {k["a"], k["b"]} == {fr["name"], name})
-                    made = _T("pivot trouvé d'après les formes ({d}), ", d=x.detail)
-                    break
+            fx = self._frame_pivot(part)
+            if fx is not None:
+                fr, x = fx
+                self._make_found([fr, part], "pivot", x)
+                j = next(k for k in self.data["joints"][::-1]
+                         if k["kind"] == "pivot" and {k["a"], k["b"]} == {fr["name"], name})
+                made = _T("pivot trouvé d'après les formes ({d}), ", d=x.detail)
         if j is None:
             raise ValueError(_T("{p} : aucun pivot trouvé avec le bâti — sélectionner une arête "
                                 "sur son axe, puis « Liaison ».", p=name))
@@ -2163,6 +2300,22 @@ class MotionPanel(QWidget):
         c = box.clickedButton()
         return "replace" if c == rep else "add" if c == add else None
 
+    def _sync_enabled(self, *_):
+        """A value means something only when its box is ticked."""
+        for w in (self.drv_lo, self.drv_hi):
+            w.setEnabled(self.motor_on.isChecked())
+        editable = self.source == "model" if hasattr(self, "source") else True
+        for w in (self.lim_lo, self.lim_hi):
+            w.setEnabled(self.lim_on.isChecked() and editable)
+        self.tq_spin.setEnabled(self.tq_on.isChecked())
+
+    def _auto_apply(self, *_):
+        if getattr(self, "_loading", False) or self.source != "model":
+            return
+        if self._joint_record(self._chosen()) is None:
+            return
+        self._apply_joint()
+
     def _apply_joint(self):
         j = self._joint_record(self._chosen())
         if j is None or self.source != "model":
@@ -2186,7 +2339,13 @@ class MotionPanel(QWidget):
             d = doc.set_joint_params(d, j["name"], spring=[k, 0.0] if k else None,
                                      damper=c or None)
         d = doc.set_torque(d, j["name"], self.tq_spin.value() if self.tq_on.isChecked() else None)
+        d["jeu_min"], d["pas"] = self.jeu.value() / 1000, self.pas.value()
+        if d == doc.normalized(dict(self.data, jeu_min=d["jeu_min"], pas=d["pas"])):
+            return                                # nothing changed: no undo step
         self._store(d, _T("{name} mis à jour.", name=j['name']))
+        hit = self.tree.findItems(j["name"], Qt.MatchExactly)
+        if hit:                                   # stays chosen, its fields shown
+            self.tree.setCurrentItem(hit[0])
 
     def _delete(self):
         name = self._chosen()

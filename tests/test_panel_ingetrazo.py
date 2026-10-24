@@ -1080,6 +1080,71 @@ def test_gears_from_two_selected_wheels():
     _reset(win, panel)
 
 
+def test_wheels_on_a_plain_plate_without_drawn_shafts():
+    """The two wheels of the gear sample on a plain plate (no shaft, no
+    bore): Moteur on the pinion makes its pivot on its own axis (the
+    centre of its teeth), the two wheels selected then « Liaison » make
+    the wheel's pivot and the gears; « Axe » draws a wheel's axis as a
+    construction line."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    scene.groups[:] = [g for g in scene.groups if getattr(g, "billboard", False)]
+    scene.version += 1
+    asm, groups = panel.import_step(str(HERE / "data" / "detect_engrenages.step"))
+    parts, props, frame = panel.scan_model(groups)
+    pivots = {(x.b if x.a == frame else x.a): x for x in props if x.kind == "pivot"}
+    gears = next(x for x in props if x.kind == "gears")
+    by = {g.uid: g for g in groups}
+    pinion, wheel = by[gears.a], by[gears.b]
+    scene.groups.remove(by[frame])                       # the plate and its shafts gone
+    P = np.vstack([np.asarray([[v.x(), v.y(), v.z()] for f in g.mesh.faces for v in f.vertices])
+                   for g in (pinion, wheel)])
+    lo, hi = P.min(0), P.max(0)
+    plate = _box_group("Plaque", (lo[0] - 0.01, lo[1] - 0.01, lo[2] - 0.006),
+                       (hi[0] + 0.01, hi[1] + 0.01, lo[2] - 0.001))
+    scene.groups.append(plate)
+    win.viewport.notify_scene_changed()
+    _select(win, plate); panel._action("parts")
+    _select(win, pinion); panel._action("parts")
+    _select(win, wheel); panel._action("parts")
+    _select(win, pinion)
+    panel._action("driver")
+    d = panel.app.document_data()
+    assert [j["kind"] for j in d["joints"]] == ["pivot"], panel.status.text()
+    assert "dents" in panel.status.text()
+    j, ref = d["joints"][0], pivots[gears.a]
+    dd = np.asarray(j["point"]) - ref.point
+    assert abs(abs(np.dot(j["axis"], ref.axis)) - 1) < 1e-6
+    assert np.linalg.norm(dd - np.dot(dd, ref.axis) * ref.axis) < 1e-5
+    _select(win, pinion, wheel)
+    panel._auto_kind = "coupling"
+    try:
+        panel._action("joint")
+    finally:
+        panel._auto_kind = None
+    d = panel.app.document_data()
+    assert sorted(j["kind"] for j in d["joints"]) == ["coupling", "pivot", "pivot"], \
+        panel.status.text()
+    c = next(j for j in d["joints"] if j["kind"] == "coupling")
+    assert c["ja"] == d["joints"][0]["name"]             # the motor drives
+    panel._action("validate")
+    assert panel.report is not None and all(r["ok"] for r in panel.report["steps"])
+    n0 = len(scene.guides)
+    _select(win, wheel)
+    panel._action("axis")
+    assert len(scene.guides) == n0 + 1, panel.status.text()
+    g = scene.guides[-1]
+    ax = np.array([g.direction.x(), g.direction.y(), g.direction.z()])
+    assert abs(abs(ax @ pivots[gears.b].axis) - 1) < 1e-6
+    win._on_undo()
+    assert len(scene.guides) == n0                       # one undo step
+    _reset(win, panel)
+
+
 def test_the_four_commands():
     """Pièces (frame first, then moving parts), Liaison (found from two
     parts, kind confirmed or changed; on an edge, by hand), Moteur, Valider;

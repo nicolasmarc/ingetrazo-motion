@@ -243,7 +243,6 @@ EN = {
         "{n} part(s) scanned. Tick the joints to create:",
     "Liaisons proposées": "Proposed joints",
     "Liaison": "Joint",
-    "Pièces": "Parts",
     "Confiance": "Confidence",
     "Engrenage": "Gear pair",
     "Créer les liaisons": "Create the joints",
@@ -279,7 +278,6 @@ EN = {
     "position non atteinte": "position not reached",
     "collision : ": "collision: ",
     "Animation Motion": "Motion animation",
-    "Mécanisme": "Mechanism",
     # -- tools --------------------------------------------------------------------
     "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.":
         "Fixed part — the selected groups form the frame.",
@@ -306,6 +304,22 @@ EN = {
         "Current motor: {o}.\nReplace it with {n}, or keep both (same 0–100 %, each its own "
         "travel)?",
     "Remplacer": "Replace",
+    "axe propre de la pièce : {d}": "the part's own axis: {d}",
+    "Axe (Axis) — sélectionner une pièce : son axe (centre de la denture, alésage, forme ronde) "
+    "tracé en ligne de construction, pour le vérifier ou s'en servir avec « Liaison ».":
+        "Axis — select a part: its axis (centre of its teeth, bore, round shape) drawn as a "
+        "construction line, to check it or use it with « Joint ».",
+    "sélectionner une pièce": "select a part",
+    "{p} : pas d'axe trouvé (ni denture, ni alésage, ni forme ronde)":
+        "{p}: no axis found (no teeth, bore or round shape)",
+    "{p} : {d}": "{p}: {d}",
+    "Axe — ": "Axis — ",
+    "Coché : cette liaison est un moteur, de la première valeur à la seconde. Plusieurs moteurs "
+    "possibles : même 0–100 %, chacun sa course.":
+        "Ticked: this joint is a driver, from the first value to the second. Several drivers "
+        "possible: same 0–100 %, each its own travel.",
+    "Course": "Travel",
+    "Liaison choisie : {n} — {k}": "Selected joint: {n} — {k}",
     "{a} ↔ {b} : pas deux roues dentées qui engrènent — « Plus… » → Couplage pour le régler à "
     "la main.":
         "{a} ↔ {b}: not two toothed wheels in mesh — « More… » → Coupling to set it by hand.",

@@ -14,7 +14,7 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPainterPath,
 NAMES = ("fixed", "moving", "pivot", "slider",
          "cylindrical", "ball", "lock", "elastic",
          "annular", "pointplane", "planar", "screw",
-         "guide", "coupling", "driver", "validate")
+         "guide", "coupling", "axis", "driver", "validate")
 
 LABELS = {
     "fixed": ("Pièce fixe", "Fixed part"),
@@ -26,6 +26,7 @@ LABELS = {
     "validate": ("Valider", "Validate"),
     "trajectory": ("Trajectoire", "Trajectory"),
     "coupling": ("Couplage", "Coupling"),
+    "axis": ("Axe", "Axis"),
     "parts": ("Pièces", "Parts"),
     "joint": ("Liaison", "Joint"),
     "scan": ("Détecter", "Detect"),
@@ -392,7 +393,23 @@ def _screw(p, ink, acc):
     _arrow_head(p, QPointF(15.8, 20.6), math.radians(-20), acc, 2.6)
 
 
-_DRAW = dict(annular=_annular, pointplane=_pointplane, planar=_planar, screw=_screw,
+def _axis(p, ink, acc):
+    """A dash-dot axis through a wheel, a turning arrow round it."""
+    p.setPen(_pen(ink, 1.4, Qt.DashDotLine))
+    p.drawLine(QPointF(3.0, 21.0), QPointF(21.0, 3.0))
+    c = QPointF(12, 12)
+    p.setPen(_pen(ink, 1.6))
+    p.setBrush(_soft(acc, 255))
+    p.drawEllipse(c, 3.6, 3.6)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.6))
+    p.drawArc(QRectF(c.x() - 8, c.y() - 8, 16, 16), 160 * 16, 200 * 16)
+    a = math.radians(0)
+    _arrow_head(p, QPointF(c.x() + 8 * math.cos(a), c.y() - 8 * math.sin(a)),
+                math.radians(-90), acc, 3.2)
+
+
+_DRAW = dict(axis=_axis, annular=_annular, pointplane=_pointplane, planar=_planar, screw=_screw,
              cylindrical=_cylindrical, ball=_ball, lock=_lock, elastic=_elastic,
              spring=_spring, scan=_scan, coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
              guide=_guide, driver=_driver, validate=_validate,

@@ -153,3 +153,28 @@ if __name__ == "__main__":
     for k, fn in list(globals().items()):
         if k.startswith("test_"):
             fn(); print("ok", k)
+
+
+def test_own_axis_of_a_part_without_its_shaft():
+    # a toothed wheel: the centre of its teeth; a link: its round shape
+    # nearest the part it turns in (pin or bore); a bar with round ends is no wheel
+    asm, parts, props, frame, _ = _scan("engrenages")
+    pivots = [x for x in props if x.kind == "pivot"]
+    for p in parts:
+        if p.name == "Platine":
+            continue
+        pt, ax, kind, det = detect.own_axis(p)
+        assert kind == "gear" and "dents" in det, (p.name, det)
+        ref = next(x for x in pivots if p.key in (x.a, x.b))
+        d = pt - ref.point
+        assert abs(abs(ax @ ref.axis) - 1) < 1e-6
+        assert np.linalg.norm(d - (d @ ref.axis) * ref.axis) < 1e-6
+    asm, parts, props, frame, _ = _scan("quadrilatere")
+    by = {p.name: p for p in parts}
+    for name in ("Manivelle", "Balancier"):
+        pt, ax, kind, det = detect.own_axis(by[name], near=by["Socle"].points)
+        assert kind in ("bore", "round"), (name, det)
+        ref = next(x for x in props if x.kind == "pivot" and {x.a, x.b} == {by[name].key, frame})
+        d = pt - ref.point
+        assert np.linalg.norm(d - (d @ ref.axis) * ref.axis) < 1e-6, name
+    assert detect.own_axis(by["Bielle"])[2] != "gear"

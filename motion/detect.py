@@ -494,6 +494,91 @@ def count_teeth(points, centre, axis, min_teeth=6):
     return z, float(rmax), float(rmin)
 
 
+def _regular_teeth(points, centre, axis, z, share=0.45):
+    """The outline around ``axis`` repeats ``z`` times, evenly: most of its
+    ups and downs at that one frequency (a bar with two round ends is
+    not a wheel of 9 teeth)."""
+    u, v = _basis(axis)
+    d = points - centre
+    d = d - np.outer(d @ axis, axis)
+    r = np.hypot(d @ u, d @ v)
+    ang = np.arctan2(d @ v, d @ u)
+    keep = r > 0.6 * r.max()
+    r, ang = r[keep], ang[keep]
+    nb = 1440
+    prof = np.zeros(nb)
+    k = ((ang + np.pi) / (2 * np.pi) * nb).astype(int) % nb
+    np.maximum.at(prof, k, r)
+    idx = np.nonzero(prof > 0)[0]
+    if len(idx) < 4 * z:
+        return False
+    prof = np.interp(np.arange(nb), idx, prof[idx], period=nb)
+    F = np.abs(np.fft.rfft(prof - prof.mean())) ** 2
+    total = F[1:].sum()
+    if total <= 0:
+        return False
+    near = F[max(z - 1, 1):z + 2].sum() + F[2 * z - 1:2 * z + 2].sum()   # the teeth and their
+    return near / total >= share                                         # sharper shape
+
+
+def own_axis(part, min_teeth=6, near=None):
+    """The axis a part turns about by itself, read from its shape alone
+    (no shaft needed in a bore): a toothed wheel's (the centre of its
+    teeth), else its largest bore, else its largest round outside (a
+    shaft, a wheel, a pulley). (point, axis, kind, detail) or None; the
+    point sits halfway along the part on that axis. ``near``: points of
+    the part it turns in (the frame): of two bores, the one nearest it."""
+    P = part.points if part.points is not None else np.zeros((0, 3))
+    if len(P) < 8:
+        return None
+    round_ = [c for c in part.cylinders if c.span >= 180.0]
+
+    def mid(c, ax):
+        t = (P - c) @ ax
+        return c + 0.5 * (t.min() + t.max()) * ax
+
+    # a toothed wheel: its own axes first (bores), then the directions of
+    # the points (a flat wheel: the thin one), each recentred on the outline
+    cands = [(np.asarray(c.point, float), _unit(c.axis)) for c in
+             sorted(round_, key=lambda c: (c.convex, -c.radius))]
+    C = P.mean(axis=0)
+    w, V = np.linalg.eigh(np.cov((P - C).T))
+    cands += [(C, _unit(V[:, k])) for k in range(3)]
+    for c, ax in cands:
+        for centre in (c, None):
+            if centre is None:                  # the middle of the outline
+                u, v = _basis(ax)
+                d = P - c
+                pu, pv = d @ u, d @ v
+                centre = c + u * 0.5 * (pu.max() + pu.min()) + v * 0.5 * (pv.max() + pv.min())
+            t = count_teeth(P, centre, ax, min_teeth)
+            if t and _regular_teeth(P, centre, ax, t[0]):
+                z, rt, rr = t
+                return (mid(centre, ax), ax, "gear",
+                        f"denture {z} dents, Ø tête {2000 * rt:.1f} mm")
+    Q = None
+    if near is not None and len(near):
+        Q = np.asarray(near, float)
+        Q = Q[:: max(1, len(Q) // 4000)]
+
+    def gap(c):                               # from the axis to the other part
+        if Q is None:
+            return 0.0
+        ax = _unit(c.axis)
+        d = Q - c.point
+        return float(np.min(np.linalg.norm(d - np.outer(d @ ax, ax), axis=1)))
+
+    if not round_:
+        return None
+    # the round shape nearest the part it turns in (its pin or its bore
+    # is there); else a bore before a round outside, the largest first
+    c = min(round_, key=lambda c: (round(gap(c), 4), c.convex, -c.radius, -c.span))
+    ax = _unit(c.axis)
+    what = "forme ronde" if c.convex else "alésage"
+    return (mid(np.asarray(c.point, float), ax), ax, "round" if c.convex else "bore",
+            f"{what} Ø {2000 * c.radius:.1f} mm")
+
+
 def _gears(parts, pivots, size):
     by = {p.key: p for p in parts}
     out = []
