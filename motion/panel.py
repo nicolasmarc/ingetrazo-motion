@@ -84,7 +84,9 @@ TIPS = {
     "slider": "Glissière (Slider) — sélectionner les DEUX pièces (appuis plans ou tige dans une "
               "douille), ou UNE arête dans le sens du coulissement.",
     "guide": "Guide / rail — sélectionner les arêtes du rail + un petit trait en travers à chaque galet.",
-    "driver": "Moteur 0–100 % (Driver) — la liaison choisie dans la liste, avec la course indiquée.",
+    "driver": "Moteur (Driver) — sélectionner la pièce à entraîner : sa liaison avec le bâti "
+              "devient le moteur (trouvée d'après les formes s'il le faut). Ou la liaison choisie "
+              "dans la liste, avec la course indiquée.",
     "validate": "Valider (Validate) — de 0 à 100 % : collisions, butées, jeu minimal.",
     "trajectory": "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.",
     "coupling": "Couplage (Coupling) — engrenage, pignon-crémaillère, roulement : deux liaisons "
@@ -1489,8 +1491,16 @@ class MotionPanel(QWidget):
             found = self._find_between(bodies, k)
             if found is not None:
                 break
-        k = kind or self._ask_kind(found, bodies)
+        gears = self._gear_pair(bodies) if found is None else None
+        k = kind or self._ask_kind(found, bodies, gears)
         if not k:
+            return
+        if k == "coupling":
+            if gears is None:
+                raise ValueError(_T("{a} ↔ {b} : pas deux roues dentées qui engrènent — "
+                                    "« Plus… » → Couplage pour le régler à la main.",
+                                    a=bodies[0]["name"], b=bodies[1]["name"]))
+            self._make_gears(bodies, gears)
             return
         x = found if (found is not None and found.kind == k) else self._find_between(bodies, k)
         if x is None and found is not None:
@@ -1503,7 +1513,7 @@ class MotionPanel(QWidget):
                                 "une arête sur l'axe.", a=bodies[0]["name"], b=bodies[1]["name"]))
         self._make_found(bodies, k, x)
 
-    def _ask_kind(self, found, bodies):
+    def _ask_kind(self, found, bodies, gears=None):
         """The joint's kind: the one found pre-selected; None = cancelled."""
         if getattr(self, "_auto_kind", None) is not None:          # tests
             return self._auto_kind
@@ -1514,6 +1524,9 @@ class MotionPanel(QWidget):
         if found is not None:
             msg = _T("Trouvé d'après les formes : {k} — {d}", k=_T(KIND_NAMES[found.kind]),
                      d=found.detail)
+        elif gears is not None:
+            msg = _T("Trouvé d'après les formes : engrenage, {za} et {zb} dents (rapport {za}/{zb}). "
+                     "Les pivots manquants avec le bâti sont ajoutés.", za=gears["za"], zb=gears["zb"])
         elif bodies:
             msg = _T("Rien trouvé d'après les formes entre {a} et {b} : choisir le type, "
                      "puis sélectionner une arête sur l'axe.", a=bodies[0]["name"], b=bodies[1]["name"])
@@ -1523,10 +1536,11 @@ class MotionPanel(QWidget):
         lab.setWordWrap(True)
         form.addRow(lab)
         combo = QComboBox()
-        for k in self.JOINT_KINDS:
+        kinds = (("coupling",) if gears is not None else ()) + self.JOINT_KINDS
+        for k in kinds:
             combo.addItem(icons.icon(k, self, 16), _T(KIND_NAMES[k]), k)
         if found is not None:
-            combo.setCurrentIndex(self.JOINT_KINDS.index(found.kind))
+            combo.setCurrentIndex(kinds.index(found.kind))
         form.addRow(_T("Type"), combo)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(dlg.accept)
@@ -1534,7 +1548,7 @@ class MotionPanel(QWidget):
         form.addRow(bb)
         if not dlg.exec():
             return None
-        if found is None and bodies:
+        if found is None and bodies and combo.currentData() not in ("lock", "coupling"):
             return None                            # nothing to put it on
         return combo.currentData()
 
@@ -1595,6 +1609,82 @@ class MotionPanel(QWidget):
                 self._lock_parts(bodies)
                 return
         self._point_joint("lock")
+
+    def _turning_joint(self, body):
+        """A part's pivot (with the frame first): its record, or None."""
+        fixed = {b["name"] for b in self.data["bodies"] if b["fixed"]}
+        mine = [j for j in self.data["joints"] if j["kind"] in ("pivot", "cylindrical")
+                and body["name"] in (j["a"], j["b"])]
+        grounded = [j for j in mine if ({j["a"], j["b"]} - {body["name"]}) & fixed]
+        return (grounded or mine or [None])[0]
+
+    def _gear_pair(self, bodies):
+        """Two toothed wheels that mesh, each on its pivot (made from the
+        shapes with the frame when missing): dict(za, zb, src) or None."""
+        from . import detect
+        by = groups_by_uid(self._scene())
+        frames = [b for b in self.data["bodies"] if b["fixed"]]
+        wheels = []
+        for b_ in bodies:
+            if b_["fixed"]:
+                return None
+            j = self._turning_joint(b_)
+            if j is not None and j.get("axis") is not None:
+                pt, ax, src = np.asarray(j["point"], float), np.asarray(j["axis"], float), j
+            else:
+                x = None
+                for fr in frames:
+                    x = self._find_between([fr, b_], "pivot")
+                    if x is not None:
+                        break
+                if x is None:
+                    return None
+                pt, ax, src = np.asarray(x.point, float), np.asarray(x.axis, float), (fr, x)
+            ax = ax / max(np.linalg.norm(ax), 1e-12)
+            P = [group_points(by[u]) for u in b_["groups"] if u in by]
+            P = [p for p in P if len(p)]
+            if not P:
+                return None
+            P = np.vstack(P)
+            t = detect.count_teeth(P, pt, ax)
+            if not t:
+                return None
+            wheels.append((pt, ax, src, t, P))
+        (pa, aa, sa, (za, ra, fa), Pa), (pb, ab, sb, (zb, rb, fb), Pb) = wheels
+        if abs(abs(aa @ ab) - 1) > 1e-3:
+            return None
+        d = pb - pa
+        dist = float(np.linalg.norm(d - (d @ aa) * aa))
+        depth = 0.5 * ((ra - fa) + (rb - fb))
+        allp = np.vstack([Pa, Pb])
+        size = float(np.linalg.norm(allp.max(0) - allp.min(0)))
+        if abs((ra + rb) - dist - depth) > 0.6 * depth + 2e-4 * size:
+            return None
+        return dict(za=za, zb=zb, src=(sa, sb))
+
+    def _make_gears(self, bodies, g):
+        """The pivots still missing, then the coupling: the first part
+        selected drives (unless the other one already carries a motor)."""
+        names = []
+        for b_, src in zip(bodies, g["src"]):
+            if isinstance(src, dict):
+                names.append(src["name"])
+            else:
+                fr, x = src
+                self._make_found([fr, b_], "pivot", x)
+                names.append(next(k["name"] for k in self.data["joints"][::-1]
+                                  if k["kind"] == "pivot"
+                                  and {k["a"], k["b"]} == {fr["name"], b_["name"]}))
+        za, zb = g["za"], g["zb"]
+        motors = {x["joint"] for x in self.data["drivers"]}
+        if names[1] in motors and names[0] not in motors:
+            names.reverse()
+            za, zb = zb, za
+        rec = {j["name"]: j for j in self.data["joints"]}
+        ratio = -za / zb * self._coupling_sign(rec[names[0]], rec[names[1]])
+        d, name = doc.add_coupling(self.data, names[0], names[1], ratio)
+        self._store(d, _T("Engrenage {name} : {za} → {zb} dents, rapport {r}.",
+                          name=name, za=za, zb=zb, r=f"{ratio:+.4g}"))
 
     def _lock_parts(self, bodies):
         """Encastrement between two parts: they move as one, wherever the
@@ -1975,16 +2065,103 @@ class MotionPanel(QWidget):
             self._fill_tree()
             self.say(_T("Moteur : {j} ({n} moteur(s)).", j=j.name, n=len(m.drivers)))
             return
+        part = self._motor_part(name)
+        if part is not None:                       # a part: its own joint drives it
+            self._motor_on_part(part)
+            return
         j = self._joint_record(name)
         if j is None:
             if len(self.data["joints"]) == 1:
                 j = self.data["joints"][0]
                 self._show_travel(j["kind"], None, j)
             else:
-                raise ValueError(_T("choisir une liaison dans la liste"))
-        d = doc.add_driver(self.data, j["name"], self._from_ui(j["kind"], self.drv_lo.value()),
-                           self._from_ui(j["kind"], self.drv_hi.value()))
-        self._store(d, _T("Moteur : {j} ({n} moteur(s)).", j=j['name'], n=len(d['drivers'])))
+                raise ValueError(_T("sélectionner la pièce à entraîner (ou choisir une liaison "
+                                    "dans la liste)"))
+        self._set_motor(j, self._from_ui(j["kind"], self.drv_lo.value()),
+                        self._from_ui(j["kind"], self.drv_hi.value()))
+
+    MOTOR_KINDS = ("pivot", "cylindrical", "screw", "slider")
+
+    def _motor_part(self, chosen):
+        """The moving part to drive: the one selected in the model (one
+        part), else the part chosen in the list; None otherwise."""
+        bodies, _ = self._selected_bodies()
+        if len(bodies) == 1 and not bodies[0]["fixed"]:
+            return bodies[0]
+        if len(bodies) > 1:
+            return None
+        return next((b for b in self.data["bodies"] if b["name"] == chosen and not b["fixed"]),
+                    None)
+
+    def _motor_on_part(self, part):
+        """Moteur on a part: its joint with the frame (else its only joint
+        that turns or slides) becomes the motor; none yet, the pivot with
+        the frame is found from the shapes and made."""
+        name = part["name"]
+        fixed = {b["name"] for b in self.data["bodies"] if b["fixed"]}
+        mine = [j for j in self.data["joints"]
+                if j["kind"] in self.MOTOR_KINDS and name in (j["a"], j["b"])]
+        grounded = [j for j in mine if ({j["a"], j["b"]} - {name}) & fixed]
+        j = (grounded or mine or [None])[0]
+        made = ""
+        if j is None:
+            for fr in [b for b in self.data["bodies"] if b["fixed"]]:
+                x = self._find_between([fr, part], "pivot")
+                if x is not None:
+                    self._make_found([fr, part], "pivot", x)
+                    j = next(k for k in self.data["joints"][::-1]
+                             if k["kind"] == "pivot" and {k["a"], k["b"]} == {fr["name"], name})
+                    made = _T("pivot trouvé d'après les formes ({d}), ", d=x.detail)
+                    break
+        if j is None:
+            raise ValueError(_T("{p} : aucun pivot trouvé avec le bâti — sélectionner une arête "
+                                "sur son axe, puis « Liaison ».", p=name))
+        old = next((x for x in self.data["drivers"] if x["joint"] == j["name"]), None)
+        if old is not None:
+            lo, hi = old["lo"], old["hi"]
+        else:
+            mj = next((k for k in self.mechanism().joints if k.name == j["name"]), None)
+            lo = self.mechanism().joint_value(mj, np.zeros(self.mechanism().n)) if mj else 0.0
+            hi = lo + (2 * math.pi if self._is_angle(j["kind"]) else 0.1)  # a turn, 100 mm
+        self._set_motor(j, lo, hi, made)
+
+    def _set_motor(self, j, lo, hi, made=""):
+        """``j`` becomes a motor from lo to hi; another motor already there:
+        replace it or keep both (asked)."""
+        others = [x["joint"] for x in self.data["drivers"] if x["joint"] != j["name"]]
+        replace = False
+        if others:
+            ans = self._ask_replace_motor(others, j["name"])
+            if ans is None:
+                return
+            replace = ans == "replace"
+        d = doc.add_driver(self.data, j["name"], lo, hi)
+        if replace:
+            for o in others:
+                d = doc.remove_driver(d, o)
+        self._store(d, made + _T("Moteur : {j} ({n} moteur(s)).", j=j["name"], n=len(d["drivers"])))
+        hit = self.tree.findItems(j["name"], Qt.MatchExactly)
+        if hit:                                   # its travel shown, ready to change
+            self.tree.setCurrentItem(hit[0])
+            self._highlight(j["name"])
+
+    def _ask_replace_motor(self, others, new):
+        """'replace' | 'add' | None (cancelled)."""
+        auto = getattr(self, "_auto_motor", None)          # tests
+        if auto is not None:
+            return auto
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle(_T("Moteur"))
+        box.setText(_T("Moteur actuel : {o}.\nLe remplacer par {n}, ou garder les deux "
+                       "(même 0–100 %, chacun sa course) ?", o=", ".join(others), n=new))
+        rep = box.addButton(_T("Remplacer"), QMessageBox.AcceptRole)
+        add = box.addButton(_T("Garder les deux"), QMessageBox.ActionRole)
+        box.addButton(_T("Annuler"), QMessageBox.RejectRole)
+        box.setDefaultButton(rep)
+        box.exec()
+        c = box.clickedButton()
+        return "replace" if c == rep else "add" if c == add else None
 
     def _apply_joint(self):
         j = self._joint_record(self._chosen())

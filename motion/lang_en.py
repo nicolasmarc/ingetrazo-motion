@@ -291,8 +291,31 @@ EN = {
         "Slider — select the TWO parts (flat contacts, or a rod in a sleeve), or ONE edge along the travel.",
     "Guide / rail — sélectionner les arêtes du rail + un petit trait en travers à chaque galet.":
         "Guide / rail — select the rail's edges + a short stroke across it at each roller.",
-    "Moteur 0–100 % (Driver) — la liaison choisie dans la liste, avec la course indiquée.":
-        "Driver 0–100 % — the joint chosen in the list, over the travel typed.",
+    "Moteur (Driver) — sélectionner la pièce à entraîner : sa liaison avec le bâti devient le "
+    "moteur (trouvée d'après les formes s'il le faut). Ou la liaison choisie dans la liste, avec "
+    "la course indiquée.":
+        "Driver — select the part to drive: its joint with the frame becomes the motor (found from "
+        "the shapes if needed). Or the joint chosen in the list, with the travel given.",
+    "sélectionner la pièce à entraîner (ou choisir une liaison dans la liste)":
+        "select the part to drive (or choose a joint in the list)",
+    "pivot trouvé d'après les formes ({d}), ": "pivot found from the shapes ({d}), ",
+    "{p} : aucun pivot trouvé avec le bâti — sélectionner une arête sur son axe, puis « Liaison ».":
+        "{p}: no pivot found with the frame — select an edge on its axis, then « Joint ».",
+    "Moteur actuel : {o}.\nLe remplacer par {n}, ou garder les deux (même 0–100 %, chacun sa "
+    "course) ?":
+        "Current motor: {o}.\nReplace it with {n}, or keep both (same 0–100 %, each its own "
+        "travel)?",
+    "Remplacer": "Replace",
+    "{a} ↔ {b} : pas deux roues dentées qui engrènent — « Plus… » → Couplage pour le régler à "
+    "la main.":
+        "{a} ↔ {b}: not two toothed wheels in mesh — « More… » → Coupling to set it by hand.",
+    "Trouvé d'après les formes : engrenage, {za} et {zb} dents (rapport {za}/{zb}). Les pivots "
+    "manquants avec le bâti sont ajoutés.":
+        "Found from the shapes: gears, {za} and {zb} teeth (ratio {za}/{zb}). The missing pivots "
+        "with the frame are added.",
+    "Engrenage {name} : {za} → {zb} dents, rapport {r}.":
+        "Gears {name}: {za} → {zb} teeth, ratio {r}.",
+    "Garder les deux": "Keep both",
     "Valider (Validate) — de 0 à 100 % : collisions, butées, jeu minimal.":
         "Validate — from 0 to 100 %: collisions, limits, minimum gap.",
     "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.":

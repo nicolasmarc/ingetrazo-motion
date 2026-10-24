@@ -27,6 +27,13 @@
   Rotule accept two selected parts instead of an edge. On the spider, 9 of
   its 14 pivots / ball joints are found with the same axis; where the
   shapes hold no shaft in a bore, Motion says so.
+- **Moteur on a part**: select the part to drive, « Moteur »: its joint
+  with the frame becomes the motor (one turn), the pivot found from the
+  shapes and made when missing; another motor already there: replace it
+  or keep both (asked).
+- **Gears in one gesture**: two toothed wheels selected, « Liaison »:
+  Couplage proposed with the teeth counted, the missing pivots with the
+  frame made; the first wheel selected drives.
 - **The part clicked in the list stands out in the model**: its edges
   drawn thick over the model, fixed parts included (IngeTrazo's selection
   box alone was lost in a big model).

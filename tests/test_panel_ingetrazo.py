@@ -971,6 +971,115 @@ def test_joint_from_two_selected_parts():
     _reset(win, panel)
 
 
+def test_motor_on_a_selected_part():
+    """Moteur with a part selected: its pivot with the frame is found from
+    the shapes (made when missing) and drives it a whole turn; a second
+    part: replace the motor or keep both."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    scene.groups[:] = [g for g in scene.groups if getattr(g, "billboard", False)]
+    scene.version += 1
+    asm, groups = panel.import_step(str(HERE / "data" / "detect_quadrilatere.step"))
+    parts, props, frame = panel.scan_model(groups)
+    by = {g.uid: g for g in groups}
+    _select(win, by[frame]); panel._action("parts")
+    for g in groups:
+        if g.uid != frame:
+            _select(win, g); panel._action("parts")
+    cranks = [x for x in props if x.kind == "pivot" and frame in (x.a, x.b)]
+    assert cranks, props
+    first = by[cranks[0].b if cranks[0].a == frame else cranks[0].a]
+    _select(win, first)
+    panel._action("driver")
+    d = panel.app.document_data()
+    assert len(d["joints"]) == 1 and d["joints"][0]["kind"] == "pivot", panel.status.text()
+    assert [x["joint"] for x in d["drivers"]] == [d["joints"][0]["name"]]
+    assert abs((d["drivers"][0]["hi"] - d["drivers"][0]["lo"]) - 2 * math.pi) < 1e-9
+    assert panel._chosen() == d["joints"][0]["name"]        # its travel on show
+    # the same part again: the same joint, nothing more
+    _select(win, first)
+    panel._action("driver")
+    assert len(panel.app.document_data()["joints"]) == 1
+    if len(cranks) > 1:
+        second = by[cranks[1].b if cranks[1].a == frame else cranks[1].a]
+        for answer, n in (("add", 2), ("replace", 1)):
+            panel._auto_motor = answer
+            try:
+                _select(win, second)
+                panel._action("driver")
+            finally:
+                panel._auto_motor = None
+            assert len(panel.app.document_data()["drivers"]) == n, (answer, panel.status.text())
+    assert len(cranks) > 1, "the four-bar has two cranks on its frame"
+    _reset(win, panel)
+
+
+def test_gears_from_two_selected_wheels():
+    """Liaison with two toothed wheels selected: Couplage proposed, their
+    pivots with the frame made from the shapes, the ratio from the teeth
+    counted — the same as « Détecter… » finds."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    scene.groups[:] = [g for g in scene.groups if getattr(g, "billboard", False)]
+    scene.version += 1
+    asm, groups = panel.import_step(str(HERE / "data" / "detect_engrenages.step"))
+    parts, props, frame = panel.scan_model(groups)
+    want = next(x for x in props if x.kind == "gears")
+    by = {g.uid: g for g in groups}
+    _select(win, by[frame]); panel._action("parts")
+    for g in groups:
+        if g.uid != frame:
+            _select(win, g); panel._action("parts")
+    names = {b["groups"][0]: b["name"] for b in panel.data["bodies"]}
+    _select(win, by[want.a], by[want.b])
+    panel._auto_kind = "coupling"
+    try:
+        panel._action("joint")
+    finally:
+        panel._auto_kind = None
+    d = panel.app.document_data()
+    kinds = sorted(j["kind"] for j in d["joints"])
+    assert kinds == ["coupling", "pivot", "pivot"], panel.status.text()
+    c = next(j for j in d["joints"] if j["kind"] == "coupling")
+    za, zb = (int(z) for z in want.detail.split(" dents")[0].split(" et "))
+    assert abs(abs(c["ratio"]) - za / zb) < 1e-9 or abs(abs(c["ratio"]) - zb / za) < 1e-9
+    # driven from the first wheel: the second turns the other way, slower
+    # or faster by the teeth
+    rec = {j["name"]: j for j in d["joints"]}
+    assert rec[c["ja"]]["b"] == names[want.a] or rec[c["ja"]]["a"] == names[want.a]
+    d = doc_add_driver(d, c["ja"], 0.0, math.pi / 2)    # a quarter turn (no wrap)
+    panel.app.set_document_data(d)
+    panel.set_source("model")
+    m = panel.mechanism()
+    rep = __import__(type(panel).__module__.rsplit(".", 1)[0] + ".collide",
+                     fromlist=["validate"]).validate(m, 9, 0.0)
+    x = rep["steps"][-1]["x"]
+    ja = next(j for j in m.joints if j.name == c["ja"])
+    jb = next(j for j in m.joints if j.name == c["jb"])
+    turned_b = m.joint_value(jb, x) - m.joint_value(jb, rep["steps"][0]["x"])
+    assert abs(abs(turned_b) - math.pi / 2 * za / zb) < 1e-3, turned_b
+    # seen from the frame the two wheels turn opposite ways (they mesh)
+    ax = np.asarray(want.axis, float)
+    u = np.cross(ax, [1.0, 0, 0] if abs(ax[0]) < 0.9 else [0, 1.0, 0])
+    u /= np.linalg.norm(u)
+
+    def world_turn(body):
+        R = body.rot(m.pose(x, body))
+        v = R @ u
+        return math.atan2(np.dot(np.cross(u, v), ax), np.dot(u, v))
+    ta, tb = world_turn(ja.b if not ja.b.fixed else ja.a), world_turn(jb.b if not jb.b.fixed else jb.a)
+    assert ta * tb < 0 and abs(abs(tb / ta) - za / zb) < 1e-3, (ta, tb)
+    _reset(win, panel)
+
+
 def test_the_four_commands():
     """Pièces (frame first, then moving parts), Liaison (found from two
     parts, kind confirmed or changed; on an edge, by hand), Moteur, Valider;
