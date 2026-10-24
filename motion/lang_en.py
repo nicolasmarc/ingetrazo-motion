@@ -262,6 +262,10 @@ EN = {
     "Vidéo MP4 (*.mp4)": "MP4 video (*.mp4)",
     "Vidéo AVI (*.avi)": "AVI video (*.avi)",
     "Rendu de la vidéo…": "Rendering the video…",
+    "L'encodeur MP4 de Qt ne répond plus. Indiquer ffmpeg.exe dans la fenêtre d'export, ou "
+    "réessayer.":
+        "Qt's MP4 encoder no longer answers. Point to ffmpeg.exe in the export window, or try "
+        "again.",
     "Vidéo enregistrée : {out} — {label}.": "Video saved: {out} — {label}.",
     "Export annulé.": "Export cancelled.",
     "Panneau Motion": "Motion panel",

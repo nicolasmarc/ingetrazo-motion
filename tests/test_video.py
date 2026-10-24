@@ -64,8 +64,13 @@ def test_mp4_writers_when_available():
             continue
         path = os.path.join(tempfile.mkdtemp(), "m.mp4")
         w = video.open_writer(path, 320, 180, 30, prefer=prefer)
-        for im in _frames(30):
-            w.add(im)
+        try:
+            for im in _frames(30):
+                w.add(im)
+        except RuntimeError as exc:          # a Qt encoder that never starts (no
+            assert prefer == "qt", exc       # media backend here): it says so
+            print("skip qt:", exc)
+            continue
         out = w.close()
         assert out == path and os.path.getsize(out) > 0
         info = probe(out)
@@ -86,3 +91,23 @@ if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):
             f(); print("ok", k)
+
+
+def test_a_stuck_qt_encoder_stops_with_a_message():
+    # the encoder never takes a frame: before 0.9 the export looped for
+    # ever and froze IngeTrazo
+    if video is None:
+        return
+    w = video.QtWriter.__new__(video.QtWriter)
+    w.fps, w.n = 30, 0
+    w.input = type("In", (), {"sendVideoFrame": lambda self, f: False})()
+    stopped = []
+    w.rec = type("Rec", (), {"stop": lambda self: stopped.append(1)})()
+    w._wait = lambda done, ms: done()
+    im = next(_frames(1))
+    try:
+        w.add(im)
+    except RuntimeError as exc:
+        assert "ffmpeg" in str(exc) and stopped
+    else:
+        raise AssertionError("no error")

@@ -170,8 +170,15 @@ class QtWriter:
         us = int(round(1e6 / self.fps))
         frame.setStartTime(self.n * us)
         frame.setEndTime((self.n + 1) * us)
+        waited = 0
         while not self.input.sendVideoFrame(frame):     # encoder queue full
             self._wait(lambda: False, 5)
+            waited += 5
+            if waited > 20000:                           # it never takes it: a stuck
+                self.rec.stop()                          # encoder froze the window
+                from .lang import T as _T
+                raise RuntimeError(_T("L'encodeur MP4 de Qt ne répond plus. Indiquer "
+                                      "ffmpeg.exe dans la fenêtre d'export, ou réessayer."))
         self.n += 1
 
     def close(self):

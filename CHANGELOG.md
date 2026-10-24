@@ -43,6 +43,9 @@
   the validation of that model drops from more than 5 minutes to about
   12 s without scipy. The video's progress window opens after the
   validation, not behind it.
+- **A stuck MP4 encoder no longer freezes the window**: when Qt's encoder
+  takes no frame for 20 s the export stops with a message (point to
+  ffmpeg.exe, or try again) instead of waiting for ever.
 - **A moving part tied to nothing fixed is reported** in kinematics (its
   position is undefined: the solver turned it with its neighbours).
 
