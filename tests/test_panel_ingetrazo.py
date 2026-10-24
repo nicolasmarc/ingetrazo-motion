@@ -854,3 +854,101 @@ def test_new_file_brings_the_panel_back_to_the_document():
     win.viewport.notify_scene_changed()
     assert panel.source == "chaise"
     panel.set_source("model")
+
+
+def test_joint_from_two_selected_parts():
+    """Pivot / Glissière with two parts selected and no edge: the joint is
+    the one « Détecter… » finds between them (shaft in bore, slides)."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    for name, kind in (("quadrilatere", "pivot"), ("coulisse", "slider")):
+        _reset(win, panel)
+        scene = win.viewport.scene
+        scene.groups[:] = [g for g in scene.groups if getattr(g, "billboard", False)]
+        scene.version += 1
+        asm, groups = panel.import_step(str(HERE / "data" / f"detect_{name}.step"))
+        parts, props, frame = panel.scan_model(groups)
+        by = {g.uid: g for g in groups}
+        _select(win, by[frame]); panel._action("fixed")
+        others = [g for g in groups if g.uid != frame]
+        for g in others:
+            _select(win, g); panel._action("moving")
+        want = next(x for x in props if x.kind == kind and frame in (x.a, x.b))
+        other = by[want.b if want.a == frame else want.a]
+        n0 = len(panel.data["joints"])
+        _select(win, other, by[frame])                    # the moving part first
+        panel._action(kind)
+        assert len(panel.data["joints"]) == n0 + 1, panel.status.text()
+        j = panel.data["joints"][-1]
+        assert j["kind"] == kind
+        fixed = next(b["name"] for b in panel.data["bodies"] if b["fixed"])
+        assert j["a"] == fixed                            # the frame first
+        assert abs(abs(np.dot(j["axis"], want.axis)) - 1) < 1e-9
+        if kind == "pivot":
+            d = np.asarray(j["point"]) - want.point
+            assert np.linalg.norm(d - np.dot(d, want.axis) * want.axis) < 1e-6
+    # two groups of the same part, or one part only: told, nothing made
+    n0 = len(panel.data["joints"])
+    _select(win, by[frame]); panel._action("pivot")
+    assert len(panel.data["joints"]) == n0 and "DEUX" in panel.status.text()
+    _reset(win, panel)
+
+
+def test_the_four_commands():
+    """Pièces (frame first, then moving parts), Liaison (found from two
+    parts, kind confirmed or changed; on an edge, by hand), Moteur, Valider;
+    « Plus… » shows the full set of tools."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    assert set(panel.main_buttons) == {"parts", "joint", "driver", "validate"}
+    panel.more_btn.setChecked(False)
+    assert not panel.more.isVisibleTo(panel)
+    panel.more_btn.setChecked(True)
+    assert panel.more.isVisibleTo(panel)
+    scene = win.viewport.scene
+    scene.groups[:] = [g for g in scene.groups if getattr(g, "billboard", False)]
+    scene.version += 1
+    asm, groups = panel.import_step(str(HERE / "data" / "detect_quadrilatere.step"))
+    parts, props, frame = panel.scan_model(groups)
+    by = {g.uid: g for g in groups}
+    _select(win, by[frame]); panel._action("parts")
+    others = [g for g in groups if g.uid != frame]
+    for g in others:
+        _select(win, g); panel._action("parts")
+    assert [b["fixed"] for b in panel.data["bodies"]] == [True] + [False] * len(others)
+    _select(win, others[0]); panel._action("parts")             # already a part: told
+    assert len(panel.data["bodies"]) == 1 + len(others)
+    want = next(x for x in props if x.kind == "pivot" and frame in (x.a, x.b))
+    other = by[want.b if want.a == frame else want.a]
+    _select(win, other, by[frame])
+    panel._auto_kind = None
+    try:
+        panel._auto_kind = "pivot"
+        panel._action("joint")
+        j = panel.data["joints"][-1]
+        assert j["kind"] == "pivot" and abs(abs(np.dot(j["axis"], want.axis)) - 1) < 1e-9
+        panel._auto_kind = "cylindrical"                         # kind changed in the dialog
+        panel._action("joint")
+        j2 = panel.data["joints"][-1]
+        assert j2["kind"] == "cylindrical" and np.allclose(j2["axis"], j["axis"])
+        from PySide6.QtGui import QVector3D as V
+        e = scene.mesh.add_edge(V(0, 0, 0), V(0, 0, 0.1))
+        _select(win, e)                                          # an edge: by hand
+        n0 = len(panel.data["joints"])
+        panel._auto_kind = "slider"
+        panel._action("joint")
+        assert len(panel.data["joints"]) == n0 + 1 and panel.data["joints"][-1]["kind"] == "slider"
+    finally:
+        panel._auto_kind = None
+    called = []
+    panel._scan_dialog = lambda: called.append(1)
+    scene.selection.clear()
+    panel._action("parts")                                       # nothing selected: detection
+    del panel._scan_dialog
+    assert called == [1]
+    _reset(win, panel)

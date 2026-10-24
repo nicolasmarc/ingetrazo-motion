@@ -26,6 +26,8 @@ LABELS = {
     "validate": ("Valider", "Validate"),
     "trajectory": ("Trajectoire", "Trajectory"),
     "coupling": ("Couplage", "Coupling"),
+    "parts": ("Pièces", "Parts"),
+    "joint": ("Liaison", "Joint"),
     "scan": ("Détecter", "Detect"),
     "cylindrical": ("Pivot glissant", "Cylindrical"),
     "ball": ("Rotule", "Ball"),

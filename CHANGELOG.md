@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.0 — unreleased
+
+### Changed
+- **Four commands instead of sixteen buttons**: « Pièces » (the first
+  selection becomes the frame, the next ones moving parts; nothing selected:
+  automatic detection of the whole model), « Liaison » (two parts selected:
+  the joint is found from their shapes — a shaft in a bore, a ball in its
+  socket, flat or round slides — and shown to confirm or change its kind;
+  an edge selected: the joint by hand on it), « Moteur », « Valider ».
+  « Plus… » shows every tool for the special cases (remembered).
+
+### Added
+- **Joints found from two parts**: Pivot, Pivot glissant, Glissière and
+  Rotule accept two selected parts instead of an edge. On the spider, 9 of
+  its 14 pivots / ball joints are found with the same axis; where the
+  shapes hold no shaft in a bore, Motion says so.
+- **Ball joints in the automatic detection** (a ball in a spherical socket).
+
+### Fixed
+- **Automatic detection of a big model**: more than 15 minutes on the
+  spider (133 groups), now about 20–40 s — face normals and areas computed
+  together, facing flat contacts paired all at once, the parts' faces read
+  in one pass. The parts already in the list are taken whole (the spider:
+  48 false pivots between the screws of its shell gone), the frame already
+  chosen stays, and joints already made are not proposed again.
+
 ## 0.8.0 — 2026-10-24
 
 ### Fixed

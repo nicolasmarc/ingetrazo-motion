@@ -71,18 +71,28 @@ def _detail(text):
 
 
 TIPS = {
+    "parts": "Pièces (Parts) — les groupes sélectionnés : le premier ensemble devient le bâti, les "
+             "suivants des pièces mobiles. Sans sélection : détection automatique de tout le "
+             "modèle (pièces et liaisons, à cocher).",
+    "joint": "Liaison (Joint) — DEUX pièces sélectionnées : la liaison est trouvée d'après leurs "
+             "formes (pivot, rotule, glissière), à confirmer ou changer. UNE arête : la liaison "
+             "à la main, sur cet axe.",
     "fixed": "Pièce fixe (Fixed part) — les groupes sélectionnés forment le bâti.",
     "moving": "Pièce mobile (Moving part) — les groupes sélectionnés bougent ensemble.",
-    "pivot": "Pivot — sélectionner UNE arête ou ligne de construction sur l'axe.",
-    "slider": "Glissière (Slider) — sélectionner UNE arête dans le sens du coulissement.",
+    "pivot": "Pivot — sélectionner les DEUX pièces (l'axe est trouvé : arbre dans l'alésage), "
+             "ou UNE arête ou ligne de construction sur l'axe.",
+    "slider": "Glissière (Slider) — sélectionner les DEUX pièces (appuis plans ou tige dans une "
+              "douille), ou UNE arête dans le sens du coulissement.",
     "guide": "Guide / rail — sélectionner les arêtes du rail + un petit trait en travers à chaque galet.",
     "driver": "Moteur 0–100 % (Driver) — la liaison choisie dans la liste, avec la course indiquée.",
     "validate": "Valider (Validate) — de 0 à 100 % : collisions, butées, jeu minimal.",
     "trajectory": "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.",
     "coupling": "Couplage (Coupling) — engrenage, pignon-crémaillère, roulement : deux liaisons "
                 "de la liste dont l'une entraîne l'autre selon un rapport.",
-    "cylindrical": "Pivot glissant (Cylindrical) — UNE arête sur l'axe : la pièce tourne et coulisse.",
-    "ball": "Rotule (Ball) — des arêtes autour du centre (un petit cercle) : toutes les rotations.",
+    "cylindrical": "Pivot glissant (Cylindrical) — les DEUX pièces (arbre dans l'alésage) ou UNE arête "
+                   "sur l'axe : la pièce tourne et coulisse.",
+    "ball": "Rotule (Ball) — sélectionner les DEUX pièces (une sphère dans une sphère creuse), ou des "
+            "arêtes autour du centre (un petit cercle) : toutes les rotations.",
     "lock": "Encastrement (Lock) — des arêtes au point de liaison : les deux pièces n'en font qu'une.",
     "elastic": "Liaison élastique (Elastic) — des arêtes au point de liaison : un silentbloc, "
                "rigide en cinématique, ressorts et amortisseurs en dynamique.",
@@ -381,10 +391,44 @@ class MotionPanel(QWidget):
         srow.addWidget(self.scan_btn)
         lay.addLayout(srow)
 
-        grid = QGridLayout()
+        # the four commands: parts, joint, motor, validate; « Plus… » shows
+        # every tool for the rare cases
+        from PySide6.QtWidgets import QSizePolicy
+        main = QHBoxLayout()
+        main.setSpacing(2)
+        self.main_buttons = {}
+        for name in ("parts", "joint", "driver", "validate"):
+            b = QToolButton()
+            b.setIcon(icons.icon({"parts": "moving", "joint": "pivot"}.get(name, name), self, 30))
+            b.setIconSize(QSize(30, 30))
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            b.setText(_T("Moteur") if name == "driver" else icons.label(name))
+            b.setToolTip(_T(TIPS[name]))
+            b.setAutoRaise(True)
+            b.setMinimumWidth(10)
+            b.setFixedHeight(60)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            b.clicked.connect(lambda _c=False, n=name: self._action(n))
+            main.addWidget(b)
+            self.main_buttons[name] = b
+        lay.addLayout(main)
+        self.more_btn = QToolButton()
+        self.more_btn.setText(_T("Plus…"))
+        self.more_btn.setToolTip(_T("Toutes les liaisons et les outils, pour les cas particuliers."))
+        self.more_btn.setCheckable(True)
+        self.more_btn.setAutoRaise(True)
+        self.more_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.more_btn.setArrowType(Qt.RightArrow)
+        mrow0 = QHBoxLayout()
+        mrow0.addWidget(self.more_btn)
+        mrow0.addStretch(1)
+        lay.addLayout(mrow0)
+        self.more = QWidget()
+
+        grid = QGridLayout(self.more)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(2)
         self.buttons = {}
-        from PySide6.QtWidgets import QSizePolicy
         for i, name in enumerate(icons.NAMES):
             b = QToolButton()
             b.setIcon(icons.icon(name, self, 24))
@@ -414,7 +458,10 @@ class MotionPanel(QWidget):
         tb.setCheckable(True)
         tb.clicked.connect(lambda _c=False: self._action("trajectory"))
         self.buttons["trajectory"] = tb
-        lay.addLayout(grid)
+        lay.addWidget(self.more)
+        self.more_btn.toggled.connect(self._show_more)
+        self.more_btn.setChecked(self._setting("plus", False))
+        self._show_more(self.more_btn.isChecked())
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels([_T("Nom"), _T("Type"), _T("Détail")])
@@ -606,6 +653,23 @@ class MotionPanel(QWidget):
         s.setRange(-1e6, 1e6)
         s.setDecimals(1)
         return s
+
+    def _setting(self, key, default):
+        try:
+            from PySide6.QtCore import QSettings
+            v = QSettings("IngeTrazo", "motion").value(key, default)
+            return v in (True, "true", "1", 1) if isinstance(default, bool) else v
+        except Exception:
+            return default
+
+    def _show_more(self, on):
+        self.more.setVisible(bool(on))
+        self.more_btn.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+        try:
+            from PySide6.QtCore import QSettings
+            QSettings("IngeTrazo", "motion").setValue("plus", bool(on))
+        except Exception:
+            pass
 
     def _list_height(self):
         try:
@@ -832,6 +896,8 @@ class MotionPanel(QWidget):
                   "cylindrical", "ball", "lock", "elastic",
                   "annular", "pointplane", "planar", "screw", "coupling"):
             self.buttons[n].setEnabled(editable)
+        for n in ("parts", "joint"):
+            self.main_buttons[n].setEnabled(editable)
         self.delete_btn.setEnabled(editable)
         self._fill_materials()
         self.mat_combo.setEnabled(editable)
@@ -1198,6 +1264,97 @@ class MotionPanel(QWidget):
     def _do_moving(self):
         self._do_fixed(False)
 
+    # ---- the four commands ----------------------------------------------------------
+    def _do_parts(self):
+        """Pièces: the selection becomes the frame (when there is none yet)
+        or a moving part; nothing selected: automatic detection."""
+        if self.source != "model":
+            return
+        groups, _ = selection(self._scene())
+        if not groups:
+            self._scan_dialog()
+            return
+        used = {u for b in self.data["bodies"] for u in b["groups"]}
+        if all(g.uid in used for g in groups):
+            raise ValueError(_T("ces groupes forment déjà une pièce : en choisir d'autres"))
+        has_frame = any(b["fixed"] for b in self.data["bodies"])
+        self._do_fixed(not has_frame)
+
+    JOINT_KINDS = ("pivot", "slider", "cylindrical", "ball", "lock", "elastic",
+                   "annular", "pointplane", "planar", "screw")
+
+    def _do_joint(self, kind=None):
+        """Liaison: two parts selected → the joint found from their shapes,
+        shown to confirm (or change its kind); an edge → the kind chosen,
+        made on that edge as by hand. ``kind``: answer the question (tests)."""
+        if self.source != "model":
+            return
+        bodies, groups = self._selected_bodies()
+        _, segs = selection(self._scene())
+        if segs:                                   # by hand, on an edge
+            k = kind or self._ask_kind(None, None)
+            if k:
+                self._action(k)
+            return
+        if len(bodies) != 2:
+            raise ValueError(_T("sélectionner DEUX pièces (ou une arête sur l'axe)"))
+        found = None
+        for k in ("pivot", "ball", "slider"):      # what the shapes say, in that order
+            found = self._find_between(bodies, k)
+            if found is not None:
+                break
+        k = kind or self._ask_kind(found, bodies)
+        if not k:
+            return
+        x = found if (found is not None and found.kind == k) else self._find_between(bodies, k)
+        if x is None and found is not None:
+            x = found                              # another kind on the same point / axis
+        if x is None:
+            raise ValueError(_T("{a} ↔ {b} : rien trouvé d'après les formes — sélectionner "
+                                "une arête sur l'axe.", a=bodies[0]["name"], b=bodies[1]["name"]))
+        self._make_found(bodies, k, x)
+
+    def _ask_kind(self, found, bodies):
+        """The joint's kind: the one found pre-selected; None = cancelled."""
+        if getattr(self, "_auto_kind", None) is not None:          # tests
+            return self._auto_kind
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(icons.label("joint"))
+        form = QFormLayout(dlg)
+        if found is not None:
+            msg = _T("Trouvé d'après les formes : {k} — {d}", k=_T(KIND_NAMES[found.kind]),
+                     d=found.detail)
+        elif bodies:
+            msg = _T("Rien trouvé d'après les formes entre {a} et {b} : choisir le type, "
+                     "puis sélectionner une arête sur l'axe.", a=bodies[0]["name"], b=bodies[1]["name"])
+        else:
+            msg = _T("Liaison sur l'arête sélectionnée :")
+        lab = QLabel(msg)
+        lab.setWordWrap(True)
+        form.addRow(lab)
+        combo = QComboBox()
+        for k in self.JOINT_KINDS:
+            combo.addItem(icons.icon(k, self, 16), _T(KIND_NAMES[k]), k)
+        if found is not None:
+            combo.setCurrentIndex(self.JOINT_KINDS.index(found.kind))
+        form.addRow(_T("Type"), combo)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        if not dlg.exec():
+            return None
+        if found is None and bodies:
+            return None                            # nothing to put it on
+        return combo.currentData()
+
+    def _do_driver_main(self):
+        self._do_driver()
+
+    def _do_validate_main(self):
+        self._action("validate")
+
     def _two_bodies(self, point):
         boxes = self._boxes()
         if len(boxes) < 2:
@@ -1234,6 +1391,8 @@ class MotionPanel(QWidget):
         self._store(d, f"{name} : {a} ↔ {b}.")
 
     def _do_ball(self):
+        if self._joint_from_parts("ball"):
+            return
         self._point_joint("ball")
 
     def _do_lock(self):
@@ -1291,7 +1450,82 @@ class MotionPanel(QWidget):
         d = doc.set_simulation(self.data, on, self.dur.value(), self.chocs_on.isChecked())
         self._store(d, _T("Dynamique : simulation dans le temps.") if on else _T("Dynamique : arrêtée."))
 
+    def _selected_bodies(self):
+        """The bodies whose groups are selected (in the order of the list)."""
+        groups, _ = selection(self._scene())
+        uids = {g.uid for g in groups}
+        return [b for b in self.data["bodies"] if uids & set(b["groups"])], groups
+
+    def _parts_for_detection(self, bodies):
+        """detect.Part of each of two bodies, from its groups near the other."""
+        from . import detect
+        by = groups_by_uid(self._scene())
+        boxes = {}
+        for b_ in bodies:
+            for u in b_["groups"]:
+                if u in by:
+                    key = ("box", u)
+                    P = group_points(by[u])
+                    if len(P):
+                        boxes[u] = (P.min(0), P.max(0))
+
+        def box_of(b_):
+            bx = [boxes[u] for u in b_["groups"] if u in boxes]
+            return (np.min([x[0] for x in bx], 0), np.max([x[1] for x in bx], 0)) if bx else None
+        bb = [box_of(b_) for b_ in bodies]
+        if bb[0] is None or bb[1] is None:
+            raise ValueError(_T("pièce sans géométrie"))
+        size = float(np.linalg.norm(np.maximum(bb[0][1], bb[1][1]) - np.minimum(bb[0][0], bb[1][0])))
+        margin = max(1e-3, 0.02 * size)
+        parts = []
+        for k, b_ in enumerate(bodies):            # a shell of 90 groups: the few near
+            lo, hi = bb[1 - k][0] - margin, bb[1 - k][1] + margin
+            near = [u for u in b_["groups"] if u in boxes
+                    and np.all(boxes[u][0] <= hi) and np.all(boxes[u][1] >= lo)]
+            parts.append(detect.merge_parts(b_["name"], b_["name"],
+                                            [self._detect_part_cached(by[u]) for u in near]))
+        return parts
+
+    def _find_between(self, bodies, kind):
+        from . import detect
+        p, q = self._parts_for_detection(bodies)
+        return detect.between(p, q, kind)
+
+    def _make_found(self, bodies, kind, x):
+        a, b = bodies[0]["name"], bodies[1]["name"]
+        if bodies[1]["fixed"] and not bodies[0]["fixed"]:
+            a, b = b, a                           # the frame first, as by hand
+        axis = x.axis if x.axis is not None else (0.0, 0.0, 1.0)
+        if kind in ("ball", "lock", "elastic"):
+            d, name = doc.add_joint(self.data, kind, a, b, point=x.point)
+        else:
+            d, name = doc.add_joint(self.data, kind, a, b, point=x.point, axis=axis)
+        self._store(d, f"{name} : {a} ↔ {b} — " + _T("trouvé d'après les formes : {d}.", d=x.detail))
+
+    def _joint_from_parts(self, kind):
+        """Two parts selected (no edge): the joint found from their shapes —
+        a shaft in a bore, a ball in its socket, flat or round slides.
+        True when it was made, False when the selection is not two parts."""
+        bodies, groups = self._selected_bodies()
+        _, segs = selection(self._scene())
+        if segs or not groups:
+            return False
+        if len(bodies) != 2:
+            raise ValueError(_T("sélectionner les groupes de DEUX pièces (ou une arête sur l'axe)"))
+        x = self._find_between(bodies, kind)
+        a, b = bodies[0]["name"], bodies[1]["name"]
+        if x is None:
+            what = {"ball": _T("aucune rotule trouvée (une sphère dans une sphère creuse)"),
+                    "slider": _T("aucun coulissement trouvé (appuis plans, ou arbre dans un alésage)")}
+            raise ValueError(_T("{a} ↔ {b} : ", a=a, b=b) + what.get(
+                kind, _T("aucun axe commun trouvé (un arbre dans un alésage)"))
+                + _T(" — sélectionner une arête sur l'axe."))
+        self._make_found(bodies, kind, x)
+        return True
+
     def _do_pivot(self, kind="pivot"):
+        if self._joint_from_parts(kind):
+            return
         p0, p1 = self._one_segment()
         a, b = self._two_bodies((p0 + p1) / 2)
         d, name = doc.add_joint(self.data, kind, a, b,
@@ -1819,6 +2053,23 @@ class MotionPanel(QWidget):
                                             and not getattr(g, "billboard", False)]
         return groups
 
+    def _detect_part_cached(self, g):
+        """:meth:`_detect_part`, remembered while the group is unchanged."""
+        cache = self.__dict__.setdefault("_part_cache", {})
+        faces = getattr(g.mesh, "faces", [])
+        try:
+            v0 = faces[0].vertices[0] if faces else None
+            key = (id(g.mesh), len(faces), None if v0 is None else (v0.x(), v0.y(), v0.z()),
+                   repr(getattr(g, "xform", None)))
+        except Exception:
+            key = None
+        hit = cache.get(g.uid)
+        if hit is not None and key is not None and hit[0] == key:
+            return hit[1]
+        part = self._detect_part(g)
+        cache[g.uid] = (key, part)
+        return part
+
     @staticmethod
     def _detect_part(g):
         """detect.Part of an IngeTrazo group: its faces, joined through soft
@@ -1829,20 +2080,33 @@ class MotionPanel(QWidget):
             mesh = world_mesh(g)
         except Exception:
             mesh = g.mesh
-        faces, index = [], {}
-        vol = 0.0
+        faces, holes_of, index = [], [], {}
+        V = _positions(mesh.vertices) if mesh.vertices else np.zeros((0, 3))
+        vid = {id(v): i for i, v in enumerate(mesh.vertices)}
+
+        def arr(loop):
+            try:
+                return V[[vid[id(v)] for v in loop]]
+            except KeyError:
+                return np.array([(v.position.x(), v.position.y(), v.position.z()) for v in loop],
+                                float).reshape(-1, 3)
         for f in mesh.faces:
-            P = np.array([(v.x(), v.y(), v.z()) for v in f.vertices], float)
+            P = arr(f.loop)
             if len(P) < 3:
                 continue
             index[id(f)] = len(faces)
             faces.append(P)
-            n, a = detect.polygon_normal_area(P)
-            for H in getattr(f, "holes", []) or []:
-                H = np.array([(v.x(), v.y(), v.z()) for v in H], float)
-                if len(H) >= 3:
-                    a -= detect.polygon_normal_area(H)[1]
-            vol += float(n @ P.mean(axis=0)) * a / 3.0
+            holes_of.append([H for H in (arr(h) for h in (getattr(f, "hole_loops", None) or []))
+                             if len(H) >= 3])
+        N, A = detect.polygons_normal_area(faces)
+        hp = [H for hs in holes_of for H in hs]
+        HA = detect.polygons_normal_area(hp)[1] if hp else np.zeros(0)
+        k = 0
+        for i, hs in enumerate(holes_of):              # holes take their area off
+            for _ in hs:
+                A[i] -= HA[k]
+                k += 1
+        vol = float(sum(N[i] @ faces[i].mean(axis=0) * A[i] for i in range(len(faces)))) / 3.0
         soft = []
         for e in mesh.edges:
             fs = getattr(e, "faces", ())
@@ -1853,14 +2117,41 @@ class MotionPanel(QWidget):
         regions = detect.regions_from_faces(faces, soft)
         return detect.make_part(g.uid, str(getattr(g, "name", "pièce")), regions, vol)
 
-    def scan_model(self, groups=None):
+    def scan_model(self, groups=None, skip_existing=True):
         """(parts {uid: (name, [uid])}, proposals, frame uid) for ``groups``
         (default: the selection, else every visible group)."""
         from . import detect
         groups = self._scan_groups() if groups is None else list(groups)
-        parts = [self._detect_part(g) for g in groups]
+        # the parts already in the list are taken whole (a shell of 90
+        # groups is one part: its screws are not pivots); the other groups
+        # one by one
+        uids = {g.uid for g in groups}
+        by = {g.uid: g for g in groups}
+        parts, names, taken = [], {}, set()
+        for b in self.data["bodies"] if self.source == "model" else []:
+            mine = [u for u in b["groups"] if u in uids]
+            if not mine:
+                continue
+            key = "pièce:" + b["name"]
+            parts.append(detect.merge_parts(key, b["name"],
+                                            [self._detect_part_cached(by[u]) for u in mine]))
+            names[key] = (b["name"], mine, True)
+            taken.update(mine)
+        for g in groups:
+            if g.uid not in taken:
+                parts.append(self._detect_part_cached(g))
+                names[g.uid] = (parts[-1].name, [g.uid])
         props, frame = detect.scan(parts)
-        names = {p.key: (p.name, [p.key]) for p in parts}
+        fixed = [k for k, v in names.items() if len(v) > 2
+                 and any(b["name"] == v[0] and b["fixed"] for b in self.data["bodies"])]
+        if fixed:
+            frame = fixed[0]                           # the frame already chosen stays
+        if skip_existing and self.source == "model":   # joints already made: not again
+            body = {k: v[0] for k, v in names.items() if len(v) > 2}
+            have = {frozenset((j["a"], j["b"])) for j in self.data["joints"]}
+            props = [x for x in props
+                     if not (x.a in body and x.b in body and frozenset((body[x.a], body[x.b])) in have)
+                     or x.kind == "gears"]
         return names, props, frame
 
     def apply_scan(self, parts, frame, proposals):
@@ -1869,9 +2160,11 @@ class MotionPanel(QWidget):
             self.set_source("model")
         d, made = doc.apply_detection(self.data, parts, frame, proposals)
         d = self._guess_materials(d, [u for b in d["bodies"] for u in b["groups"]])
-        n = {k: sum(1 for x in proposals if x.kind == k) for k in ("pivot", "slider", "gears")}
+        n = {k: sum(1 for x in proposals if x.kind == k) for k in ("pivot", "slider", "ball", "gears")}
         msg = _T("Détection : {p} pivot(s), {s} glissière(s), {g} engrenage(s) ; pièce fixe : {f}.",
                 p=n['pivot'], s=n['slider'], g=n['gears'], f=parts[frame][0])
+        if n["ball"]:
+            msg += _T(" {n} rotule(s).", n=n["ball"])
         if not d["drivers"]:
             msg += _T(" Choisir un moteur dans la liste.")
         self._store(d, msg)
@@ -1911,8 +2204,9 @@ class MotionPanel(QWidget):
         tree = QTreeWidget()
         tree.setHeaderLabels([_T("Liaison"), _T("Pièces"), _T("Détail"), _T("Confiance")])
         tree.setRootIsDecorated(False)
-        label = {"pivot": _T("Pivot"), "slider": _T("Glissière"), "gears": _T("Engrenage")}
-        icon = {"pivot": "pivot", "slider": "slider", "gears": "coupling"}
+        label = {"pivot": _T("Pivot"), "slider": _T("Glissière"), "ball": _T("Rotule"),
+                 "gears": _T("Engrenage")}
+        icon = {"pivot": "pivot", "slider": "slider", "ball": "ball", "gears": "coupling"}
         items = []
         for x in props:
             it = QTreeWidgetItem([label[x.kind], f"{parts[x.a][0]} ↔ {parts[x.b][0]}",

@@ -56,6 +56,14 @@ class Cylinder:
 
 
 @dataclass
+class Sphere:
+    centre: np.ndarray
+    radius: float
+    convex: bool                      # ball (True) or socket (False)
+    rms: float
+
+
+@dataclass
 class Plane:
     normal: np.ndarray
     offset: float                     # normal . x
@@ -69,6 +77,7 @@ class Part:
     name: str
     cylinders: list = field(default_factory=list)
     planes: list = field(default_factory=list)
+    spheres: list = field(default_factory=list)
     points: np.ndarray = None
     lo: np.ndarray = None
     hi: np.ndarray = None
@@ -108,6 +117,28 @@ def polygon_normal_area(P):
     return (_unit(n), a)
 
 
+def polygons_normal_area(polys):
+    """:func:`polygon_normal_area` of many polygons at once: (n, 3) unit
+    normals, (n,) areas (polygons of one size are done together)."""
+    n = len(polys)
+    N, A = np.zeros((n, 3)), np.zeros(n)
+    by_len = {}
+    for i, P in enumerate(polys):
+        by_len.setdefault(len(P), []).append(i)
+    for L, idx in by_len.items():
+        if L == 0:
+            continue
+        Q = np.array([np.asarray(polys[i], float) for i in idx]).reshape(len(idx), L, 3)
+        R = np.roll(Q, -1, axis=1)
+        c = np.stack([Q[..., 1] * R[..., 2] - Q[..., 2] * R[..., 1],
+                      Q[..., 2] * R[..., 0] - Q[..., 0] * R[..., 2],
+                      Q[..., 0] * R[..., 1] - Q[..., 1] * R[..., 0]], axis=-1).sum(axis=1)
+        ln = np.sqrt(np.einsum("ij,ij->i", c, c))
+        N[idx] = np.where(ln[:, None] > 1e-15, c / np.where(ln > 1e-15, ln, 1.0)[:, None], c)
+        A[idx] = 0.5 * ln
+    return N, A
+
+
 def regions_from_faces(faces, soft_pairs):
     """Regions from polygons: ``faces`` = list of (m, 3) arrays,
     ``soft_pairs`` = (i, j) indices of faces sharing a soft edge."""
@@ -128,11 +159,11 @@ def regions_from_faces(faces, soft_pairs):
     for i in range(len(faces)):
         groups.setdefault(find(i), []).append(i)
     out = []
+    allN, allA = polygons_normal_area([np.asarray(f, float) for f in faces])
     for idx in groups.values():
         polys = [np.asarray(faces[i], float) for i in idx]
-        na = [polygon_normal_area(P) for P in polys]
-        normals = np.array([n for n, _ in na])
-        areas = np.array([a for _, a in na])
+        normals = allN[idx]
+        areas = allA[idx]
         pts = np.vstack(polys)
         centres = np.array([P.mean(axis=0) for P in polys])
         if len(idx) == 1 and idx[0] not in soft:
@@ -191,6 +222,31 @@ def fit_cylinder(reg, tol_angle=3.0, tol_fit=0.02):
     return Cylinder(c0 + mid * a, a, R, t0 - mid, t1 - mid, bool(convex), span, rms)
 
 
+def fit_sphere(reg, tol_fit=0.02):
+    """A Sphere if the smooth region is part of one (its normals spread in
+    every direction, its points at one distance from a centre), else None."""
+    if reg.kind != "smooth" or len(reg.points) < 8 or len(reg.normals) < 4:
+        return None
+    N, A = reg.normals, reg.areas
+    w = np.linalg.eigvalsh((N * A[:, None]).T @ N)
+    if w[0] < 0.02 * w[2]:                      # a cylinder or a cone, not a ball
+        return None
+    P = reg.points
+    Am = np.column_stack([2 * P, np.ones(len(P))])
+    b = np.sum(P * P, axis=1)
+    sol, *_ = np.linalg.lstsq(Am, b, rcond=None)
+    c = sol[:3]
+    r2 = sol[3] + c @ c
+    if r2 <= 0:
+        return None
+    R = math.sqrt(r2)
+    rms = float(np.sqrt(np.mean((np.linalg.norm(P - c, axis=1) - R) ** 2))) / R
+    if rms > tol_fit:
+        return None
+    convex = float(np.sum(A * np.einsum("ij,ij->i", N, reg.centres - c))) > 0
+    return Sphere(c, R, bool(convex), rms)
+
+
 def make_part(key, name, regions, volume=None):
     p = Part(key, name, volume=volume)
     pts = []
@@ -204,6 +260,10 @@ def make_part(key, name, regions, volume=None):
             c = fit_cylinder(r)
             if c is not None:
                 p.cylinders.append(c)
+            else:
+                sph = fit_sphere(r)
+                if sph is not None:
+                    p.spheres.append(sph)
     p.points = np.vstack(pts) if pts else np.zeros((0, 3))
     p.lo, p.hi = (p.points.min(0), p.points.max(0)) if len(p.points) else (np.zeros(3),) * 2
     return p
@@ -264,6 +324,68 @@ def _pivots(p, q, size):
                          shaft=best["shaft"]))
 
 
+def _ball(p, q, size):
+    """A ball of one in a spherical socket of the other: same centre, the
+    socket as large as the ball or slightly larger."""
+    best = None
+    for b_part, s_part in ((p, q), (q, p)):
+        for b in b_part.spheres:
+            if not b.convex:
+                continue
+            for s in s_part.spheres:
+                if s.convex:
+                    continue
+                off = float(np.linalg.norm(b.centre - s.centre))
+                gap = s.radius - b.radius
+                tol = max(1e-4, 0.03 * b.radius, 2e-4 * size)
+                if off > tol or gap < -tol or gap > max(5e-4, 0.12 * b.radius):
+                    continue
+                score = (1 - 0.5 * min(1.0, off / tol)) * (1 - 0.5 * min(1.0, max(gap, 0) / (0.12 * b.radius)))
+                if best is None or score > best[0]:
+                    best = (score, 0.5 * (b.centre + s.centre), b.radius, max(gap, 0.0))
+    if best is None:
+        return None
+    score, c, r, gap = best
+    return Proposal("ball", p.key, q.key, c, None, score,
+                    f"Ø {2000 * r:.1f} mm, jeu {1000 * gap:.2f} mm", dict(radius=r, gap=gap))
+
+
+def merge_parts(key, name, parts):
+    """One Part from several (a body made of several groups)."""
+    m = Part(key, name)
+    for q in parts:
+        m.cylinders += q.cylinders
+        m.planes += q.planes
+        m.spheres += q.spheres
+    pts = [q.points for q in parts if q.points is not None and len(q.points)]
+    m.points = np.vstack(pts) if pts else np.zeros((0, 3))
+    m.lo, m.hi = (m.points.min(0), m.points.max(0)) if len(m.points) else (np.zeros(3),) * 2
+    vols = [q.volume for q in parts if q.volume]
+    m.volume = sum(vols) if vols else None
+    return m
+
+
+def between(p, q, kind, size=None):
+    """The joint of ``kind`` between two parts, found from their shapes:
+    "pivot" / "cylindrical" (a shaft in a bore), "slider" (flat contacts),
+    "ball" (a ball in a socket). A Proposal, or None."""
+    if size is None:
+        pts = np.vstack([x.points for x in (p, q) if len(x.points)])
+        size = float(np.linalg.norm(pts.max(0) - pts.min(0))) or 1.0
+    if kind in ("pivot", "cylindrical"):
+        return _pivots(p, q, size)
+    if kind == "slider":
+        sl = _slider(p, q, size)
+        if sl is None:                  # a round slide: a shaft in a bore, sliding
+            pv = _pivots(p, q, size)
+            if pv is not None:
+                return Proposal("slider", p.key, q.key, pv.point, pv.axis, pv.score, pv.detail)
+        return sl
+    if kind == "ball":
+        return _ball(p, q, size)
+    return None
+
+
 def _axles(parts, pivots):
     """A separate pin through two parts (a hinge pin, a shoulder bolt) gives
     two pivots on one axis. The pin goes with the part it fits tightest
@@ -308,12 +430,16 @@ def _overlap_2d(P, Q, n):
 def _slider(p, q, size):
     tol = max(1e-4, 2e-4 * size)
     contacts = []
-    for a in p.planes:
-        for b in q.planes:
-            if a.normal @ b.normal > -math.cos(math.radians(1.0)):
-                continue
-            if abs(a.offset + b.offset) > tol:            # coplanar, facing
-                continue
+    if p.planes and q.planes:
+        # facing and coplanar, all pairs at once; the overlap only for those
+        Np = np.array([a.normal for a in p.planes])
+        Nq = np.array([b.normal for b in q.planes])
+        Op = np.array([a.offset for a in p.planes])
+        Oq = np.array([b.offset for b in q.planes])
+        cand = np.nonzero((Np @ Nq.T <= -math.cos(math.radians(1.0)))
+                          & (np.abs(Op[:, None] + Oq[None, :]) <= tol))
+        for i, k in zip(*cand):
+            a, b = p.planes[i], q.planes[k]
             ov = _overlap_2d(a.poly, b.poly, a.normal)
             if ov > 1e-8:
                 contacts.append((a.normal, ov))
@@ -420,6 +546,9 @@ def scan(parts, size=None):
             sl = _slider(p, q, size)
             if sl and not pv:
                 props.append(sl)
+            bl = _ball(p, q, size) if not pv else None
+            if bl:
+                props.append(bl)
     pivots = _axles(parts, [x for x in props if x.kind == "pivot"])
     props = pivots + [x for x in props if x.kind != "pivot"]
     props += _gears(parts, pivots, size)
@@ -432,7 +561,7 @@ def scan(parts, size=None):
     vol = {p.key: abs(p.volume) if p.volume else float(np.prod(np.maximum(p.hi - p.lo, 1e-9)))
            for p in parts}
     frame = max(deg, key=lambda k: (deg[k], vol[k])) if deg else None
-    props.sort(key=lambda x: ({"pivot": 0, "slider": 1, "gears": 2}[x.kind], -x.score))
+    props.sort(key=lambda x: ({"pivot": 0, "slider": 1, "ball": 2, "gears": 3}[x.kind], -x.score))
     return props, frame
 
 

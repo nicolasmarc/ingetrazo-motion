@@ -140,7 +140,11 @@ def apply_detection(data, parts, frame, proposals):
     for key in [frame] + sorted((k for k in used if k != frame), key=lambda k: parts[k][0]):
         if key not in parts:
             continue
-        nm, uids = parts[key]
+        nm, uids = parts[key][0], parts[key][1]
+        if len(parts[key]) > 2 and parts[key][2]:    # a part already in the list: kept
+            if any(b["name"] == nm for b in d["bodies"]):
+                names[key] = nm
+                continue
         uids = list(uids) + [u for pin, host in merge.items() if host == key
                              for u in parts[pin][1]]
         base = nm
@@ -152,13 +156,17 @@ def apply_detection(data, parts, frame, proposals):
         names[key] = nm
     made, by_prop = [], {}
     for x in proposals:
-        if x.kind not in ("pivot", "slider"):
+        if x.kind not in ("pivot", "slider", "ball"):
             continue
         a, b = (x.a, x.b) if x.b != frame else (x.b, x.a)
-        stem = _T("pivot") if x.kind == "pivot" else _T("glissière")
+        stem = {"pivot": _T("pivot"), "slider": _T("glissière"), "ball": _T("rotule")}[x.kind]
         jn = f"{stem} {names[a]}–{names[b]}"
         if jn in {b_["name"] for b_ in d["bodies"]} | {j["name"] for j in d["joints"]}:
             jn = unique_name(d, jn + " ")
+        if x.kind == "ball":
+            d, jn = add_joint(d, "ball", names[a], names[b], point=x.point, name=jn)
+            made.append(jn)
+            continue
         d, jn = add_joint(d, x.kind, names[a], names[b], point=x.point, axis=x.axis, name=jn)
         made.append(jn)
         by_prop[id(x)] = (jn, a, b, np.asarray(x.axis, float))

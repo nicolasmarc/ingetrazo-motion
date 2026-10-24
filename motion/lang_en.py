@@ -46,6 +46,31 @@ EN = {
     "Rapport": "Ratio",
     "choisir deux liaisons différentes": "choose two different joints",
     "Couplage {name} : rapport {r}.": "Coupling {name}: ratio {r}.",
+    "sélectionner les groupes de DEUX pièces (ou une arête sur l'axe)": "select the groups of TWO parts (or an edge on the axis)",
+    "aucune rotule trouvée (une sphère dans une sphère creuse)": "no ball joint found (a ball in a spherical socket)",
+    "aucun coulissement trouvé (appuis plans, ou arbre dans un alésage)": "no slide found (flat contacts, or a shaft in a bore)",
+    "{a} ↔ {b} : ": "{a} ↔ {b}: ",
+    "aucun axe commun trouvé (un arbre dans un alésage)": "no common axis found (a shaft in a bore)",
+    " — sélectionner une arête sur l'axe.": " — select an edge on the axis.",
+    "trouvé d'après les formes : {d}.": "found from the shapes: {d}.",
+    "pièce sans géométrie": "part without geometry",
+    "Pièces (Parts) — les groupes sélectionnés : le premier ensemble devient le bâti, les suivants des pièces mobiles. Sans sélection : détection automatique de tout le modèle (pièces et liaisons, à cocher).":
+        "Parts — the selected groups: the first set becomes the frame, the next ones moving parts. With nothing selected: automatic detection of the whole model (parts and joints, to tick).",
+    "Liaison (Joint) — DEUX pièces sélectionnées : la liaison est trouvée d'après leurs formes (pivot, rotule, glissière), à confirmer ou changer. UNE arête : la liaison à la main, sur cet axe.":
+        "Joint — TWO parts selected: the joint is found from their shapes (pivot, ball, slider), to confirm or change. ONE edge: the joint by hand, on that axis.",
+    "Plus…": "More…",
+    "Toutes les liaisons et les outils, pour les cas particuliers.": "Every joint and tool, for the special cases.",
+    "Pièces": "Parts",
+    "ces groupes forment déjà une pièce : en choisir d'autres": "these groups already make a part: pick others",
+    "sélectionner DEUX pièces (ou une arête sur l'axe)": "select TWO parts (or an edge on the axis)",
+    "{a} ↔ {b} : rien trouvé d'après les formes — sélectionner une arête sur l'axe.":
+        "{a} ↔ {b}: nothing found from the shapes — select an edge on the axis.",
+    "Trouvé d'après les formes : {k} — {d}": "Found from the shapes: {k} — {d}",
+    "Rien trouvé d'après les formes entre {a} et {b} : choisir le type, puis sélectionner une arête sur l'axe.":
+        "Nothing found from the shapes between {a} and {b}: choose the kind, then select an edge on the axis.",
+    "Liaison sur l'arête sélectionnée :": "Joint on the selected edge:",
+    "Moteur": "Motor",
+    " {n} rotule(s).": " {n} ball joint(s).",
     "Nom": "Name",
     "Type": "Type",
     "Détail": "Detail",
@@ -223,10 +248,10 @@ EN = {
         "Fixed part — the selected groups form the frame.",
     "Pièce mobile (Moving part) — les groupes sélectionnés bougent ensemble.":
         "Moving part — the selected groups move together.",
-    "Pivot — sélectionner UNE arête ou ligne de construction sur l'axe.":
-        "Pivot — select ONE edge or construction line on the axis.",
-    "Glissière (Slider) — sélectionner UNE arête dans le sens du coulissement.":
-        "Slider — select ONE edge along the travel.",
+    "Pivot — sélectionner les DEUX pièces (l'axe est trouvé : arbre dans l'alésage), ou UNE arête ou ligne de construction sur l'axe.":
+        "Pivot — select the TWO parts (the axis is found: a shaft in its bore), or ONE edge or construction line on the axis.",
+    "Glissière (Slider) — sélectionner les DEUX pièces (appuis plans ou tige dans une douille), ou UNE arête dans le sens du coulissement.":
+        "Slider — select the TWO parts (flat contacts, or a rod in a sleeve), or ONE edge along the travel.",
     "Guide / rail — sélectionner les arêtes du rail + un petit trait en travers à chaque galet.":
         "Guide / rail — select the rail's edges + a short stroke across it at each roller.",
     "Moteur 0–100 % (Driver) — la liaison choisie dans la liste, avec la course indiquée.":
@@ -235,10 +260,10 @@ EN = {
         "Validate — from 0 to 100 %: collisions, limits, minimum gap.",
     "Trajectoire (Trajectory) — trace les extrémités des arêtes sélectionnées.":
         "Trajectory — traces the end points of the selected edges.",
-    "Pivot glissant (Cylindrical) — UNE arête sur l'axe : la pièce tourne et coulisse.":
-        "Cylindrical — ONE edge on the axis: the part turns and slides.",
-    "Rotule (Ball) — des arêtes autour du centre (un petit cercle) : toutes les rotations.":
-        "Ball joint — edges around the centre (a small circle): every rotation.",
+    "Pivot glissant (Cylindrical) — les DEUX pièces (arbre dans l'alésage) ou UNE arête sur l'axe : la pièce tourne et coulisse.":
+        "Cylindrical — the TWO parts (a shaft in its bore) or ONE edge on the axis: the part turns and slides.",
+    "Rotule (Ball) — sélectionner les DEUX pièces (une sphère dans une sphère creuse), ou des arêtes autour du centre (un petit cercle) : toutes les rotations.":
+        "Ball joint — select the TWO parts (a ball in a socket), or edges around the centre (a small circle): every rotation.",
     "Encastrement (Lock) — des arêtes au point de liaison : les deux pièces n'en font qu'une.":
         "Lock — edges at the joint point: the two parts move as one.",
     "Liaison élastique (Elastic) — des arêtes au point de liaison : un silentbloc, rigide en "
