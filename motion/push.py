@@ -104,12 +104,30 @@ class PushGroup:
         for m in self.members:
             m.value = 0.0
 
+    @staticmethod
+    def _box(body, q):
+        """World bounds of a body's boxes at pose q (a quick test before
+        the surfaces)."""
+        lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+        R = body.rot(q)
+        for b in body.boxes:
+            Rb = b.R if b.R is not None else np.eye(3)
+            c = body.world_point(q, b.center)
+            ext = np.abs(R @ Rb) @ np.asarray(b.half, float)
+            lo, hi = np.minimum(lo, c - ext), np.maximum(hi, c + ext)
+        return lo, hi
+
     def _gap(self, mech, S, x, m, v, reach):
         qa = m.pose_of(mech, x, v)
         best, pt = math.inf, None
+        la, ha = self._box(m.body, qa) if m.body.boxes else (None, None)
         for p in m.pushers:
             if not (S.has(m.body) and S.has(p)):
                 continue
+            if la is not None and p.boxes:
+                lb, hb = self._box(p, mech.pose(x, p))
+                if np.any(lb - reach > ha) or np.any(la - reach > hb):
+                    continue                    # boxes apart: nothing to touch
             r = S.pair(m.body, p, qa, mech.pose(x, p), reach, resting=False)
             if r is not None and r[0] < best:
                 best, pt = r[0], r[1]
@@ -127,14 +145,16 @@ class PushGroup:
         gm = self._gap(mech, S, x, m, v - step, reach)[0]
         sgn = 1.0 if gp >= gm else -1.0
         worst = g
+        # pushed out to touching (not to the tolerance: the check would
+        # see it in by a hair)
         for k in range(1, 120):
             w = v + sgn * k * step
             gk = self._gap(mech, S, x, m, w, reach)[0]
-            if gk >= -tol:
+            if gk >= 0.0:
                 lo, hi = v + sgn * (k - 1) * step, w
                 for _ in range(8):
                     mid = 0.5 * (lo + hi)
-                    if self._gap(mech, S, x, m, mid, reach)[0] >= -tol:
+                    if self._gap(mech, S, x, m, mid, reach)[0] >= 0.0:
                         hi = mid
                     else:
                         lo = mid
@@ -159,7 +179,7 @@ class PushGroup:
         reach, tol = 2.0 * S.h, S.tol
         prev = self._x if self._x is not None and len(self._x) == len(x) else None
         n = 1
-        if prev is not None:                     # no point moves more than h / 2 a sub-step
+        if prev is not None:                     # no point moves more than 0.8 h a sub-step
             mine = {id(b) for b in self.bodies}
             for p in {id(p): p for m in self.members for p in m.pushers + [m.carrier]}.values():
                 if p.fixed or id(p) in mine:
@@ -170,7 +190,7 @@ class PushGroup:
                 qa, qb = mech.pose(prev, p), mech.pose(x, p)
                 move = max(float(np.linalg.norm(p.world_point(qb, c) - p.world_point(qa, c)))
                            for c in corners)
-                n = max(n, int(math.ceil(move / (0.5 * S.h))))
+                n = max(n, int(math.ceil(move / (0.8 * S.h))))
             n = min(n, 400)
         for s in range(1, n + 1):
             xs = x.copy() if prev is None or s == n else prev + (x - prev) * (s / n)
