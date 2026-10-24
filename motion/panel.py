@@ -570,6 +570,12 @@ class MotionPanel(QWidget):
             main.addWidget(b)
             self.main_buttons[name] = b
         lay.addLayout(main)
+        # what the last command did (or why not): right under the commands,
+        # where the eye is — the window's status bar is often out of sight
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet("QLabel { padding: 2px 4px; border-radius: 3px; }")
+        lay.addWidget(self.status)
         # the kind of calculation, one choice, under the commands (filled
         # below, with the duration and the shocks of the dynamics)
         self.mode_lay = QHBoxLayout()
@@ -885,9 +891,6 @@ class MotionPanel(QWidget):
         self.tabs.currentChanged.connect(lambda _i: self._fill_curve_choices())
         self.tabs.setMinimumHeight(200)
         lay.addWidget(self.tabs, 1)
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
-        lay.addWidget(self.status)
 
     @staticmethod
     def _spin():
@@ -929,6 +932,9 @@ class MotionPanel(QWidget):
             pass
 
     def say(self, text):
+        first = getattr(self, "_said_first", "")
+        if first and not text.startswith(first):  # what the command did on the way
+            text = first + text
         self.status.setText(text)
         win = getattr(self.app, "window", None)
         bar = getattr(win, "statusBar", None)
@@ -1556,10 +1562,18 @@ class MotionPanel(QWidget):
 
     # ---- actions --------------------------------------------------------------------
     def _action(self, name):
+        depth = getattr(self, "_action_depth", 0)
+        if not depth:
+            self._said_first = ""
+        self._action_depth = depth + 1
         try:
             getattr(self, "_do_" + name)()
         except Exception as exc:          # never break the app; say why
             self.say(f"{icons.label(name)} : {exc}")
+        finally:
+            self._action_depth = depth
+            if not depth:
+                self._said_first = ""
         self.app.viewport.update()
 
     def _do_fixed(self, fixed=True):
@@ -1599,8 +1613,14 @@ class MotionPanel(QWidget):
         made on that edge as by hand. ``kind``: answer the question (tests)."""
         if self.source != "model":
             return
-        bodies, groups = self._selected_bodies()
         _, segs = selection(self._scene())
+        if segs:
+            P = np.array([p for sg in segs for p in sg if np.all(np.abs(p) < 1e3)])
+            if len(P):                             # the two groups at the edge
+                self._ensure_parts(near=0.5 * (P.min(axis=0) + P.max(axis=0)))
+        else:
+            self._ensure_parts()                   # straight on the model
+        bodies, groups = self._selected_bodies()
         if segs:                                   # by hand, on an edge
             k = kind or self._ask_kind(None, None)
             if k:
@@ -2277,6 +2297,7 @@ class MotionPanel(QWidget):
             self._fill_tree()
             self.say(_T("Moteur : {j} ({n} moteur(s)).", j=j.name, n=len(m.drivers)))
             return
+        self._ensure_parts(for_motor=True)           # straight on the model
         part = self._motor_part(name)
         if part is not None:                       # a part: its own joint drives it
             self._motor_on_part(part)
@@ -2291,6 +2312,72 @@ class MotionPanel(QWidget):
                                     "dans la liste)"))
         self._set_motor(j, self._from_ui(j["kind"], self.drv_lo.value()),
                         self._from_ui(j["kind"], self.drv_hi.value()))
+
+    def _model_groups(self):
+        """The model's groups a part can be made of (no billboard, none
+        hidden)."""
+        return [g for g in getattr(self._scene(), "groups", [])
+                if not getattr(g, "hidden", False) and not getattr(g, "billboard", False)]
+
+    def _group_box(self, g):
+        P = group_points(g)
+        return (P.min(0), P.max(0)) if len(P) else None
+
+    def _ensure_parts(self, for_motor=False, near=None):
+        """Groups that are not parts yet become parts, so « Moteur » and
+        « Liaison » work straight on the model: the selected groups (one
+        moving part for « Moteur », one each for « Liaison »), or the two
+        groups nearest ``near`` (an edge drawn by hand). With no frame yet,
+        the biggest group of the model becomes it. One undo step."""
+        if self.source != "model":
+            return
+        used = {u for b in self.data["bodies"] for u in b["groups"]}
+        if near is not None:
+            def gap(g):
+                bb = self._group_box(g)
+                if bb is None:
+                    return math.inf
+                return float(np.linalg.norm(np.maximum(0, np.maximum(bb[0] - near, near - bb[1]))))
+            pool = sorted(self._model_groups(), key=gap)[:2]
+            if len([b for b in self.data["bodies"]]) >= 2 and all(g.uid in used for g in pool):
+                return
+            new = [g for g in pool if g.uid not in used]
+        else:
+            groups, _ = selection(self._scene())
+            new = [g for g in groups if g.uid not in used]
+        has_frame = any(b["fixed"] for b in self.data["bodies"])
+        if not new and has_frame:
+            return
+        d, said, uids = self.data, [], []
+        if not has_frame:
+            pool = [g for g in self._model_groups() if g.uid not in used]
+            if for_motor:                          # the part to drive is not the frame
+                pool = [g for g in pool if g not in new]
+            vol = {}
+            for g in pool:
+                bb = self._group_box(g)
+                vol[g.uid] = float(np.prod(np.maximum(bb[1] - bb[0], 1e-6))) if bb else 0.0
+            if pool:
+                frame = max(pool, key=lambda g: vol[g.uid])
+                d, fname = doc.add_body(d, [frame.uid], True)
+                uids.append(frame.uid)
+                said.append(_T("bâti : {n} (le plus gros groupe — « Pièces » pour en choisir "
+                               "un autre)", n=getattr(frame, "name", "") or fname))
+                new = [g for g in new if g is not frame]
+        if new:
+            if for_motor:
+                d, n = doc.add_body(d, [g.uid for g in new], False)
+                said.append(_T("{n} : pièce mobile", n=n))
+            else:
+                for g in new:
+                    d, n = doc.add_body(d, [g.uid], False)
+                    said.append(_T("{n} : pièce mobile", n=n))
+            uids += [g.uid for g in new]
+        if not said:
+            return
+        d = self._guess_materials(d, uids)
+        self._store(d)
+        self._said_first = " ; ".join(said) + ". "   # kept before what follows
 
     MOTOR_KINDS = ("pivot", "cylindrical", "screw", "slider")
 

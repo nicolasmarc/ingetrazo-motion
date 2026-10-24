@@ -34,6 +34,12 @@
 - **Gears in one gesture**: two toothed wheels selected, « Liaison »:
   Couplage proposed with the teeth counted, the missing pivots with the
   frame made; the first wheel selected drives.
+- **Straight on the model** (Nicolas's video, 24/10): « Moteur » and
+  « Liaison » make the parts still missing — the selected groups, or the
+  two groups at an edge drawn by hand — and, with no frame yet, the
+  biggest group of the model becomes it (said, « Pièces » to choose
+  another); one undo step. The panel's message sits under the four
+  commands, always in sight.
 - **Wheels and links without a drawn shaft**: when no shaft sits in a
   bore, a part's own axis is used — the centre of its teeth (an evenly
   toothed outline, not a bar with round ends), else its round shape

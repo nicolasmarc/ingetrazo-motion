@@ -309,6 +309,9 @@ EN = {
         "Drag a part onto another to merge them; right click: merge, delete.",
     "{a} fusionnée dans {b} : une seule pièce.": "{a} merged into {b}: one part.",
     "Fusionner dans": "Merge into",
+    "bâti : {n} (le plus gros groupe — « Pièces » pour en choisir un autre)":
+        "frame: {n} (the biggest group — « Parts » to choose another)",
+    "{n} : pièce mobile": "{n}: moving part",
     "⚠ {n} pièce(s) sans matériau : choisir la pièce, puis « Matériau » (masses, dynamique).":
         "⚠ {n} part(s) without material: choose the part, then « Material » (masses, dynamics).",
     "Axe (Axis) — sélectionner une pièce : son axe (centre de la denture, alésage, forme ronde) "

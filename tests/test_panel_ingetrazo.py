@@ -1216,6 +1216,85 @@ def Qt_ScrollBarAlwaysOff():
     return Qt.ScrollBarAlwaysOff
 
 
+def test_motor_and_gears_straight_on_a_blank_model():
+    """No part defined yet (Nicolas, 24/10): the pinion selected then
+    « Moteur » makes the frame (the biggest group), the pinion's part, its
+    pivot on its own axis and the motor; then the two wheels and
+    « Liaison » make the wheel's part and the gears."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    scene.groups[:] = [g for g in scene.groups if getattr(g, "billboard", False)]
+    scene.version += 1
+    asm, groups = panel.import_step(str(HERE / "data" / "detect_engrenages.step"))
+    parts, props, frame = panel.scan_model(groups)
+    gears = next(x for x in props if x.kind == "gears")
+    by = {g.uid: g for g in groups}
+    pinion, wheel = by[gears.a], by[gears.b]
+    scene.groups.remove(by[frame])
+    P = np.vstack([np.asarray([[v.x(), v.y(), v.z()] for f in g.mesh.faces for v in f.vertices])
+                   for g in (pinion, wheel)])
+    lo, hi = P.min(0), P.max(0)
+    plate = _box_group("Socle", (lo[0] - 0.01, lo[1] - 0.01, lo[2] - 0.006),
+                       (hi[0] + 0.01, hi[1] + 0.01, lo[2] - 0.001))
+    scene.groups.append(plate)
+    win.viewport.notify_scene_changed()
+    assert panel.app.document_data() in (None, {}) or not panel.data["bodies"]
+    _select(win, pinion)
+    panel._action("driver")
+    d = panel.app.document_data()
+    fixed = [b for b in d["bodies"] if b["fixed"]]
+    assert [b["groups"] for b in fixed] == [[plate.uid]], panel.status.text()
+    assert [j["kind"] for j in d["joints"]] == ["pivot"] and len(d["drivers"]) == 1
+    assert "Socle" in panel.status.text() and "dents" in panel.status.text()
+    _select(win, pinion, wheel)
+    panel._auto_kind = "coupling"
+    try:
+        panel._action("joint")
+    finally:
+        panel._auto_kind = None
+    d = panel.app.document_data()
+    assert len(d["bodies"]) == 3
+    assert sorted(j["kind"] for j in d["joints"]) == ["coupling", "pivot", "pivot"], \
+        panel.status.text()
+    win._on_undo(); win._on_undo(); win._on_undo(); win._on_undo()
+    _reset(win, panel)
+
+
+def test_pivot_on_a_drawn_axis_of_a_blank_model():
+    """An edge drawn on a wheel's axis, no part defined: « Liaison » →
+    Pivot makes the two groups at the edge parts (the biggest the frame)."""
+    if SKIP:
+        print("skip:", SKIP); return
+    from PySide6.QtGui import QVector3D as V
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    base = _box_group("Socle", (-0.2, -0.2, -0.02), (0.2, 0.2, 0.0))
+    disc = _box_group("Disque", (-0.05, -0.05, 0.0), (0.05, 0.05, 0.01))
+    far = _box_group("Loin", (0.5, 0.5, 0.0), (0.6, 0.6, 0.05))
+    scene.groups += [base, disc, far]
+    e = scene.mesh.add_edge(V(0, 0, -0.01), V(0, 0, 0.02))
+    win.viewport.notify_scene_changed()
+    _select(win, e)
+    panel._auto_kind = "pivot"
+    try:
+        panel._action("joint")
+    finally:
+        panel._auto_kind = None
+    d = panel.app.document_data()
+    assert [(b["groups"], b["fixed"]) for b in d["bodies"]] == [([base.uid], True),
+                                                              ([disc.uid], False)], \
+        panel.status.text()
+    assert [j["kind"] for j in d["joints"]] == ["pivot"]
+    assert "Socle" in panel.status.text()
+    _reset(win, panel)
+
+
 def test_the_four_commands():
     """Pièces (frame first, then moving parts), Liaison (found from two
     parts, kind confirmed or changed; on an edge, by hand), Moteur, Valider;
