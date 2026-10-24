@@ -463,7 +463,7 @@ def _slider(p, q, size):
                     f"{len(contacts)} appuis plans, {1e4 * area:.1f} cm²")
 
 
-def count_teeth(points, centre, axis, min_teeth=6):
+def count_teeth(points, centre, axis, min_teeth=6, max_depth=0.35):
     """Teeth of a gear-like outline around ``axis``: (z, tip radius, root
     radius) or None."""
     u, v = _basis(axis)
@@ -484,7 +484,7 @@ def count_teeth(points, centre, axis, min_teeth=6):
     idx = np.nonzero(filled)[0]
     prof = np.interp(np.arange(nb), idx, prof[idx], period=nb)
     rmax, rmin = prof.max(), prof.min()
-    if rmax <= 0 or (rmax - rmin) / rmax < 0.02 or (rmax - rmin) / rmax > 0.35:
+    if rmax <= 0 or (rmax - rmin) / rmax < 0.02 or (rmax - rmin) / rmax > max_depth:
         return None
     mid = 0.5 * (rmax + rmin)
     above = prof > mid
@@ -492,6 +492,37 @@ def count_teeth(points, centre, axis, min_teeth=6):
     if z < min_teeth:
         return None
     return z, float(rmax), float(rmin)
+
+
+def teeth_of(points, centre, axis, min_teeth=6):
+    """(z, tip radius, root radius) of a toothed wheel about ``axis``, or
+    None. The whole outline first; then thin slices across the axis, one
+    after the other: the teeth of a helical wheel twist along it, so all
+    its slices together fill the tip circle (Nicolas's Geneva wheels)."""
+    P = np.asarray(points, float)
+    t = count_teeth(P, centre, axis, min_teeth)
+    if t and _regular_teeth(P, centre, axis, t[0]):
+        return t
+    h = (P - centre) @ axis
+    lo, hi = float(h.min()), float(h.max())
+    L = hi - lo
+    if L <= 0:
+        return None
+    found = []
+    for f in (0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9):
+        S = P[np.abs(h - (lo + f * L)) <= max(0.025 * L, 1e-5)]
+        if len(S) < 8 * min_teeth:
+            continue
+        r = count_teeth(S, centre, axis, min_teeth, max_depth=0.45)
+        if r and _regular_teeth(S, centre, axis, r[0]):
+            found.append(r)
+    if not found:
+        return None
+    zs = [r[0] for r in found]
+    z = max(set(zs), key=zs.count)
+    tips = [r[1] for r in found if r[0] == z]
+    roots = [r[2] for r in found if r[0] == z]
+    return z, float(max(tips)), float(min(roots))
 
 
 def _regular_teeth(points, centre, axis, z, share=0.45):
@@ -543,6 +574,7 @@ def own_axis(part, min_teeth=6, near=None):
              sorted(round_, key=lambda c: (c.convex, -c.radius))]
     C = P.mean(axis=0)
     w, V = np.linalg.eigh(np.cov((P - C).T))
+    cands += [(C, np.eye(3)[k]) for k in range(3)]          # drawn square to the axes
     cands += [(C, _unit(V[:, k])) for k in range(3)]
     for c, ax in cands:
         for centre in (c, None):
@@ -551,8 +583,8 @@ def own_axis(part, min_teeth=6, near=None):
                 d = P - c
                 pu, pv = d @ u, d @ v
                 centre = c + u * 0.5 * (pu.max() + pu.min()) + v * 0.5 * (pv.max() + pv.min())
-            t = count_teeth(P, centre, ax, min_teeth)
-            if t and _regular_teeth(P, centre, ax, t[0]):
+            t = teeth_of(P, centre, ax, min_teeth)
+            if t:
                 z, rt, rr = t
                 return (mid(centre, ax), ax, "gear",
                         f"denture {z} dents, Ø tête {2000 * rt:.1f} mm")
@@ -595,8 +627,8 @@ def _gears(parts, pivots, size):
                 continue
             d = B.point - A.point
             dist = np.linalg.norm(d - (d @ A.axis) * A.axis)
-            ta = count_teeth(by[ga].points, A.point, A.axis)
-            tb = count_teeth(by[gb].points, B.point, B.axis)
+            ta = teeth_of(by[ga].points, A.point, A.axis)
+            tb = teeth_of(by[gb].points, B.point, B.axis)
             if not ta or not tb:
                 continue
             (za, ra, fa), (zb, rb, fb) = ta, tb

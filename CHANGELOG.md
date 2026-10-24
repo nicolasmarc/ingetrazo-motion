@@ -34,6 +34,12 @@
 - **Gears in one gesture**: two toothed wheels selected, « Liaison »:
   Couplage proposed with the teeth counted, the missing pivots with the
   frame made; the first wheel selected drives.
+- **Helical wheels** (Nicolas's Geneva model): their teeth are counted in
+  thin slices across the axis — over the whole face the twisted teeth
+  fill the tip circle. The orange wheel turned about its crank pin
+  instead of its centre, the small one found no axis at all.
+- **The highlight follows the selection**: something else picked in the
+  model (or nothing), it goes out.
 - **Straight on the model** (Nicolas's video, 24/10): « Moteur » and
   « Liaison » make the parts still missing — the selected groups, or the
   two groups at an edge drawn by hand — and, with no frame yet, the

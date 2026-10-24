@@ -1436,6 +1436,7 @@ class MotionPanel(QWidget):
         (or, for a joint, both its parts' groups) become IngeTrazo's
         selection; a joint's point gets a ring in the view."""
         self._hl_point, self._hl_bodies, self._hl_name = None, set(), name
+        self._hl_sel = None
         if not name:
             return
         if self.source == "model":
@@ -1451,6 +1452,8 @@ class MotionPanel(QWidget):
                 try:
                     sel.clear()
                     sel.update(groups)
+                    # the highlight lasts as long as this selection does
+                    self._hl_sel = {id(g) for g in groups}
                 except Exception:
                     pass
             self._hl_bodies = set(names)
@@ -1878,7 +1881,7 @@ class MotionPanel(QWidget):
             if not P:
                 return None
             P = np.vstack(P)
-            t = detect.count_teeth(P, pt, ax)
+            t = detect.teeth_of(P, pt, ax)
             if not t:
                 return None
             wheels.append((pt, ax, src, t, P))
@@ -3158,10 +3161,25 @@ class MotionPanel(QWidget):
         self.slider.setValue(v)
 
     # ---- drawing over the viewport ----------------------------------------------------
+    def _highlight_still_wanted(self):
+        """Something else selected in the model (or nothing): the
+        highlight of the list's item goes out."""
+        keep = getattr(self, "_hl_sel", None)
+        if keep is None or not (getattr(self, "_hl_bodies", None)
+                                or getattr(self, "_hl_point", None) is not None):
+            return
+        try:
+            now = {id(e) for e in (getattr(self._scene(), "selection", ()) or ())}
+        except Exception:
+            return
+        if now != keep:
+            self._hl_point, self._hl_bodies, self._hl_sel = None, set(), None
+
     def paint(self, viewport, painter, wire=True):
         m = self.mech
         if m is None or not (self.isVisible() or getattr(self, "_force_paint", False)):
             return
+        self._highlight_still_wanted()
         x = self.x if self.x is not None else np.zeros(m.n)
         acc = icons.accent()
         hits = set()

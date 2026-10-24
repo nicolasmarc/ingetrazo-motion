@@ -178,3 +178,27 @@ def test_own_axis_of_a_part_without_its_shaft():
         d = pt - ref.point
         assert np.linalg.norm(d - (d @ ref.axis) * ref.axis) < 1e-6, name
     assert detect.own_axis(by["Bielle"])[2] != "gear"
+
+
+def test_teeth_of_a_helical_wheel():
+    # 21 teeth twisted by one tooth pitch across the face (a helical wheel,
+    # Nicolas's Geneva model): the whole outline is a full circle, the
+    # thin slices still show the teeth
+    z, rt, rr, width = 21, 0.0494, 0.0446, 0.018
+    pts = []
+    for h in np.linspace(0, width, 60):
+        twist = (2 * math.pi / z) * h / width
+        for a in np.linspace(0, 2 * math.pi, 1500, endpoint=False):
+            r = rr + (rt - rr) * (0.5 + 0.5 * math.cos(z * (a - twist)))
+            pts.append((r * math.cos(a), h, r * math.sin(a)))
+    P = np.array(pts) + (0.114, 0.0, 0.062)
+    ax = np.array([0.0, 1.0, 0.0])
+    centre = np.array([0.114, 0.0, 0.062])
+    assert detect.count_teeth(P, centre, ax) is None or \
+        not detect._regular_teeth(P, centre, ax, detect.count_teeth(P, centre, ax)[0])
+    t = detect.teeth_of(P, centre, ax)
+    assert t is not None and t[0] == z, t
+    part = detect.Part(key="g", name="g", points=P, lo=P.min(0), hi=P.max(0))
+    pt, axis, kind, det = detect.own_axis(part)
+    assert kind == "gear" and abs(abs(axis @ ax) - 1) < 1e-9
+    assert np.linalg.norm((pt - centre) - ((pt - centre) @ ax) * ax) < 2e-4

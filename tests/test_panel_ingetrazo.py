@@ -790,6 +790,9 @@ def test_a_part_clicked_in_the_list_stands_out_in_the_model():
         panel.tree.itemClicked.emit(it, 0)
         out = drawn_now()
         assert len(out) == 1 and out[0][0] > 0 and out[0][1] == 3.0, (b["name"], out)
+    # something else picked in the model (or nothing): the highlight goes out
+    win.viewport.scene.selection.clear()
+    assert drawn_now() == [] and not panel._hl_bodies
     _reset(win, panel)
 
 
