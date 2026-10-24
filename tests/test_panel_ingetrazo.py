@@ -164,11 +164,15 @@ def test_two_motors_from_the_panel():
     _select(win, leaf2); panel._action("moving")
     _select(win, h1); panel._action("pivot")
     _select(win, h2); panel._action("pivot")
-    for name, hi in (("pivot1", -90), ("pivot2", -45)):
-        panel.tree.setCurrentItem(panel.tree.findItems(name, Qt_MatchExactly())[0])
-        panel.drv_lo.setValue(0)
-        panel.drv_hi.setValue(hi)
-        panel._action("driver")
+    panel._auto_motor = "add"                  # « keep both » when asked
+    try:
+        for name, hi in (("pivot1", -90), ("pivot2", -45)):
+            panel.tree.setCurrentItem(panel.tree.findItems(name, Qt_MatchExactly())[0])
+            panel.drv_lo.setValue(0)
+            panel.drv_hi.setValue(hi)
+            panel._action("driver")
+    finally:
+        panel._auto_motor = None
     data = panel.app.document_data()
     assert [x["joint"] for x in data["drivers"]] == ["pivot1", "pivot2"]
     panel.pas.setValue(11)
@@ -1143,6 +1147,73 @@ def test_wheels_on_a_plain_plate_without_drawn_shafts():
     win._on_undo()
     assert len(scene.guides) == n0                       # one undo step
     _reset(win, panel)
+
+
+def test_a_part_dropped_on_another_merges_them():
+    """In the list, a part dropped on another becomes part of it (its
+    groups and joints follow; one undo step); a joint cannot be dropped."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    base = _box_group("Socle", (0, 0, 0), (0.4, 0.2, 0.05))
+    a = _box_group("Bras", (0, 0, 0.05), (0.3, 0.05, 0.1))
+    b = _box_group("Patte", (0.3, 0, 0.05), (0.35, 0.05, 0.2))
+    scene.groups += [base, a, b]
+    win.viewport.notify_scene_changed()
+    for g in (base, a, b):
+        _select(win, g); panel._action("parts")
+    names = [x["name"] for x in panel.data["bodies"]]
+    roles = {panel.tree.topLevelItem(i).data(0, Qt_UserRole() + 1)
+             for i in range(panel.tree.topLevelItemCount())}
+    assert roles == {"part"}
+    panel.tree._on_drop(names[2], names[1])
+    d = panel.app.document_data()
+    assert [x["name"] for x in d["bodies"]] == names[:2]
+    assert d["bodies"][1]["groups"] == [a.uid, b.uid]
+    assert panel._chosen() == names[1]
+    win._on_undo()
+    assert len(panel.app.document_data()["bodies"]) == 3
+    _reset(win, panel)
+
+
+def Qt_UserRole():
+    from PySide6.QtCore import Qt
+    return Qt.UserRole
+
+
+def test_the_list_says_missing_materials_once():
+    """Parts without a material: one line above the list instead of
+    « matériau ? » on every row; every cell shows its whole text on hover;
+    the list never scrolls sideways."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    long = "Balancement 1 — sous-ensemble du bras avant gauche (rév. C)"
+    groups = [_box_group("X0", (0, 0, 0), (0.4, 0.2, 0.05)),
+              _box_group(long, (0, 0, 0.05), (0.3, 0.05, 0.1))]
+    scene.groups += groups
+    win.viewport.notify_scene_changed()
+    for g in groups:
+        _select(win, g); panel._action("parts")
+    panel.mechanism()
+    panel._fill_tree()
+    rows = [panel.tree.topLevelItem(i) for i in range(panel.tree.topLevelItemCount())]
+    assert all(r.text(2) != "matériau ?" for r in rows)
+    assert panel.mat_hint.isVisibleTo(panel) and "2 pièce(s)" in panel.mat_hint.text()
+    assert all(r.toolTip(0) == r.text(0) for r in rows)
+    assert panel.tree.horizontalScrollBarPolicy() == Qt_ScrollBarAlwaysOff()
+    _reset(win, panel)
+
+
+def Qt_ScrollBarAlwaysOff():
+    from PySide6.QtCore import Qt
+    return Qt.ScrollBarAlwaysOff
 
 
 def test_the_four_commands():

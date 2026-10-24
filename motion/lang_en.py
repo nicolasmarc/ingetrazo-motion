@@ -305,6 +305,12 @@ EN = {
         "travel)?",
     "Remplacer": "Replace",
     "axe propre de la pièce : {d}": "the part's own axis: {d}",
+    "Glisser une pièce sur une autre pour les fusionner ; clic droit : fusionner, supprimer.":
+        "Drag a part onto another to merge them; right click: merge, delete.",
+    "{a} fusionnée dans {b} : une seule pièce.": "{a} merged into {b}: one part.",
+    "Fusionner dans": "Merge into",
+    "⚠ {n} pièce(s) sans matériau : choisir la pièce, puis « Matériau » (masses, dynamique).":
+        "⚠ {n} part(s) without material: choose the part, then « Material » (masses, dynamics).",
     "Axe (Axis) — sélectionner une pièce : son axe (centre de la denture, alésage, forme ronde) "
     "tracé en ligne de construction, pour le vérifier ou s'en servir avec « Liaison ».":
         "Axis — select a part: its axis (centre of its teeth, bore, round shape) drawn as a "

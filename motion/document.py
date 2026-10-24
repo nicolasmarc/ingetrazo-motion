@@ -115,6 +115,36 @@ def remove(data, name):
     return normalized(d)
 
 
+def merge_bodies(data, into, gone):
+    """Part ``gone`` becomes part of ``into``: its groups move over, its
+    joints with other parts now hold ``into``; the joints between the two
+    (and what hangs on them: couplings, motors, torques) go, they would tie
+    a part to itself. ``into`` keeps its name and whether it is fixed."""
+    d = normalized(data)
+    rec = {b["name"]: b for b in d["bodies"]}
+    if into not in rec or gone not in rec or into == gone:
+        raise ValueError("unknown part")
+    rec[into]["groups"] = rec[into]["groups"] + [u for u in rec[gone]["groups"]
+                                                 if u not in rec[into]["groups"]]
+    d["bodies"] = [b for b in d["bodies"] if b["name"] != gone]
+    joints = []
+    for j in d["joints"]:
+        if j["kind"] != "coupling" and {j["a"], j["b"]} == {into, gone}:
+            continue
+        j = dict(j)
+        for k in ("a", "b"):
+            if j.get(k) == gone:
+                j[k] = into
+        joints.append(j)
+    names = {j["name"] for j in joints if j["kind"] != "coupling"}
+    d["joints"] = [j for j in joints if j["kind"] != "coupling"
+                   or (j.get("ja") in names and j.get("jb") in names)]
+    names = {j["name"] for j in d["joints"]}
+    d["drivers"] = [x for x in d["drivers"] if x["joint"] in names]
+    d["couples"] = {n: v for n, v in d["couples"].items() if n in names}
+    return normalized(d)
+
+
 def add_coupling(data, ja, jb, ratio, name=None):
     """``jb`` turns ``ratio`` times ``ja`` (gears: -z1/z2)."""
     d = normalized(data)

@@ -376,6 +376,41 @@ def QRectF_(x, y, w, h):
     return QRectF(x, y, w, h)
 
 
+class _PartList(QTreeWidget):
+    """The list of parts and joints; a part dropped on another part asks
+    ``on_drop(dropped, onto)`` (nothing moves in the list itself)."""
+
+    def __init__(self, on_drop):
+        super().__init__()
+        self._on_drop = on_drop
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+
+    def _target(self, event):
+        pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        return self.itemAt(pos)
+
+    def dragMoveEvent(self, event):
+        src, dst = self.currentItem(), self._target(event)
+        ok = (src is not None and dst is not None and src is not dst
+              and src.data(0, Qt.UserRole + 1) == "part"
+              and dst.data(0, Qt.UserRole + 1) == "part")
+        event.setAccepted(ok)
+        if ok:
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        src, dst = self.currentItem(), self._target(event)
+        event.setDropAction(Qt.IgnoreAction)
+        event.accept()                          # the list itself never moves
+        if (src is not None and dst is not None and src is not dst
+                and src.data(0, Qt.UserRole + 1) == "part"
+                and dst.data(0, Qt.UserRole + 1) == "part"):
+            self._on_drop(src.data(0, Qt.UserRole), dst.data(0, Qt.UserRole))
+
+
 class _Grip(QWidget):
     """A thin bar under the list: drag it to set the list's height."""
 
@@ -596,7 +631,11 @@ class MotionPanel(QWidget):
         self.more_btn.setChecked(self._setting("plus", False))
         self._show_more(self.more_btn.isChecked())
 
-        self.tree = QTreeWidget()
+        self.tree = _PartList(self._merge_parts)
+        self.tree.setToolTip(_T("Glisser une pièce sur une autre pour les fusionner ; clic droit : "
+                                "fusionner, supprimer."))
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.setHeaderLabels([_T("Nom"), _T("Type"), _T("Détail")])
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -607,6 +646,12 @@ class MotionPanel(QWidget):
         # (drag down: taller; the panel scrolls). A splitter could only share
         # the room already there, none on a laptop screen.
         self.tree.setFixedHeight(self._list_height())
+        self.tree.setTextElideMode(Qt.ElideMiddle)    # long STEP names: both ends kept
+        self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.mat_hint = QLabel("")                    # one line, not one per part
+        self.mat_hint.setWordWrap(True)
+        self.mat_hint.setVisible(False)
+        lay.addWidget(self.mat_hint)
         lay.addWidget(self.tree)
         self.grip = _Grip(self.tree, self._save_list_height)
         self.grip.setToolTip(_T("Glisser pour agrandir la liste"))
@@ -1074,19 +1119,34 @@ class MotionPanel(QWidget):
         masses = self._known_masses()
         if self.mech is None and self.source == "model" and self.data["bodies"]:
             self._schedule_masses()
+        unknown = 0
         if masses:
-            bodies = [(n, k, self._mass_text(masses.get(n)) or dt) for n, k, dt in bodies]
+            rows = []
+            for n, k, dt in bodies:
+                t = self._mass_text(masses.get(n))
+                if t == _T("matériau ?"):          # said once above the list
+                    unknown += 1
+                    t = "—"
+                rows.append((n, k, t or dt))
+            bodies = rows
+        self._say_missing_materials(unknown)
         kinds = {k: _T(v) for k, v in KIND_NAMES.items()}
         for name, kind, detail in bodies + joints:
             it = QTreeWidgetItem([name, kinds[kind], detail])
+            for c_, t_ in enumerate((name, kinds[kind], detail)):
+                it.setToolTip(c_, t_)                # the whole text, however narrow
             it.setIcon(0, icons.icon(kind, self.tree, 16))
             it.setData(0, Qt.UserRole, name)
+            it.setData(0, Qt.UserRole + 1, "part" if kind in ("fixed", "moving") else "joint")
             if name in motors:
                 it.setIcon(1, icons.icon("driver", self.tree, 16))
                 it.setText(1, kinds[kind] + _T(" · moteur"))
             self.tree.addTopLevelItem(it)
         for c in range(3):
             self.tree.resizeColumnToContents(c)
+        w = max(self.tree.viewport().width(), 200)     # no sideways scrolling: the
+        for c, share in ((0, 0.45), (1, 0.3)):          # names and kinds share the width
+            self.tree.setColumnWidth(c, min(self.tree.columnWidth(c), int(share * w)))
         self.tree.blockSignals(False)
         editable = self.source == "model"
         from .excopy import NOT_COPYABLE
@@ -1278,13 +1338,24 @@ class MotionPanel(QWidget):
         self.say("")
         self._show_masses(masses)
 
+    def _say_missing_materials(self, n):
+        self.mat_hint.setText(_T("⚠ {n} pièce(s) sans matériau : choisir la pièce, puis "
+                                 "« Matériau » (masses, dynamique).", n=n))
+        self.mat_hint.setVisible(bool(n) and self.source == "model")
+
     def _show_masses(self, masses):
         """Masses in the list and under the material, once they are known."""
+        unknown = 0
         for i in range(self.tree.topLevelItemCount()):
             it = self.tree.topLevelItem(i)
             txt = self._mass_text(masses.get(it.data(0, Qt.UserRole)))
+            if txt == _T("matériau ?"):             # said once above the list
+                unknown += 1
+                txt = "—"
             if txt:
                 it.setText(2, txt)
+                it.setToolTip(2, txt)
+        self._say_missing_materials(unknown)
         self.tree.resizeColumnToContents(2)
         if self.tree.currentItem() is None:
             self._select_first_motor()
@@ -1345,6 +1416,8 @@ class MotionPanel(QWidget):
             w.setVisible("c" in f)
         form.setRowVisible(self.tq_row, "t" in f)
         form.setRowVisible(self.apply_btn, False)          # changes apply at once
+        if hasattr(self, "joint_box"):
+            self.joint_box.setVisible(kind is not None)    # nothing chosen: no empty box
         if kind == "elastic":
             self.k_label.setText(_T("Raideur"))
             self.k_spin.setToolTip(_T("Raideur en translation (N/m) ; en rotation : 1 % de cette "
@@ -1404,6 +1477,7 @@ class MotionPanel(QWidget):
         # a joint chosen: its settings, no material (that is a part's)
         self.mat_row.setVisible(not is_joint)
         self.mass_label.setVisible(not is_joint)
+        self.joint_box.setVisible(is_joint)          # a part: its material only
         if is_joint:
             kind = (self._joint_record(name)["kind"] if self.source == "model" else
                     next(j.kind for j in self.mechanism().joints if j.name == name))
@@ -2346,6 +2420,38 @@ class MotionPanel(QWidget):
         hit = self.tree.findItems(j["name"], Qt.MatchExactly)
         if hit:                                   # stays chosen, its fields shown
             self.tree.setCurrentItem(hit[0])
+
+    def _merge_parts(self, gone, into):
+        """Part ``gone`` dropped on part ``into``: one part (one undo step)."""
+        if self.source != "model":
+            return
+        try:
+            d = doc.merge_bodies(self.data, into, gone)
+        except ValueError:
+            return
+        self._store(d, _T("{a} fusionnée dans {b} : une seule pièce.", a=gone, b=into))
+        hit = self.tree.findItems(into, Qt.MatchExactly)
+        if hit:
+            self.tree.setCurrentItem(hit[0])
+            self._highlight(into)
+
+    def _tree_menu(self, pos):
+        """Right click: merge a part into another, delete."""
+        it = self.tree.itemAt(pos)
+        if it is None or self.source != "model":
+            return
+        from PySide6.QtWidgets import QMenu
+        self.tree.setCurrentItem(it)
+        name = it.data(0, Qt.UserRole)
+        menu = QMenu(self)
+        if it.data(0, Qt.UserRole + 1) == "part":
+            sub = menu.addMenu(_T("Fusionner dans"))
+            for b in self.data["bodies"]:
+                if b["name"] != name:
+                    sub.addAction(b["name"]).triggered.connect(
+                        lambda _c=False, o=b["name"]: self._merge_parts(name, o))
+        menu.addAction(_T("Supprimer")).triggered.connect(lambda _c=False: self._delete())
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _delete(self):
         name = self._chosen()

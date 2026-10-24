@@ -94,3 +94,21 @@ if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):
             f(); print("ok", k)
+
+
+def test_merging_two_parts():
+    from motion import document as doc
+    d = doc.empty()
+    for name, uids, fixed in (("bâti", ["g0"], True), ("bras", ["g1"], False),
+                              ("patte", ["g2"], False), ("roue", ["g3"], False)):
+        d, _ = doc.add_body(d, uids, fixed, name)
+    d, p1 = doc.add_joint(d, "pivot", "bâti", "bras", point=(0, 0, 0), axis=(0, 0, 1))
+    d, l1 = doc.add_joint(d, "lock", "bras", "patte", point=(1, 0, 0))
+    d, p2 = doc.add_joint(d, "pivot", "patte", "roue", point=(2, 0, 0), axis=(0, 0, 1))
+    d = doc.add_driver(d, p1, 0.0, 1.0)
+    d = doc.merge_bodies(d, "bras", "patte")
+    assert [b["name"] for b in d["bodies"]] == ["bâti", "bras", "roue"]
+    assert next(b for b in d["bodies"] if b["name"] == "bras")["groups"] == ["g1", "g2"]
+    assert [j["name"] for j in d["joints"]] == [p1, p2]            # the lock between them gone
+    assert next(j for j in d["joints"] if j["name"] == p2)["a"] == "bras"
+    assert [x["joint"] for x in d["drivers"]] == [p1]

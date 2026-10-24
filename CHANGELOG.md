@@ -34,6 +34,22 @@
 - **Gears in one gesture**: two toothed wheels selected, « Liaison »:
   Couplage proposed with the teeth counted, the missing pivots with the
   frame made; the first wheel selected drives.
+- **Wheels and links without a drawn shaft**: when no shaft sits in a
+  bore, a part's own axis is used — the centre of its teeth (an evenly
+  toothed outline, not a bar with round ends), else its round shape
+  nearest the frame. « Moteur », « Liaison » and the gears use it.
+- **« Axe »** (under « Plus… »): the selected part's axis drawn as a
+  construction line, to check it or to build a joint on it.
+- **Merge two parts**: drag a part onto another in the list (or right
+  click → « Fusionner dans »): its groups and joints follow, the joints
+  between the two go; one undo step.
+- **The selected joint's settings**: « Moteur » above its travel, values
+  greyed until their box is ticked, every change applied at once (no
+  « Appliquer »), the box titled with the joint and hidden for a part;
+  the material line only for a part.
+- **A clearer list**: long names cut in the middle with the whole name on
+  hover, no sideways scrolling, and parts without a material said once
+  above the list instead of « matériau ? » on every row.
 - **The part clicked in the list stands out in the model**: its edges
   drawn thick over the model, fixed parts included (IngeTrazo's selection
   box alone was lost in a big model).
