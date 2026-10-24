@@ -253,6 +253,124 @@ def group_segments(group):
     return np.vstack(out) if out else np.zeros((0, 2, 3))
 
 
+class CurveView(QWidget):
+    """A plain plot: axes with round ticks, one to three curves, the
+    current instant as a vertical line, the value under the mouse."""
+    COLORS = ((222, 110, 30), (40, 110, 200), (60, 150, 80))
+
+    def __init__(self):
+        super().__init__()
+        self.setMinimumHeight(170)
+        self.setMouseTracking(True)
+        self.xs, self.curves, self.msg = None, [], ""
+        self.xlab = self.ylab = self.title = ""
+        self.cursor_t, self.hover = None, None
+
+    def set_data(self, xs, curves, xlab, ylab, title=""):
+        self.xs, self.curves = np.asarray(xs, float), [(l, np.asarray(y, float)) for l, y in curves]
+        self.xlab, self.ylab, self.title, self.msg = xlab, ylab, title, ""
+        self.update()
+
+    def set_message(self, text):
+        self.xs, self.curves, self.msg = None, [], text
+        self.update()
+
+    def set_cursor(self, t):
+        self.cursor_t = t
+        self.update()
+
+    def mouseMoveEvent(self, ev):
+        self.hover = ev.position().x()
+        self.update()
+
+    def leaveEvent(self, ev):
+        self.hover = None
+        self.update()
+
+    def _frame(self):
+        r = self.rect()
+        return r.left() + 58, r.top() + 22, r.width() - 70, r.height() - 58
+
+    def paintEvent(self, ev):
+        from PySide6.QtGui import QPainter, QFont
+        from . import curves as _c
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QColor(255, 255, 255))
+        pen_txt = QPen(QColor(60, 60, 60))
+        if self.xs is None or not len(self.xs) or not self.curves:
+            p.setPen(pen_txt)
+            p.drawText(self.rect().adjusted(10, 10, -10, -10), Qt.AlignCenter | Qt.TextWordWrap,
+                       self.msg)
+            p.end()
+            return
+        x0, y0, w, h = self._frame()
+        allv = np.concatenate([y[np.isfinite(y)] for _, y in self.curves]) if self.curves else np.zeros(1)
+        if not len(allv):
+            allv = np.zeros(1)
+        lo, hi = float(allv.min()), float(allv.max())
+        if hi - lo < 1e-12:
+            lo, hi = lo - 1.0, hi + 1.0
+        pad = 0.05 * (hi - lo)
+        lo, hi = lo - pad, hi + pad
+        xl, xh = float(self.xs.min()), float(self.xs.max())
+        if xh - xl < 1e-12:
+            xh = xl + 1.0
+        X = lambda v: x0 + (v - xl) / (xh - xl) * w
+        Y = lambda v: y0 + h - (v - lo) / (hi - lo) * h
+        f = QFont(p.font())
+        f.setPointSizeF(max(7.0, f.pointSizeF() - 1))
+        p.setFont(f)
+        grid = QPen(QColor(228, 228, 228), 1)
+        for tv in _c.nice_ticks(lo, hi):
+            p.setPen(grid)
+            p.drawLine(QPointF(x0, Y(tv)), QPointF(x0 + w, Y(tv)))
+            p.setPen(pen_txt)
+            p.drawText(QPointF(4, Y(tv) + 4), f"{tv:.4g}")
+        for tv in _c.nice_ticks(xl, xh):
+            p.setPen(grid)
+            p.drawLine(QPointF(X(tv), y0), QPointF(X(tv), y0 + h))
+            p.setPen(pen_txt)
+            p.drawText(QPointF(X(tv) - 12, y0 + h + 15), f"{tv:.4g}")
+        p.setPen(QPen(QColor(120, 120, 120), 1))
+        p.drawRect(QRectF_(x0, y0, w, h))
+        p.setPen(pen_txt)
+        p.drawText(QPointF(x0, y0 - 7), self.ylab)
+        p.drawText(QPointF(x0 + w - 6 * len(self.xlab), y0 + h + 32), self.xlab)
+        for k, (lab, ys) in enumerate(self.curves):
+            col = QColor(*self.COLORS[k % 3])
+            p.setPen(QPen(col, 1.8))
+            last = None
+            for xv, yv in zip(self.xs, ys):
+                if not np.isfinite(yv):
+                    last = None
+                    continue
+                pt = QPointF(X(xv), Y(yv))
+                if last is not None:
+                    p.drawLine(last, pt)
+                last = pt
+            if lab:
+                p.drawText(QPointF(x0 + w - 90, y0 + 14 + 14 * k), lab)
+        if self.cursor_t is not None:                        # the instant shown
+            cx = X(xl + self.cursor_t * (xh - xl))
+            p.setPen(QPen(QColor(150, 150, 150), 1, Qt.DashLine))
+            p.drawLine(QPointF(cx, y0), QPointF(cx, y0 + h))
+        if self.hover is not None and x0 <= self.hover <= x0 + w:
+            xv = xl + (self.hover - x0) / w * (xh - xl)
+            i = int(np.argmin(np.abs(self.xs - xv)))
+            txt = f"{self.xs[i]:.4g} : " + " / ".join(
+                f"{ys[i]:.4g}" for _, ys in self.curves if np.isfinite(ys[i]))
+            p.setPen(QPen(QColor(30, 30, 30), 1))
+            p.drawLine(QPointF(X(self.xs[i]), y0), QPointF(X(self.xs[i]), y0 + h))
+            p.drawText(QPointF(min(self.hover + 6, x0 + w - 140), y0 + 14), txt)
+        p.end()
+
+
+def QRectF_(x, y, w, h):
+    from PySide6.QtCore import QRectF
+    return QRectF(x, y, w, h)
+
+
 class _Grip(QWidget):
     """A thin bar under the list: drag it to set the list's height."""
 
@@ -412,6 +530,11 @@ class MotionPanel(QWidget):
             main.addWidget(b)
             self.main_buttons[name] = b
         lay.addLayout(main)
+        # the kind of calculation, one choice, under the commands (filled
+        # below, with the duration and the shocks of the dynamics)
+        self.mode_lay = QHBoxLayout()
+        self.mode_lay.setSpacing(4)
+        lay.addLayout(self.mode_lay)
         self.more_btn = QToolButton()
         self.more_btn.setText(_T("Plus…"))
         self.more_btn.setToolTip(_T("Toutes les liaisons et les outils, pour les cas particuliers."))
@@ -443,8 +566,13 @@ class MotionPanel(QWidget):
             # the same centre lines, column by column, row by row
             b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             b.clicked.connect(lambda _c=False, n=name: self._action(n))
-            grid.addWidget(b, i // 4, i % 4)
             self.buttons[name] = b
+            if name in ("driver", "validate"):     # already among the four commands
+                b.setParent(self.more)
+                b.hide()
+                continue
+            k = len([n for n in self.buttons if n not in ("driver", "validate")]) - 1
+            grid.addWidget(b, k // 4, k % 4)
         for c in range(4):
             grid.setColumnStretch(c, 1)
             grid.setColumnMinimumWidth(c, 10)
@@ -613,15 +741,41 @@ class MotionPanel(QWidget):
         self.pas.setValue(51)
         val.addWidget(self.pas)
         lay.addLayout(val)
-        drow = QHBoxLayout()
+        drow = self.mode_lay
+        drow.addWidget(QLabel(_T("Calcul")))
+        self.mode_kin = QToolButton()
+        self.mode_dyn = QToolButton()
+        from PySide6.QtWidgets import QButtonGroup
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        for b_, text, tip in ((self.mode_kin, _T("Cinématique"),
+                               _T("Les moteurs imposent le mouvement, pas à pas de 0 à 100 % : "
+                                  "positions, collisions, butées, jeu minimal.")),
+                              (self.mode_dyn, _T("Dynamique"),
+                               _T("Simulation dans le temps : masses (matériaux), pesanteur, "
+                                  "ressorts, amortisseurs, butées, moteurs en couple ; les chocs "
+                                  "entre pièces libres en option."))):
+            b_.setText(text)
+            b_.setToolTip(tip)
+            b_.setCheckable(True)
+            b_.setAutoRaise(False)
+            b_.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            b_.setMinimumWidth(10)
+            self._mode_group.addButton(b_)
+            drow.addWidget(b_)
+        self.mode_kin.setChecked(True)
         self.dyn_on = QCheckBox(_T("Dynamique"))
+        self.dyn_on.setVisible(False)               # the state behind the two buttons
         self.dyn_on.setToolTip(_T("Masses (matériaux), pesanteur, ressorts, amortisseurs, butées, "
                                  "moteurs en couple : Valider, la lecture et la vidéo suivent la "
                                  "simulation dans le temps ; les moteurs en vitesse font leur "
                                  "course en « durée » et le rapport donne leur couple."))
         self.dyn_on.toggled.connect(self._dynamics_toggled)
+        self.dyn_on.toggled.connect(self._mode_shown)
+        self.mode_dyn.toggled.connect(lambda on: self.dyn_on.setChecked(on))
         drow.addWidget(self.dyn_on)
-        drow.addWidget(QLabel(_T("durée")))
+        self.dur_label = QLabel(_T("durée"))
+        drow.addWidget(self.dur_label)
         self.dur = QDoubleSpinBox()
         self.dur.setRange(0.1, 600)
         self.dur.setDecimals(1)
@@ -637,12 +791,36 @@ class MotionPanel(QWidget):
         self.chocs_on.toggled.connect(lambda on: self._dynamics_toggled(self.dyn_on.isChecked()))
         drow.addWidget(self.chocs_on)
         drow.addStretch(1)
-        lay.addLayout(drow)
+        self._mode_shown(False)
 
         self.out = QPlainTextEdit()
         self.out.setReadOnly(True)
         self.out.setMaximumBlockCount(500)
-        lay.addWidget(self.out, 1)
+        # the report and the curves share the bottom of the panel
+        from PySide6.QtWidgets import QTabWidget
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.out, _T("Compte rendu"))
+        cw = QWidget()
+        cl = QVBoxLayout(cw)
+        cl.setContentsMargins(2, 2, 2, 2)
+        crow = QHBoxLayout()
+        self.curve_combo = QComboBox()
+        self.curve_combo.setToolTip(_T("Ce qui est tracé, pour la pièce ou la liaison choisie dans "
+                                       "la liste (rien de choisi : tout le mécanisme)."))
+        self.curve_combo.currentIndexChanged.connect(lambda _i: self._refresh_curve())
+        crow.addWidget(self.curve_combo, 1)
+        self.csv_btn = QToolButton()
+        self.csv_btn.setText(_T("CSV…"))
+        self.csv_btn.setToolTip(_T("Enregistrer les valeurs de la courbe (tableur)."))
+        self.csv_btn.clicked.connect(self._export_csv)
+        crow.addWidget(self.csv_btn)
+        cl.addLayout(crow)
+        self.curve = CurveView()
+        cl.addWidget(self.curve, 1)
+        self.tabs.addTab(cw, _T("Courbes"))
+        self.tabs.currentChanged.connect(lambda _i: self._fill_curve_choices())
+        self.tabs.setMinimumHeight(200)
+        lay.addWidget(self.tabs, 1)
         self.status = QLabel("")
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
@@ -761,8 +939,10 @@ class MotionPanel(QWidget):
             self.chocs_on.setChecked(bool(sim.get("chocs")))
             for w_ in (self.dyn_on, self.dur, self.chocs_on):
                 w_.blockSignals(False)
+            self._mode_shown(self.dyn_on.isChecked())
         self._invalidate()
         self._fill_tree()
+        self._fill_curve_choices()
 
     def _store(self, data, message=""):
         data["jeu_min"] = self.jeu.value() / 1000
@@ -898,6 +1078,10 @@ class MotionPanel(QWidget):
             self.buttons[n].setEnabled(editable)
         for n in ("parts", "joint"):
             self.main_buttons[n].setEnabled(editable)
+        for w_ in (self.mode_kin, self.mode_dyn, self.dur, self.chocs_on):
+            w_.setEnabled(editable)
+        if not editable:                         # an example shows its own kind
+            self._mode_shown(bool((self.sample_info or {}).get("simulation")))
         self.delete_btn.setEnabled(editable)
         self._fill_materials()
         self.mat_combo.setEnabled(editable)
@@ -1188,6 +1372,7 @@ class MotionPanel(QWidget):
 
     def _item_selected(self):
         name = self._chosen()
+        self._fill_curve_choices()
         if getattr(self, "_hl_point", None) is not None or getattr(self, "_hl_bodies", None):
             if name not in getattr(self, "_hl_bodies", set()) | {getattr(self, "_hl_name", None)}:
                 self._hl_point, self._hl_bodies = None, set()   # stale highlight
@@ -1443,6 +1628,85 @@ class MotionPanel(QWidget):
                                 axis=p1 - p0, pitch=pitch)
         self._store(d, _T("{name} : {a} ↔ {b}, pas {p} mm.", name=name, a=a, b=b,
                          p=f"{1000 * pitch:g}"))
+
+    # ---- curves --------------------------------------------------------------------
+    def _curve_rows(self):
+        """(rows, dynamic) already computed — nothing is computed here."""
+        if self.has_simulation():
+            sc = getattr(self, "_sim_cache", (None, None))
+            if sc[0] is self.mech and sc[1]:
+                return sc[1], True
+            return None, True
+        rows = self.report["steps"] if self.report else self.frames
+        return (rows if rows and "x" in rows[0] else None), False
+
+    def _fill_curve_choices(self):
+        if not hasattr(self, "curve_combo") or self.tabs.currentIndex() != 1:
+            return                             # only while the tab is shown
+        from . import curves
+        name = self._chosen()
+        try:
+            mech = self.mechanism()
+            _, dynamic = self._curve_rows()
+            qs = curves.quantities(mech, name, dynamic)
+        except Exception:
+            qs = []
+        keep = self.curve_combo.currentData()
+        self.curve_combo.blockSignals(True)
+        self.curve_combo.clear()
+        for k, lab in qs:
+            self.curve_combo.addItem(_T(lab), k)
+        i = self.curve_combo.findData(keep)
+        self.curve_combo.setCurrentIndex(max(i, 0))
+        self.curve_combo.blockSignals(False)
+        self._refresh_curve()
+
+    def _curve_data(self):
+        from . import curves
+        key = self.curve_combo.currentData()
+        rows, dynamic = self._curve_rows()
+        if not rows:
+            raise ValueError(_T("Lancer ▶ ou « Valider » : la courbe suit le calcul."))
+        if key is None:
+            raise ValueError(_T("Choisir une pièce ou une liaison dans la liste."))
+        xs, ys, xlab = curves.series(self.mech, rows, key, self._chosen(), dynamic)
+        return xs, [(_T(lab), y) for lab, y in ys], _T(xlab), self.curve_combo.currentText()
+
+    def _refresh_curve(self):
+        if not hasattr(self, "curve") or self.tabs.currentIndex() != 1:
+            return
+        try:
+            xs, ys, xlab, ylab = self._curve_data()
+            self.curve.set_data(xs, ys, xlab, ylab, self._chosen() or _T("Mécanisme"))
+        except Exception as exc:
+            self.curve.set_message(str(exc))
+        self.curve.set_cursor(self.t)
+
+    def _export_csv(self):
+        from PySide6.QtWidgets import QFileDialog
+        from . import curves
+        try:
+            xs, ys, xlab, ylab = self._curve_data()
+        except Exception as exc:
+            self.say(str(exc))
+            return
+        path = getattr(self, "_csv_path", None) or QFileDialog.getSaveFileName(
+            self, _T("Enregistrer la courbe"), "courbe.csv", "CSV (*.csv)")[0]
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8-sig") as f:
+            f.write(curves.to_csv(xs, ys, xlab, ylab))
+        self.say(_T("Courbe enregistrée : {p}", p=path))
+
+    def _mode_shown(self, dyn):
+        """The two buttons, the duration and the shocks follow the mode."""
+        for b_, on in ((self.mode_dyn, dyn), (self.mode_kin, not dyn)):
+            if b_.isChecked() != on:
+                b_.blockSignals(True)
+                b_.setChecked(on)
+                b_.blockSignals(False)
+        for w_ in (self.dur_label, self.dur, self.chocs_on):
+            w_.setVisible(bool(dyn))
 
     def _dynamics_toggled(self, on):
         if self.source != "model":
@@ -1770,15 +2034,20 @@ class MotionPanel(QWidget):
                 rx = dyn.reactions(r["lam"])
                 return {nm: float(rx[nm + " (moteur)"][0]) for nm in motor_rows
                         if nm + " (moteur)" in rx}
+            def reac(r):                       # the joints' multipliers (for the curves)
+                if "lam" not in r:
+                    return {}
+                return {k: [float(v) for v in vals] for k, vals in dyn.reactions(r["lam"]).items()}
             poses = [dict(t=i / max(n - 1, 1), value=r["t"], x=r["x"], ok=True,
                           res=float(np.linalg.norm(dyn.C(r["x"], r["t"]))),
-                          ke=r["ke"], pe=r["pe"], couples=torques(r))
+                          ke=r["ke"], pe=r["pe"], couples=torques(r), reac=reac(r))
                      for i, r in enumerate(rows)]
             if len(poses) > 1 and not poses[-1]["couples"]:
                 poses[-1]["couples"] = poses[-2]["couples"]
             self._sim_cache = (self.mech, poses)
             self._sim_assumed = list(dyn.assumed)
             self._sim_impacts = (dyn.impacts.deepest if dyn.impacts is not None else None)
+            self._fill_curve_choices()
         return self._sim_cache[1]
 
     def has_simulation(self):
@@ -1863,6 +2132,7 @@ class MotionPanel(QWidget):
         self.report = rep
         self.frames = self.report["steps"]
         self._write_report()
+        self._fill_curve_choices()
         if self.buttons["trajectory"].isChecked():
             self._compute_traces()
         self._scrub(self.slider.value())
@@ -2252,6 +2522,8 @@ class MotionPanel(QWidget):
     def _scrub(self, v):
         self.t = v / 1000.0
         self.pct.setText(f"{round(100 * self.t)} %")
+        if hasattr(self, "curve"):
+            self.curve.set_cursor(self.t)
         try:
             self._pose_at(self.t)
             self._dynamics(v)

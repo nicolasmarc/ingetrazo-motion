@@ -12,6 +12,17 @@
   « Plus… » shows every tool for the special cases (remembered).
 
 ### Added
+- **Calculation mode**: « Cinématique » (the motors impose the motion) or
+  « Dynamique » (masses, gravity, shocks), two buttons under the commands;
+  the duration and « Chocs » show only in dynamics.
+- **Curves** (« Courbes » tab next to the report): for the joint chosen in
+  the list its position, and in dynamics its speed, the force it carries
+  and the motor's torque; for a part the height and speed of its centre of
+  gravity; nothing chosen, the mechanism's kinetic, potential and total
+  energy. The current instant is a dashed line that follows the slider,
+  the value under the mouse is shown, « CSV… » saves the values. Checked
+  by hand: an arm hanging at rest carries its weight, a plank let go flat
+  from its hinge a quarter of it.
 - **Joints found from two parts**: Pivot, Pivot glissant, Glissière and
   Rotule accept two selected parts instead of an edge. On the spider, 9 of
   its 14 pivots / ball joints are found with the same axis; where the

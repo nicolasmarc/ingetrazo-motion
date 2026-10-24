@@ -952,3 +952,56 @@ def test_the_four_commands():
     del panel._scan_dialog
     assert called == [1]
     _reset(win, panel)
+
+
+def test_curves_of_the_drop_leaf():
+    """The drop leaf let go: the « Courbes » tab plots the pivot's angle and
+    force, the energy for the whole mechanism, and writes them as CSV."""
+    if SKIP:
+        print("skip:", SKIP); return
+    from PySide6.QtGui import QVector3D as V
+    win = _window()
+    panel = _state["panel"]
+    _reset(win, panel)
+    scene = win.viewport.scene
+    table = _box_group("Plateau chêne", (-0.4, -0.2, -0.009), (0, 0.2, 0.009))
+    leaf = _box_group("Abattant chêne", (0.0, -0.2, -0.009), (0.6, 0.2, 0.009))
+    scene.groups += [table, leaf]
+    hinge = scene.mesh.add_edge(V(0, -0.2, 0), V(0, 0.2, 0))
+    win.viewport.notify_scene_changed()
+    _select(win, table); panel._action("fixed")
+    _select(win, leaf); panel._action("moving")
+    _select(win, hinge); panel._action("pivot")
+    panel.tabs.setCurrentIndex(1)
+    assert "Valider" in panel.curve.msg                      # nothing computed yet
+    panel.dur.setValue(1.0)
+    panel.mode_dyn.setChecked(True)
+    panel._action("validate")
+    panel.tree.setCurrentItem(panel.tree.findItems("pivot1", Qt_MatchExactly())[0])
+    keys = [panel.curve_combo.itemData(i) for i in range(panel.curve_combo.count())]
+    assert keys == ["valeur", "vitesse", "effort"], keys
+    panel.curve_combo.setCurrentIndex(2)
+    xs, ys = panel.curve.xs, panel.curve.curves
+    assert xs is not None and abs(xs[-1] - 1.0) < 1e-6
+    f = ys[0][1]
+    mass = panel.mechanism().bodies[0].mass
+    # a plank let go flat from its hinge: the hinge carries a quarter of
+    # its weight (m g - m a, the centre falls at 3g/4)
+    assert abs(f[0] / (mass * 9.81 / 4) - 1) < 0.02, (f[0], mass)
+    panel.tree.clearSelection(); panel.tree.setCurrentItem(None)
+    panel._fill_curve_choices()
+    assert panel.curve_combo.currentData() == "energie"
+    assert len(panel.curve.curves) == 3
+    panel._csv_path = str(Path(tempfile.mkdtemp()) / "e.csv")
+    panel._export_csv()
+    lines = Path(panel._csv_path).read_text(encoding="utf-8-sig").splitlines()
+    assert lines[0].startswith("temps (s);") and len(lines) == len(panel.curve.xs) + 1
+    panel._scrub(500)
+    assert panel.curve.cursor_t == 0.5
+    if os.environ.get("MOTION_SHOT"):
+        panel.tree.setCurrentItem(panel.tree.findItems("pivot1", Qt_MatchExactly())[0])
+        panel.curve_combo.setCurrentIndex(0)
+        _state["dock"].raise_()
+        _state["qapp"].processEvents()
+        panel.grab().save(os.environ["MOTION_SHOT"])
+    panel.tabs.setCurrentIndex(0)
