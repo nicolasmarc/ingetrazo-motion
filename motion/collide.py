@@ -371,7 +371,10 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contac
         # steps) the gap means nothing — a pin in its bore; their collisions
         # and their gaps further off count
         if _surfaces(mech) is not None:
-            near = 2 * _surfaces(mech).h
+            # the model's own step, not the one widened for large faces:
+            # the exact distance is measured either way (a door's 10 mm gap)
+            S = _surfaces(mech)
+            near = 2 * getattr(S, "fine", S.h)
             cl = [c for c in cl if not c.get("joined") or c["distance"] < 0
                   or c["distance"] >= near]
         row["clearance"] = cl[0] if cl else None

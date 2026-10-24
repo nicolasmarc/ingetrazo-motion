@@ -36,6 +36,15 @@
   in one pass. The parts already in the list are taken whole (the spider:
   48 false pivots between the screws of its shell gone), the frame already
   chosen stays, and joints already made are not proposed again.
+- **Video export froze on large parts going through each other** (three
+  2.4 m boxes): each step tested tens of thousands of points one by one and
+  slowed down step after step. The inside test now runs on every point at
+  once and the sampled surfaces of a mechanism stay under 150 000 points;
+  the validation of that model drops from more than 5 minutes to about
+  12 s without scipy. The video's progress window opens after the
+  validation, not behind it.
+- **A moving part tied to nothing fixed is reported** in kinematics (its
+  position is undefined: the solver turned it with its neighbours).
 
 ## 0.8.0 — 2026-10-24
 

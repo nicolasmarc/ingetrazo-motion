@@ -346,6 +346,10 @@ EN = {
         "{p} %: gap {d} mm < {j} mm between {a} ({ga}) and {b} ({gb})",
     "sélectionner les arêtes du rail": "select the rail's edges",
     "aucune pièce fixe : ajouter une « pièce fixe »": "no fixed part: add a « fixed part »",
+    "{name} : reliée à aucune pièce fixe, sa position n'est pas définie (ajouter une liaison "
+    "ou en faire une pièce fixe)":
+        "{name}: tied to no fixed part, its position is undefined (add a joint or make it a "
+        "fixed part)",
     "aucun moteur : choisir une liaison et « Moteur 0–100 % »":
         "no driver: choose a joint and « Driver 0–100 % »",
     "{name} : aucun groupe trouvé dans le modèle": "{name}: no group found in the model",

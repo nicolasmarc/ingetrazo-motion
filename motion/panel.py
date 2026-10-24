@@ -2756,24 +2756,35 @@ class MotionPanel(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, _T("Exporter la vidéo"), "motion" + ext, filt)
         if not path:
             return
-        prog = QProgressDialog(_T("Rendu de la vidéo…"), _T("Annuler"), 0, 100, self)
-        prog.setWindowModality(Qt.WindowModal)
-        prog.setMinimumDuration(0)
+        # opened at the first frame: a validation run first keeps its own
+        # window alone (two windows at once looked like a freeze)
+        box = []
 
         def step(i, n):
+            if not box:
+                prog = QProgressDialog(_T("Rendu de la vidéo…"), _T("Annuler"), 0, n, self)
+                prog.setWindowModality(Qt.WindowModal)
+                prog.setMinimumDuration(0)
+                box.append(prog)
+            prog = box[0]
             prog.setMaximum(n)
             prog.setValue(i)
+            QApplication.processEvents()
             return not prog.wasCanceled()
+
+        def close():
+            if box:
+                box[0].close()
 
         try:
             out, label = self.export_video(path, dur.value(), res.currentData(),
                                            back.isChecked(), progress=step,
                                            ralenti=slow.value())
         except Exception as exc:
-            prog.close()
+            close()
             QMessageBox.warning(self, _T("Exporter la vidéo"), str(exc))
             return
-        prog.close()
+        close()
         self.say(_T("Vidéo enregistrée : {out} — {label}.", out=out, label=label) if out
                  else _T("Export annulé."))
 

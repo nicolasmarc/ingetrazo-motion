@@ -547,6 +547,27 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             problems.append(_T("{name} : liaison couplée inconnue", name=j['name']))
             continue
         joints[j["name"]] = m.couple(ja, jb, j["ratio"], j["name"])
+    if not (d.get("simulation") or {}).get("active") and fixed:
+        # in kinematics a moving part tied to nothing fixed has no position
+        # of its own: the solver turns it with its neighbours at random
+        # (dynamics: a part may fall freely, a domino)
+        links = {}
+        for j in d["joints"]:
+            if j["kind"] != "coupling" and j["a"] in bodies and j["b"] in bodies:
+                links.setdefault(j["a"], set()).add(j["b"])
+                links.setdefault(j["b"], set()).add(j["a"])
+        seen = {b["name"] for b in fixed}
+        todo = list(seen)
+        while todo:
+            for o in links.get(todo.pop(), ()):
+                if o not in seen:
+                    seen.add(o)
+                    todo.append(o)
+        for b in d["bodies"]:
+            if not b["fixed"] and b["name"] not in seen:
+                problems.append(_T("{name} : reliée à aucune pièce fixe, sa position n'est pas "
+                                   "définie (ajouter une liaison ou en faire une pièce fixe)",
+                                   name=b["name"]))
     for drv in d["drivers"]:
         if drv["joint"] in joints:
             m.add_driver(joints[drv["joint"]], drv["lo"], drv["hi"])
@@ -590,6 +611,13 @@ def _surfaces(m, d, bodies, triangles_of_group, names_of_group=None):
         return None
     allp = np.concatenate([T.reshape(-1, 3) for T in tris.values()])
     h = contact.spacing(float(np.linalg.norm(allp.max(0) - allp.min(0))) * 0.75)
+    # large flat faces (a 2 m box at 5 mm: 400 000 points a part) made
+    # every check last seconds: the step widens so the whole mechanism
+    # stays under a budget of points (the exact distance to the faces is
+    # still computed where parts come close)
+    area = sum(0.5 * float(np.linalg.norm(np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]),
+                                          axis=1).sum()) for T in tris.values())
+    fine, h = h, contact.budget_spacing(h, area)
     clouds = {}
     for b in d["bodies"]:
         body = bodies.get(b["name"])
@@ -606,7 +634,9 @@ def _surfaces(m, d, bodies, triangles_of_group, names_of_group=None):
                     _CLOUDS.clear()
                 _CLOUDS[key] = contact.surface_points(T, h)
             items.append(((names_of_group and names_of_group(uid)) or uid, _CLOUDS[key], T))
-    return contact.Surfaces(m, clouds, h)
+    S = contact.Surfaces(m, clouds, h)
+    S.fine = fine          # the step the model's size asks for (before the budget)
+    return S
 
 
 def trajectory(mech, rows, body, point):

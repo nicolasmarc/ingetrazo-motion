@@ -214,6 +214,17 @@ def spacing(boxes_extent):
     return float(np.clip(boxes_extent / 300.0, 0.0002, 0.005))
 
 
+POINT_BUDGET = 150_000       # sample points for a whole mechanism
+
+
+def budget_spacing(h, area, budget=POINT_BUDGET):
+    """``h``, widened when ``area`` (m², every part) would need more than
+    ``budget`` points at that step."""
+    if area > 0 and area / (h * h) > budget:
+        return float(np.sqrt(area / budget))
+    return float(h)
+
+
 class Surfaces:
     """The sampled surfaces of a mechanism's parts, and the checks."""
 
@@ -320,9 +331,12 @@ class Surfaces:
         cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
         best = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1).min(axis=1)
         out = best.copy()
-        for i in np.nonzero(best < self.h)[0]:      # near the surface: which side?
-            if self._inside(A, Q[i]):
-                out[i] = -best[i]
+        near = np.nonzero(best < self.h)[0]         # near the surface: which side?
+        if len(near):
+            # all at once: two parts going through each other put tens of
+            # thousands of points here, one by one froze the window
+            ins = self._inside_many(A, Q[near])
+            out[near[ins]] = -best[near[ins]]
         return out
 
     def _grid(self, A, axis):
@@ -347,6 +361,40 @@ class Surfaces:
             grid = {(int(ca[i]), int(cb[i])): t[i:j] for i, j in zip(starts, ends)}
             A[key] = (cell, grid)
         return A[key]
+
+    def _inside_many(self, A, Q):
+        """``_inside`` for every point of Q (n, 3) at once: the same three
+        rays, the (point, triangle) pairs of each grid cell side by side."""
+        Q = np.asarray(Q, float).reshape(-1, 3)
+        votes = np.zeros(len(Q), np.int64)
+        for axis in range(3):
+            u, v = [c for c in range(3) if c != axis]
+            cell, grid = self._grid(A, axis)
+            cu = np.floor(Q[:, u] / cell).astype(np.int64)
+            cv = np.floor(Q[:, v] / cell).astype(np.int64)
+            lists = [grid.get((int(a), int(b))) for a, b in zip(cu, cv)]
+            cnt = np.array([0 if ix is None else len(ix) for ix in lists], np.int64)
+            if not cnt.sum():
+                continue
+            pi = np.repeat(np.arange(len(Q)), cnt)
+            ti = np.concatenate([ix for ix in lists if ix is not None and len(ix)])
+            q = Q[pi]
+            T = A["T"][ti]
+            a, b, c = T[:, 0], T[:, 1], T[:, 2]
+            x0, y0 = a[:, u] - q[:, u], a[:, v] - q[:, v]
+            x1, y1 = b[:, u] - q[:, u], b[:, v] - q[:, v]
+            x2, y2 = c[:, u] - q[:, u], c[:, v] - q[:, v]
+            d = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+            ok = np.abs(d) > 1e-30
+            d = np.where(ok, d, 1.0)
+            l1 = (-x0 * (y2 - y0) + y0 * (x2 - x0)) / d
+            l2 = (-(x1 - x0) * y0 + (y1 - y0) * x0) / d
+            l0 = 1 - l1 - l2
+            hit = ok & (l0 >= 0) & (l1 >= 0) & (l2 >= 0)
+            z = l0 * a[:, axis] + l1 * b[:, axis] + l2 * c[:, axis]
+            n = np.bincount(pi[hit & (z > q[:, axis])], minlength=len(Q))
+            votes += n % 2
+        return votes >= 2
 
     def _inside(self, A, q):
         votes = 0
