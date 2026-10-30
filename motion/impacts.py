@@ -294,6 +294,22 @@ class Impacts:
         ang = math.acos(max(-1.0, min(1.0, (np.trace(R0.T @ R1) - 1.0) / 2.0)))
         return float(np.linalg.norm(np.asarray(q1[:3]) - np.asarray(q0[:3]))) + ang * R
 
+    def _hard_mask(self, a, b, qa, qb, rest):
+        """b's points that are no contact with a: round their common
+        pivots (for good), and those drawn inside a until they come out —
+        a pawl drawn a hair into a tooth pushes once it has left it."""
+        axes = rest[1] if isinstance(rest, tuple) else ()
+        held = self.__dict__.setdefault("_held", {})
+        key = (id(a), id(b))
+        h = held.get(key)
+        if h is None:
+            h = held[key] = self.S.drawn_inside(a, b).copy()
+        ix = np.nonzero(h)[0]
+        if len(ix):
+            d = self.S.depths_at(a, b, qa, qb, ix)
+            h[ix[~(d > 0.0)]] = False             # out (or far): a contact again
+        return self.S.hard_hub(a, b, axes) | h
+
     def hard_points(self, x, reach):
         """Contacts of the parts' real surfaces as constraints: for every
         pair whose boxes come close, its few most telling points (the
@@ -337,8 +353,9 @@ class Impacts:
                 if c is None or (self._moved(s_, c[3], qs) + self._moved(t_, c[4], qt)
                                  > c[5] - r):
                     margin = 4.0 * self.S.h
-                    hard_rest = ("hard", rest[1] if isinstance(rest, tuple) else ())
-                    idx, it = self.S.candidates(s_, t_, qs, qt, hard_rest, margin)
+                    idx, it = self.S.candidates(s_, t_, qs, qt,
+                                                self._hard_mask(s_, t_, qs, qt, rest), margin,
+                                                sparse=False)   # a thin stop is not missed
                     cache[key] = c = (self._calls, idx, it, np.array(qs), np.array(qt), margin)
                 p, n, d = self.S.gaps_of(s_, t_, qs, qt, c[1], c[2], reach)
                 if len(d):

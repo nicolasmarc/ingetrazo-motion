@@ -444,55 +444,75 @@ class Surfaces:
             self._skip[key] = mb
         return self._skip[key]
 
+    def _signed_in(self, A, Q):
+        """Signed depths of points Q (in a's drawn frame) in a's solid:
+        > 0 inside, < 0 out, nan further than a few steps."""
+        out = np.full(len(Q), np.nan)
+        if not len(Q) or not len(A["T"]):
+            return out
+        g = A.setdefault("tgrid", {}).get(4.0 * self.h)
+        if g is None:
+            g = A["tgrid"][4.0 * self.h] = TriGrid(A["T"], 4.0 * self.h)
+        keep, it = g.nearest(Q, 3)
+        ix = np.nonzero(keep)[0]
+        if len(ix):
+            Qk = Q[ix]
+            T = A["T"][it.ravel()]
+            Qr = np.repeat(Qk, it.shape[1], axis=0)
+            cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
+            dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Qk), -1)
+            j = np.argmin(dist, axis=1)
+            rows = np.arange(len(Qk))
+            cpb = cp.reshape(len(Qk), -1, 3)[rows, j]
+            N = A["N"][it[rows, j]]
+            dj = dist[rows, j]
+            sd = np.where(np.einsum("ij,ij->i", Qk - cpb, N) < 0.0, dj, -dj)
+            out[ix] = np.where(dj <= 4.0 * self.h, sd, np.nan)   # further: not known
+        return out
+
     def drawn_depths(self, a, b):
         """Signed depths of b's points in a as drawn (> 0 inside, < 0
         out, nan: further than a few steps)."""
         key = ("depth", a.name, b.name)
         if key not in self._skip:
-            A, B = self.data[a.name], self.data[b.name]
-            out = np.full(len(B["P"]), np.nan)
-            g = A.setdefault("tgrid", {}).get(4.0 * self.h)
-            if g is None and len(A["T"]):
-                g = A["tgrid"][4.0 * self.h] = TriGrid(A["T"], 4.0 * self.h)
-            if g is not None:
-                keep, it = g.nearest(B["P"], 3)
-                ix = np.nonzero(keep)[0]
-                if len(ix):
-                    Q = B["P"][ix]
-                    T = A["T"][it.ravel()]
-                    Qr = np.repeat(Q, it.shape[1], axis=0)
-                    cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
-                    dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1)
-                    j = np.argmin(dist, axis=1)
-                    rows = np.arange(len(Q))
-                    cpb = cp.reshape(len(Q), -1, 3)[rows, j]
-                    N = A["N"][it[rows, j]]
-                    dj = dist[rows, j]
-                    out[ix] = np.where(np.einsum("ij,ij->i", Q - cpb, N) < 0.0, dj, -dj)
-            self._skip[key] = out
+            self._skip[key] = self._signed_in(self.data[a.name], self.data[b.name]["P"])
         return self._skip[key]
 
-    def hard_overlap(self, a, b, axes, tol=0.25):
-        """For contacts as constraints: b's points drawn inside a by more
-        than ``tol`` steps (an interference of the model) and, round the
-        pivots holding them, the hub; what only touches as drawn (a pawl
-        on its stop, a block on its plate) stays a contact."""
-        key = ("hard", a.name, b.name, tuple((tuple(p), tuple(d)) for p, d in axes), tol)
+    def depths_at(self, a, b, qa, qb, idx):
+        """Signed depths of b's points ``idx`` in a, the parts at qa, qb."""
+        A, B = self.data[a.name], self.data[b.name]
+        return self._signed_in(A, _unapply(a, qa, _apply(b, qb, B["P"][idx])))
+
+    def hard_hub(self, a, b, axes):
+        """Round the pivots holding a and b (``axes``: [(point,
+        direction)] as drawn), b's points nearer the axis than what touches
+        or overlaps there as drawn: the shaft in its bore, the hub, whose
+        rub is the joint itself."""
+        key = ("hub", a.name, b.name, tuple((tuple(p), tuple(d)) for p, d in axes))
         if key not in self._skip:
             B = self.data[b.name]
-            dep = self.drawn_depths(a, b)
-            mb = np.nan_to_num(dep, nan=-1.0) > tol * self.h
+            dep = np.nan_to_num(self.drawn_depths(a, b), nan=-1.0)
+            mb = np.zeros(len(B["P"]), bool)
             ext = float(np.linalg.norm(B["hi"] - B["lo"]))
             for p, d in axes:
                 p, d = np.asarray(p, float), np.asarray(d, float)
                 d = d / max(np.linalg.norm(d), 1e-12)
                 v = B["P"] - p
                 rad = np.linalg.norm(v - np.outer(v @ d, d), axis=1)
-                hub = (np.nan_to_num(dep, nan=-1.0) > -0.75 * self.h) & (rad < 0.2 * ext)
+                hub = (dep > -0.75 * self.h) & (rad < 0.2 * ext)
                 if hub.any():
                     mb |= rad < float(rad[hub].max()) + 2.0 * self.h
             self._skip[key] = mb
         return self._skip[key]
+
+    def drawn_inside(self, a, b, tol=0.25):
+        """b's points drawn inside a by more than ``tol`` steps: an
+        interference of the model, not a contact — until they come out."""
+        return np.nan_to_num(self.drawn_depths(a, b), nan=-1.0) > tol * self.h
+
+    def hard_overlap(self, a, b, axes, tol=0.25):
+        """:meth:`hard_hub` and :meth:`drawn_inside` together."""
+        return self.hard_hub(a, b, axes) | self.drawn_inside(a, b, tol)
 
     def _mask(self, a, b, resting):
         if isinstance(resting, tuple) and resting[0] == "hard":
@@ -530,14 +550,16 @@ class Surfaces:
             self._skip[key] = mb
         return self._skip[key]
 
-    def candidates(self, a, b, qa, qb, resting=None, margin=None):
+    def candidates(self, a, b, qa, qb, resting=None, margin=None, sparse=True):
         """The points of b that may touch a in the next few steps (within
         ``margin`` of its surface) and their nearest triangles of a:
         (point indices into b's points, triangle indices (n, k)), for
         :meth:`penetrations_of` to use step after step."""
         A, B = self.data[a.name], self.data[b.name]
-        idx = self._sparse(B)
-        if resting:
+        idx = self._sparse(B) if sparse else np.arange(len(B["P"]))
+        if isinstance(resting, np.ndarray):
+            idx = idx[~resting[idx]]
+        elif resting:
             idx = idx[~self._mask(a, b, resting)[idx]]
         r = margin if margin is not None else 4.0 * self.h
         none = (np.zeros(0, int), np.zeros((0, 1), int))

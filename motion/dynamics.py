@@ -757,7 +757,10 @@ class Dynamics:
         dg = np.diag(A)
         # a direction the joints hold whole (a push along a pivot's own
         # axis on its frame): nothing for the contact to do there
-        free = dg > 1e-9 * max(float(dg.max()), 1e-300)
+        # (against what the part could do alone: a pawl's face rubbing its
+        # rocker's face is the pivot's business, however tilted the facets)
+        alone = np.einsum("ij,ji->i", J, MiJt)
+        free = (dg > 1e-9 * max(float(dg.max()), 1e-300)) & (dg > 1e-2 * alone)
         lam[~free] = 0.0
         diag = np.where(free, dg, 1.0)
         w = A @ lam + b

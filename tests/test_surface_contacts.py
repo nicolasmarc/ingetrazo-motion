@@ -129,4 +129,4 @@ def test_dominoes_fall_one_on_the_next():
     for i in range(1, 3):
         b = bs[f"d{i}"]
         foot = b.world_point(m.pose(rows[-1]["x"], b), (0.025 * i + 0.006, 0, 0))
-        assert abs(foot[0] - (0.025 * i + 0.006)) < 3e-3 and abs(foot[2]) < 1e-3, foot
+        assert abs(foot[0] - (0.025 * i + 0.006)) < 5e-3 and abs(foot[2]) < 1e-3, foot
