@@ -322,6 +322,186 @@ class Surfaces:
                 B["groups"][B["lab"][idx_b[k]]])
 
 
+    def drawn_overlap(self, a, b, factor=0.75):
+        """Mask of b's points that touch a (within ``factor`` steps) or lie
+        inside it as drawn: the assembly as modelled (a shaft through its
+        bore, a roller drawn a hair into its slot), not a contact."""
+        key = ("drawn", a.name, b.name, factor)
+        if key not in self._skip:
+            A, B = self.data[a.name], self.data[b.name]
+            mb = self._resting(a, b, factor)[1].copy()
+            r = 1.5 * self.h
+            box = np.all((B["P"] >= A["lo"] - r) & (B["P"] <= A["hi"] + r), axis=1)
+            if box.any():
+                ix = np.nonzero(box & ~mb)[0]
+                if len(ix):
+                    mb[ix[self._inside_many(A, B["P"][ix])]] = True
+                # and what the contact test itself sees inside, as drawn
+                ix = np.nonzero(box & ~mb)[0]
+                if len(ix) and len(A["T"]):
+                    Q = B["P"][ix]
+                    d, _ = A["tree"].query(Q, k=1, distance_upper_bound=r)
+                    near = np.isfinite(d)
+                    if near.any():
+                        ix, Q = ix[near], Q[near]
+                        k = min(8, len(A["T"]))
+                        _, it = A["ttree"].query(Q, k=k)
+                        it = np.atleast_2d(it).reshape(len(Q), -1)
+                        T = A["T"][it.ravel()]
+                        Qr = np.repeat(Q, it.shape[1], axis=0)
+                        cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
+                        dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1)
+                        j = np.argmin(dist, axis=1)
+                        rows = np.arange(len(Q))
+                        cpb = cp.reshape(len(Q), -1, 3)[rows, j]
+                        N = A["N"][it[rows, j]]
+                        mb[ix[np.einsum("ij,ij->i", Q - cpb, N) < 0.0]] = True
+            self._skip[key] = mb
+        return self._skip[key]
+
+    def _mask(self, a, b, resting):
+        if isinstance(resting, tuple):           # ("drawn", axes of the joints)
+            return self.joint_overlap(a, b, resting[1])
+        if resting == "drawn":
+            return self.drawn_overlap(a, b)
+        return self._resting(a, b, float(resting))[1]
+
+    def joint_overlap(self, a, b, axes):
+        """:meth:`drawn_overlap`, and round the axes of the pivots holding
+        a and b together (``axes``: [(point, direction)] as drawn) every
+        point of b nearer the axis than what overlaps there as drawn (the
+        shaft and its bore, the hub), so that turning brings no new rub
+        in; further out (the end of a slot) still counts."""
+        key = ("joint", a.name, b.name, tuple((tuple(p), tuple(d)) for p, d in axes))
+        if key not in self._skip:
+            B = self.data[b.name]
+            mb = self.drawn_overlap(a, b).copy()
+            mb_in = mb & ~self._resting(a, b, 0.75)[1]       # inside, not only touching
+            ext = float(np.linalg.norm(B["hi"] - B["lo"]))
+            for p, d in axes:
+                p, d = np.asarray(p, float), np.asarray(d, float)
+                d = d / max(np.linalg.norm(d), 1e-12)
+                v = B["P"] - p
+                rad = np.linalg.norm(v - np.outer(v @ d, d), axis=1)
+                # the hub: what overlaps close to the axis (a pin drawn into
+                # the side of its slot further out is not the hub)
+                hub = mb_in & (rad < 0.2 * ext)
+                if not hub.any():
+                    continue
+                R = float(rad[hub].max()) + 2.0 * self.h
+                mb |= rad < R
+            self._skip[key] = mb
+        return self._skip[key]
+
+    def candidates(self, a, b, qa, qb, resting=None, margin=None):
+        """The points of b that may touch a in the next few steps (within
+        ``margin`` of its surface) and their nearest triangles of a:
+        (point indices into b's points, triangle indices (n, k)), for
+        :meth:`penetrations_of` to use step after step."""
+        A, B = self.data[a.name], self.data[b.name]
+        idx = self._sparse(B)
+        if resting:
+            idx = idx[~self._mask(a, b, resting)[idx]]
+        r = margin if margin is not None else 4.0 * self.h
+        none = (np.zeros(0, int), np.zeros((0, 1), int))
+        if not len(idx) or not len(A["T"]):
+            return none
+        L = _unapply(a, qa, _apply(b, qb, B["P"][idx]))
+        box = np.all((L >= A["lo"] - r) & (L <= A["hi"] + r), axis=1)
+        if not box.any():
+            return none
+        idx, L = idx[box], L[box]
+        d, _ = A["tree"].query(L, k=1, distance_upper_bound=r)
+        near = np.isfinite(d)
+        if not near.any():
+            return none
+        idx, L = idx[near], L[near]
+        k = min(8, len(A["T"]))
+        _, it = A["ttree"].query(L, k=k)
+        it = np.atleast_2d(it).reshape(len(idx), -1)
+        if it.shape[1] > 3:                  # the three nearest triangles do
+            T = A["T"][it.ravel()]
+            Lr = np.repeat(L, it.shape[1], axis=0)
+            cp = closest_on_triangles(Lr, T[:, 0], T[:, 1], T[:, 2])
+            dist = np.linalg.norm(Lr - cp, axis=1).reshape(len(L), -1)
+            it = np.take_along_axis(it, np.argsort(dist, axis=1)[:, :3], axis=1)
+        return idx, it
+
+    def _sparse(self, B, f=2.5):
+        """Fewer points for the dynamics: the mesh vertices first, then one
+        point in every cell of f sampling steps."""
+        if "Pd" not in B:
+            key = np.floor(B["P"] / (f * self.h)).astype(np.int64)
+            _, first = np.unique(key, axis=0, return_index=True)
+            B["Pd"] = np.sort(first)
+        return B["Pd"]
+
+    def penetrations_of(self, a, b, qa, qb, idx, it):
+        """:meth:`penetrations` for the candidate points ``idx`` of b and
+        their triangles ``it`` of a (found by :meth:`candidates`)."""
+        empty = (np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0))
+        if not len(idx):
+            return empty
+        A, B = self.data[a.name], self.data[b.name]
+        W = _apply(b, qb, B["P"][idx])
+        Q = _unapply(a, qa, W)
+        T = A["T"][it.ravel()]
+        Qr = np.repeat(Q, it.shape[1], axis=0)
+        cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
+        dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1)
+        j = np.argmin(dist, axis=1)
+        rows = np.arange(len(Q))
+        cpb = cp.reshape(len(Q), -1, 3)[rows, j]
+        N = A["N"][it[rows, j]]
+        dj = dist[rows, j]
+        inside = (np.einsum("ij,ij->i", Q - cpb, N) < 0.0) & (dj < 2.5 * self.h)
+        if not inside.any():
+            return empty
+        return W[inside], N[inside] @ a.rot(qa).T, dj[inside]
+
+    def penetrations(self, a, b, qa, qb, resting=None):
+        """Points of b gone into a at poses qa, qb (dynamics): (world points
+        (n, 3), world normals out of a (n, 3), depths (n,)). Only points
+        within 1.5 sampling steps of a's surface are seen — the contact
+        stiffness keeps them there. ``resting`` (steps): leave out the
+        points that touch as drawn (two parts on one hub)."""
+        A, B = self.data[a.name], self.data[b.name]
+        Pb = B["P"]
+        if resting:
+            Pb = Pb[~self._mask(a, b, resting)]
+        empty = (np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0))
+        if not len(Pb) or not len(A["T"]):
+            return empty
+        W = _apply(b, qb, Pb)
+        L = _unapply(a, qa, W)
+        r = 1.5 * self.h
+        box = np.all((L >= A["lo"] - r) & (L <= A["hi"] + r), axis=1)
+        if not box.any():
+            return empty
+        W, L = W[box], L[box]
+        d, _ = A["tree"].query(L, k=1, distance_upper_bound=r)
+        near = np.isfinite(d)
+        if not near.any():
+            return empty
+        W, Q = W[near], L[near]
+        k = min(8, len(A["T"]))
+        _, it = A["ttree"].query(Q, k=k)
+        it = np.atleast_2d(it).reshape(len(Q), -1)
+        T = A["T"][it.ravel()]
+        Qr = np.repeat(Q, it.shape[1], axis=0)
+        cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
+        dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1)
+        j = np.argmin(dist, axis=1)
+        rows = np.arange(len(Q))
+        tri = it[rows, j]
+        cpb = cp.reshape(len(Q), -1, 3)[rows, j]
+        N = A["N"][tri]
+        inside = np.einsum("ij,ij->i", Q - cpb, N) < 0.0
+        if not inside.any():
+            return empty
+        R = a.rot(qa)
+        return W[inside], N[inside] @ R.T, dist[rows, j][inside]
+
     def overlap_count(self, a, b, qa, qb):
         """How many sampled points of a lie inside b (just under its
         surface) at poses qa, qb: steady while a turns about a hub of b,

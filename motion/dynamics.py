@@ -434,6 +434,8 @@ class Dynamics:
                 out.append(np.zeros(n))
         return np.concatenate([np.atleast_1d(v) for v in out]) if out else np.zeros(0)
 
+    slopes_every = 1          # steps between two finite-difference slopes (see run)
+
     def _kin(self, x, u, t, eps=1e-6):
         """(C, G, gamma) row block by row block: pivots analytically (the
         point and the axis of both parts), the other joints and the motors
@@ -441,6 +443,11 @@ class Dynamics:
         idx = {id(b): k for k, b in enumerate(self.bodies)}
         Cs, Gs, gs = [], [], []
         piv = self._pivots_batch(x, u, idx)
+        # at a tiny step (contacts) the slopes of the other joints barely
+        # change from one step to the next: found again every few steps
+        self._kin_calls = getattr(self, "_kin_calls", 0) + 1
+        fresh = self._kin_calls % max(1, int(self.slopes_every)) == 1 or self.slopes_every <= 1
+        memo = self.__dict__.setdefault("_slopes", {})
         for j, n, drv in self._rows():
             Gb = np.zeros((n, self.n))
             if j.kind == "pivot" and not drv:
@@ -451,11 +458,16 @@ class Dynamics:
                 f = ((lambda xx: np.atleast_1d(self.m.continuous_value(j, xx))) if drv
                      else (lambda xx: np.atleast_1d(_solver._joint_residual(self.m, j, xx))))
                 C = f(x)
-                for k in ks:
-                    for c in range(6):
-                        du = np.zeros(self.n)
-                        du[6 * k + c] = eps
-                        Gb[:, 6 * k + c] = (f(self.displace(x, du)) - f(self.displace(x, -du))) / (2 * eps)
+                key = (j.name, drv)
+                if not fresh and key in memo:
+                    Gb = memo[key].copy()
+                else:
+                    for k in ks:
+                        for c in range(6):
+                            du = np.zeros(self.n)
+                            du[6 * k + c] = eps
+                            Gb[:, 6 * k + c] = (f(self.displace(x, du)) - f(self.displace(x, -du))) / (2 * eps)
+                    memo[key] = Gb.copy()
                 um = np.zeros(self.n)
                 for k in ks:
                     um[6 * k: 6 * k + 6] = u[6 * k: 6 * k + 6]
@@ -690,6 +702,8 @@ class Dynamics:
         u = self.project_velocity(x, u, t0)
         if self.impacts is not None:
             self.impacts.dt = dt
+        if dt <= 2e-4:                 # contacts: tiny steps, slopes kept a few
+            self.slopes_every = max(self.slopes_every, 8)
         rows = []
         t = t0
         steps = int(round(seconds / dt))

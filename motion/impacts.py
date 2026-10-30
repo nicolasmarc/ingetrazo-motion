@@ -80,7 +80,7 @@ class Impacts:
     edge of a box."""
 
     def __init__(self, dyn, frequency=400.0, dt=1e-4, per_edge=3, skip=(),
-                 hertz_depth=1e-4):
+                 hertz_depth=1e-4, use_surfaces=True):
         self.dyn = dyn
         self.hertz_depth = float(hertz_depth)
         m = dyn.m
@@ -132,6 +132,55 @@ class Impacts:
                                for b, k in zip(self.box_body, self.box_k)], float)
         self.count = 0              # contact points at the last call
         self.deepest = 0.0          # deepest penetration seen (m)
+        # parts with real surfaces touch on their surfaces, not their boxes
+        S = getattr(m, "surfaces", None)
+        self.S = S if S is not None and getattr(S, "data", None) else None
+        self.body_boxes = {}
+        for i, b in enumerate(self.box_body):
+            self.body_boxes.setdefault(id(b), []).append(i)
+        self.mesh_bodies = []
+        if self.S is not None and use_surfaces:
+            seen = set()
+            for b in self.box_body:
+                if id(b) not in seen and self.S.has(b) and not self.is_ball[self.body_boxes[id(b)][0]]:
+                    seen.add(id(b))
+                    self.mesh_bodies.append(b)
+        mesh = {id(b) for b in self.mesh_bodies}
+        on_mesh = np.array([id(b) in mesh for b in self.box_body], bool)
+        self.allowed &= ~(on_mesh[:, None] & on_mesh[None, :])   # not twice
+        gears = set()
+        for j in m.joints:            # wheels in mesh: their coupling turns them
+            if j.kind == "coupling":
+                ja, jb = j.ja, j.jb
+                for x_, y_ in ((ja.a, jb.a), (ja.a, jb.b), (ja.b, jb.a), (ja.b, jb.b)):
+                    gears.add(frozenset((id(x_), id(y_))))
+        held = {}                       # joints holding two parts together
+        for j in m.joints:
+            if j.kind != "coupling" and getattr(j, "a", None) is not None:
+                held.setdefault(frozenset((id(j.a), id(j.b))), []).append(j)
+        self.mesh_pairs = []
+        for i, a in enumerate(self.mesh_bodies):
+            for b in self.mesh_bodies[i + 1:]:
+                if a.fixed and b.fixed:
+                    continue
+                key = frozenset((id(a), id(b)))
+                if key in gears:
+                    continue
+                js = held.get(key, [])
+                if any(j.kind in ("lock", "elastic") for j in js):
+                    continue                    # one part: they never knock
+                # what touches or overlaps as drawn is the assembly (a shaft
+                # in its bore, a hair of interference): only what comes into
+                # contact afterwards pushes — a pin reaching the end of its
+                # slot, a domino falling on the next. Round a pivot's axis
+                # the rub of shaft and bore is the joint itself.
+                # the pivots of either part: two parts on one axis through a
+                # third (two pawls on a rocker's hub) rub there too
+                mine = [j for j in m.joints if j.kind in ("pivot", "cylindrical", "screw")
+                        and getattr(j, "axis", None) is not None
+                        and ({id(j.a), id(j.b)} & {id(a), id(b)})]
+                axes = [(tuple(map(float, j.point)), tuple(map(float, j.axis))) for j in mine]
+                self.mesh_pairs.append((a, b, ("drawn", tuple(axes)) if axes else "drawn"))
 
     # -- the parts' boxes at pose x ------------------------------------------
     def _world(self, x, Rb):
@@ -168,12 +217,52 @@ class Impacts:
         lo, hi = C - ext, C + ext
         ov = np.all((lo[:, None, :] <= hi[None, :, :]) & (lo[None, :, :] <= hi[:, None, :]), axis=2)
         ov &= self.allowed
-        found = [self._box_points(C, R, P, ov), self._balls(C, R, ov)]
+        found = [self._box_points(C, R, P, ov), self._balls(C, R, ov),
+                 self._surfaces(x, lo, hi)]
         found = [f for f in found if f is not None]
         if not found:
             return
         a_box, b_box, p, n, d, share, hertz = (np.concatenate(v) for v in zip(*found))
         self._push(x, u, F, cogs, a_box, b_box, p, n, d, share, hertz)
+
+    def _surfaces(self, x, lo, hi):
+        """Points of a part gone into another part's real surface (both
+        ways), for every pair whose boxes come close."""
+        if not self.mesh_pairs:
+            return None
+        m = self.dyn.m
+        r = 1.5 * self.S.h
+        blo, bhi = {}, {}
+        for b in self.mesh_bodies:
+            ix = self.body_boxes[id(b)]
+            blo[id(b)], bhi[id(b)] = lo[ix].min(axis=0), hi[ix].max(axis=0)
+        out = []
+        cache = self.__dict__.setdefault("_cand", {})
+        self._calls = getattr(self, "_calls", 0) + 1
+        for a, b, rest in self.mesh_pairs:
+            if np.any(blo[id(a)] - r > bhi[id(b)]) or np.any(blo[id(b)] - r > bhi[id(a)]):
+                continue
+            qa, qb = m.pose(x, a), m.pose(x, b)
+            for s_, t_, qs, qt in ((a, b, qa, qb), (b, a, qb, qa)):
+                # the points that may touch, found again every few steps
+                # (they move less than the margin meanwhile)
+                key = (id(s_), id(t_))
+                c = cache.get(key)
+                if c is None or self._calls - c[0] >= self.refresh:
+                    idx, it = self.S.candidates(s_, t_, qs, qt, rest, 4.0 * self.S.h)
+                    cache[key] = c = (self._calls, idx, it)
+                p, n, d = self.S.penetrations_of(s_, t_, qs, qt, c[1], c[2])
+                if len(d):                  # points of t_ in s_: t_ is pushed out along n
+                    out.append((np.full(len(d), self.body_boxes[id(t_)][0]),
+                                np.full(len(d), self.body_boxes[id(s_)][0]), p, n, d))
+        if not out:
+            return None
+        a_box, b_box, p, n, d = (np.concatenate(v) for v in zip(*out))
+        pair = a_box * self.nb + b_box
+        cnt = np.bincount(pair, minlength=self.nb * self.nb)
+        return a_box, b_box, p, n, d, cnt[pair].astype(float), np.zeros(len(d), bool)
+
+    refresh = 8                       # steps between two searches of the points near
 
     def _box_points(self, C, R, P, ov):
         """Corners and edge points of a box inside another box (no ball)."""
@@ -274,6 +363,11 @@ class Impacts:
         fa, fb = np.isinf(ma), np.isinf(mb)
         ma_, mb_ = np.where(fa, 1.0, ma), np.where(fb, 1.0, mb)
         meff = np.where(fa, mb_, np.where(fb, ma_, ma_ * mb_ / (ma_ + mb_)))
+        # a light part pushing a heavy one (a 9 g pawl driving a 400 g
+        # wheel through its motor): the stiffness from the light one alone
+        # lets it sink in; the geometric mean holds it, the step stays steady
+        both = ~(fa | fb)
+        meff = np.where(both, np.maximum(meff, np.sqrt(ma_ * mb_) * 0.5), meff)
         w = 2 * math.pi * self.freq
         k = meff * w * w / share                      # linear: N/m
         e = 0.5 * (self.box_e[a_box] + self.box_e[b_box])
