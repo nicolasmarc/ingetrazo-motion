@@ -366,14 +366,19 @@ class Impacts:
                 continue
             p, n, d = np.vstack(P), np.vstack(N), np.concatenate(D)
             ka, kb = np.concatenate(KA), np.concatenate(KB)
-            keep = [int(np.argmax(d))]               # the deepest, then spread out
+            # the deepest, then spread out over what touches (a face resting
+            # on its corners), then over what comes near
+            keep = [int(np.argmax(d))]
             dmin = np.linalg.norm(p - p[keep[0]], axis=1)
-            while len(keep) < min(self.per_pair, len(d)):
-                k = int(np.argmax(dmin))
-                if dmin[k] < 0.5 * self.S.h:
-                    break
-                keep.append(k)
-                dmin = np.minimum(dmin, np.linalg.norm(p - p[k], axis=1))
+            touch = d > -0.25 * self.S.h
+            for pool in (touch, ~touch):
+                while len(keep) < min(self.per_pair, len(d)):
+                    cand = np.where(pool, dmin, -1.0)
+                    k = int(np.argmax(cand))
+                    if cand[k] < 0.5 * self.S.h:
+                        break
+                    keep.append(k)
+                    dmin = np.minimum(dmin, np.linalg.norm(p - p[k], axis=1))
             ma = getattr(a, "friction", None)
             mb = getattr(b, "friction", None)
             f = math.sqrt((_FRICTION if ma is None else ma) * (_FRICTION if mb is None else mb))
