@@ -59,8 +59,16 @@ KIND_NAMES = {"fixed": "Pièce fixe", "moving": "Pièce mobile", "pivot": "Pivot
 def _detail(text):
     """A detection's detail line in the panel's language."""
     import re
-    from .lang import english
-    if not text or not english():
+    from .lang import language
+    lang = language()
+    if not text or lang == "fr":
+        return text
+    if lang == "es":
+        for fr, es in ((r"\bjeu\b", "holgura"), (r"\bportée\b", "longitud de apoyo"),
+                       (r"\bappuis plans\b", "apoyos planos"), (r"\bappuis\b", "apoyos"),
+                       (r"\bdents\b", "dientes"), (r"\brapport\b", "relación"), (r"\bet\b", "y"),
+                       (r"— axe « (.*?) » avec « (.*?) »", r"— eje « \1 » con « \2 »")):
+            text = re.sub(fr, es, text)
         return text
     for fr, en in ((r"\bjeu\b", "gap"), (r"\bportée\b", "bearing length"),
                    (r"\bappuis plans\b", "flat contacts"), (r"\bappuis\b", "contacts"),
@@ -2827,7 +2835,7 @@ class MotionPanel(QWidget):
                                d=f"{deep * 1000:.2f}"))
             assumed = getattr(self, "_sim_assumed", [])
             if assumed:
-                lines.append(_T("ⓘ sans matériau, masse estimée (boîtes, 700 kg/m³) : {names}.",
+                lines.append(_T("ⓘ sans matériau, masse estimée (volume des pièces, 700 kg/m³) : {names}.",
                                names=", ".join(assumed)))
         ms = getattr(m, "masses", {}) or {}
         if ms:

@@ -147,6 +147,29 @@ def _skew(v):
     return np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]], float)
 
 
+def mesh_properties(T, density):
+    """(mass, centre, inertia about the centre) of the solid closed by the
+    triangles T (n, 3, 3), turned outward; None if they close no volume.
+    Sums of signed tetrahedra from a point near the solid."""
+    T = np.asarray(T, float).reshape(-1, 3, 3)
+    o = T.reshape(-1, 3).mean(axis=0)
+    a, b, c = T[:, 0] - o, T[:, 1] - o, T[:, 2] - o
+    det = np.einsum("ij,ij->i", a, np.cross(b, c))
+    V = det.sum() / 6.0
+    if not np.isfinite(V) or abs(V) < 1e-12:
+        return None
+    if V < 0:                                     # turned inward: the same solid
+        det, V = -det, -V
+    cen = (det[:, None] * (a + b + c)).sum(axis=0) / 24.0 / V
+    s = a + b + c
+    C = (np.einsum("n,ni,nj->ij", det, a, a) + np.einsum("n,ni,nj->ij", det, b, b)
+         + np.einsum("n,ni,nj->ij", det, c, c) + np.einsum("n,ni,nj->ij", det, s, s)) / 120.0
+    C -= V * np.outer(cen, cen)
+    m = density * V
+    I = density * (np.trace(C) * np.eye(3) - C)
+    return m, cen + o, I
+
+
 class Dynamics:
     """Time simulation of ``mech``.
 
@@ -154,8 +177,8 @@ class Dynamics:
     f) or ("couple", f)} with f(t) the joint value (rad or m) or the
     torque (N m) / force (N). Joints not listed are free. ``damping``:
     {joint: c} viscous friction in a joint (N m s/rad or N s/m).
-    ``default_density``: kg/m^3 for parts without a mass (their boxes'
-    volume). ``stiffness``: Baumgarte constant (1/s). ``contacts``: True
+    ``default_density``: kg/m^3 for parts without a mass (the volume
+    their surface closes, else their boxes'). ``stiffness``: Baumgarte constant (1/s). ``contacts``: True
     (or a dict of :class:`motion.impacts.Impacts` options) for shocks and
     resting contacts between the parts' boxes; parts held by a joint do
     not knock each other."""
@@ -177,6 +200,8 @@ class Dynamics:
                 self.mass[id(b)] = float(b.mass)
                 self.com[id(b)] = np.asarray(b.com, float)
                 self.Iref[id(b)] = np.asarray(b.inertia, float)
+            elif self._mesh_mass(mech, b, default_density):
+                self.assumed.append(b.name)
             else:                                   # boxes, default density
                 vol = sum(8 * float(np.prod(bx.half)) for bx in b.boxes) or 1e-6
                 m = default_density * vol
@@ -273,6 +298,23 @@ class Dynamics:
         R = rotations(q[:, 3:])
         cog = a["center"] + q[:, :3] + np.einsum("nij,nj->ni", R, a["com"] - a["center"])
         return R, cog
+
+    def _mesh_mass(self, mech, b, density):
+        """Mass, centre and inertia of b from its closed surface (the
+        triangles), at ``density``: a wheel's rim and spokes, not the box
+        around it. False where b has no surface that closes."""
+        S = getattr(mech, "surfaces", None)
+        A = S.data.get(b.name) if S is not None else None
+        if A is None or not len(A["T"]):
+            return False
+        r = mesh_properties(A["T"], density)
+        if r is None:
+            return False
+        box = sum(8 * float(np.prod(bx.half)) for bx in b.boxes)
+        if box and r[0] / density > 1.5 * box:     # not one closed solid
+            return False
+        self.mass[id(b)], self.com[id(b)], self.Iref[id(b)] = r
+        return True
 
     def _blocks(self, x, u, t):
         """(R, cog, Iw, F): the parts' rotations, centres of gravity, world
@@ -615,6 +657,10 @@ class Dynamics:
                 return out.reshape(V.shape)
         else:
             Mi = lambda V: np.zeros_like(np.asarray(V, float))
+        hard = self._hard_rows(x, u, cog) if nb else None
+        if hard is not None:
+            a, nu = self._solve_with_contacts(Mi, F, Gm, C, gamma, u, t, hard)
+            return a, -nu, Gm
         if Gm.shape[0]:
             dC = Gm @ u - self._motor_speeds(t)
             rhs_c = -gamma - 2 * self.k * dC - self.k ** 2 * C + self.motor_rates(t)
@@ -626,6 +672,81 @@ class Dynamics:
             nu = np.zeros(0)
             a = Mi(F)
         return a, -nu, Gm
+
+    # -- contacts as constraints ---------------------------------------------
+    # A contact of the real surfaces is a constraint that only pushes: the
+    # points of two parts may separate, never close in. At each step the
+    # forces are those that keep every touching point from closing in at
+    # the end of the step (velocity level, like the joints' rows), with
+    # λ >= 0; what is already in is taken out over a few steps. Found by an
+    # active set: a contact that would pull is let go, one that would close
+    # in is held. As stiff as a joint: a motor driving through a train of
+    # parts is carried whole, and the step can be long.
+    contact_bias = 0.2          # share of a depth taken out each step
+    contact_slop = 2e-5         # m: a depth left alone (no jitter)
+    contact_out = 0.05          # m/s: fastest a depth is taken out (no bounce from it)
+
+    def _hard_rows(self, x, u, cog):
+        imp = self.impacts
+        if imp is None or not getattr(imp, "hard", False):
+            return None
+        dt = float(getattr(imp, "dt", 1e-3))
+        speed = float(np.max(np.abs(u))) if len(u) else 0.0
+        reach = max(1.5 * imp.S.h, 2.0 * speed * dt) if imp.S is not None else 0.0
+        pts = imp.hard_points(x, reach)
+        if pts is None:
+            return None
+        ka, kb, p, n, d = pts
+        rows = np.zeros((len(d), self.n))
+        for side, sgn in ((ka, 1.0), (kb, -1.0)):
+            ok = side >= 0
+            if not ok.any():
+                continue
+            k = side[ok]
+            r = p[ok] - cog[k]
+            rn = np.cross(r, n[ok])
+            for c in range(3):
+                rows[np.nonzero(ok)[0], 6 * k + c] += sgn * n[ok][:, c]
+                rows[np.nonzero(ok)[0], 6 * k + 3 + c] += sgn * rn[:, c]
+        # J u_new >= target: a gap may close by the end of the step, a
+        # depth is taken out bit by bit
+        out = np.minimum(self.contact_bias * np.maximum(d - self.contact_slop, 0.0) / dt,
+                         self.contact_out)
+        target = np.where(d > 0, out, d / dt)
+        return rows, target, dt
+
+    def _solve_with_contacts(self, Mi, F, Gm, C, gamma, u, t, hard):
+        J, target, dt = hard
+        nj = Gm.shape[0]
+        H = np.vstack([Gm, J]) if nj else J
+        MiHt = Mi(H.T)
+        A = H @ MiHt
+        MiF = Mi(F)
+        b = np.zeros(H.shape[0])
+        if nj:
+            dC = Gm @ u - self._motor_speeds(t)
+            rhs_c = -gamma - 2 * self.k * dC - self.k ** 2 * C + self.motor_rates(t)
+            b[:nj] = rhs_c - Gm @ MiF
+        # contacts: J (u + dt a) >= target  ->  J a >= (target - J u) / dt
+        b[nj:] = (target - J @ u) / dt - J @ MiF
+        nc = J.shape[0]
+        active = b[nj:] > 0.0                    # those that would close in without a push
+        mu = np.zeros(H.shape[0])
+        for _ in range(12):
+            rows = np.concatenate([np.arange(nj), nj + np.nonzero(active)[0]]).astype(int)
+            sol = np.zeros(H.shape[0])
+            if len(rows):
+                sol[rows] = np.linalg.lstsq(A[np.ix_(rows, rows)], b[rows], rcond=1e-10)[0]
+            lam = sol[nj:]
+            acc = A[nj:] @ sol - b[nj:]          # >= 0 where the contact holds
+            pull = active & (lam < -1e-9)
+            close = ~active & (acc < -1e-9)
+            mu = sol
+            if not pull.any() and not close.any():
+                break
+            active = (active & ~pull) | close
+        a = MiF + MiHt @ mu
+        return a, -mu[:nj]
 
     def _motor_speeds(self, t, h=1e-5):
         out = []

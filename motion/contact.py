@@ -35,7 +35,7 @@ class GridTree:
         self._grids = {}
         if self.n:
             lo, hi = self.P.min(0), self.P.max(0)
-            self.lo = lo
+            self.lo, self.hi = lo, hi
             span = float(np.max(hi - lo)) or 1.0
             self._knn_cell = span / max(1.0, (self.n / 8.0) ** (1 / 3))
 
@@ -121,7 +121,10 @@ class GridTree:
                     sel = rank < k
                     Dt[s0 + qi[sel], rank[sel]] = dd[sel]
                     It[s0 + qi[sel], rank[sel]] = pi[sel]
-                last = r >= rmax or r > 2 * span
+                # past the box of the points by a whole span, all are seen
+                gap = np.linalg.norm(np.maximum(np.maximum(self.lo - X[todo], X[todo] - self.hi), 0.0),
+                                     axis=1)
+                last = (r >= rmax) | (r > 2 * span + 2 * gap)
                 fin = (Dt[:, min(k, self.n) - 1] <= r) | last
                 if np.isfinite(rmax):
                     far = Dt >= rmax
@@ -138,6 +141,88 @@ try:
     from scipy.spatial import cKDTree as _Tree
 except Exception:                                  # IngeTrazo's Windows build
     _Tree = GridTree
+
+
+class TriGrid:
+    """The triangles near a point, by a grid: each triangle is listed in
+    every cell that comes within ``reach`` of it, so the triangles of a
+    point's own cell are all those closer than ``reach`` (and some more).
+    Big faces (a frame's flat sides) are found whatever their centre."""
+
+    def __init__(self, T, reach):
+        T = np.asarray(T, float).reshape(-1, 3, 3)
+        self.T, self.reach = T, float(reach)
+        c = self.cell = float(reach)
+        self.lo = T.reshape(-1, 3).min(0) - 2 * c
+        n = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+        n /= np.maximum(np.linalg.norm(n, axis=1), 1e-30)[:, None]
+        lo = np.floor((T.min(1) - reach - self.lo) / c).astype(np.int64)
+        hi = np.floor((T.max(1) + reach - self.lo) / c).astype(np.int64)
+        keys, tris = [], []
+        span = hi - lo + 1
+        cnt = np.prod(span, axis=1)
+        csum = np.cumsum(cnt)
+        k = 0
+        while k < len(T):                         # by chunks of 2 M cells at most
+            e = max(k + 1, int(np.searchsorted(csum, (csum[k - 1] if k else 0) + 2_000_000, "right")))
+            sl = slice(k, e)
+            k = e
+            tot = int(cnt[sl].sum())
+            ti = np.repeat(np.arange(sl.start, sl.stop), cnt[sl])
+            loc = np.arange(tot) - np.repeat(np.cumsum(cnt[sl]) - cnt[sl], cnt[sl])
+            sp = span[ti]
+            ix = loc % sp[:, 0]
+            iy = (loc // sp[:, 0]) % sp[:, 1]
+            iz = loc // (sp[:, 0] * sp[:, 1])
+            C = lo[ti] + np.stack([ix, iy, iz], 1)
+            ctr = self.lo + (C + 0.5) * c
+            # only the cells the plane of the triangle passes near
+            off = np.abs(np.einsum("ij,ij->i", ctr - T[ti, 0], n[ti]))
+            ok = off <= reach + 0.87 * c
+            keys.append(GridTree._key(C[ok]))
+            tris.append(ti[ok])
+        key = np.concatenate(keys) if keys else np.zeros(0, np.int64)
+        tri = np.concatenate(tris) if tris else np.zeros(0, int)
+        o = np.argsort(key, kind="stable")
+        self.key, self.tri = key[o], tri[o]
+
+    def nearest(self, X, k=3):
+        """For points X (m, 3): (keep mask, triangle indices (kept, k)) of
+        the k nearest triangles, for the points with any within reach."""
+        X = np.asarray(X, float).reshape(-1, 3)
+        K = GridTree._key(np.floor((X - self.lo) / self.cell).astype(np.int64))
+        A = np.searchsorted(self.key, K, "left")
+        B = np.searchsorted(self.key, K, "right")
+        cnt = B - A
+        keep = cnt > 0
+        if not keep.any():
+            return keep, np.zeros((0, k), int)
+        out = np.zeros((int(keep.sum()), k), int)
+        A, cnt, Xk = A[keep], cnt[keep], X[keep]
+        csum = np.cumsum(cnt)
+        s0 = 0
+        while s0 < len(Xk):                       # by chunks of 1 M pairs at most
+            s1 = max(s0 + 1, int(np.searchsorted(csum, (csum[s0 - 1] if s0 else 0) + 1_000_000, "right")))
+            out[s0:s1] = self._nearest(A[s0:s1], cnt[s0:s1], Xk[s0:s1], k)
+            s0 = s1
+        return keep, out
+
+    def _nearest(self, A, cnt, Xk, k):
+        tot = int(cnt.sum())
+        qi = np.repeat(np.arange(len(Xk)), cnt)
+        local = np.arange(tot) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+        ti = self.tri[np.repeat(A, cnt) + local]
+        T = self.T[ti]
+        cp = closest_on_triangles(Xk[qi], T[:, 0], T[:, 1], T[:, 2])
+        dd = np.linalg.norm(Xk[qi] - cp, axis=1)
+        o = np.lexsort((dd, qi))
+        qi, ti = qi[o], ti[o]
+        starts = np.searchsorted(qi, np.arange(len(Xk)), "left")
+        rank = np.arange(len(qi)) - starts[qi]
+        out = np.repeat(ti[starts][:, None], k, axis=1)   # short lists: the nearest again
+        sel = rank < k
+        out[qi[sel], rank[sel]] = ti[sel]
+        return out
 
 
 def available():
@@ -411,21 +496,13 @@ class Surfaces:
         if not box.any():
             return none
         idx, L = idx[box], L[box]
-        d, _ = A["tree"].query(L, k=1, distance_upper_bound=r)
-        near = np.isfinite(d)
-        if not near.any():
-            return none
-        idx, L = idx[near], L[near]
-        k = min(8, len(A["T"]))
-        _, it = A["ttree"].query(L, k=k)
-        it = np.atleast_2d(it).reshape(len(idx), -1)
-        if it.shape[1] > 3:                  # the three nearest triangles do
-            T = A["T"][it.ravel()]
-            Lr = np.repeat(L, it.shape[1], axis=0)
-            cp = closest_on_triangles(Lr, T[:, 0], T[:, 1], T[:, 2])
-            dist = np.linalg.norm(Lr - cp, axis=1).reshape(len(L), -1)
-            it = np.take_along_axis(it, np.argsort(dist, axis=1)[:, :3], axis=1)
-        return idx, it
+        grids = A.setdefault("tgrid", {})
+        reach = 4.0 * self.h        # what is further is found at the next search
+        g = grids.get(reach)
+        if g is None:
+            g = grids[reach] = TriGrid(A["T"], reach)
+        keep, it = g.nearest(L, 3)
+        return idx[keep], it
 
     def _sparse(self, B, f=2.5):
         """Fewer points for the dynamics: the mesh vertices first, then one
@@ -458,6 +535,32 @@ class Surfaces:
         if not inside.any():
             return empty
         return W[inside], N[inside] @ a.rot(qa).T, dj[inside]
+
+    def gaps_of(self, a, b, qa, qb, idx, it, reach):
+        """Signed gaps of the candidate points of b to a's surface, those
+        closer than ``reach``: (world points, world normals out of a,
+        depths: > 0 inside, < 0 a gap still open)."""
+        empty = (np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0))
+        if not len(idx):
+            return empty
+        A, B = self.data[a.name], self.data[b.name]
+        W = _apply(b, qb, B["P"][idx])
+        Q = _unapply(a, qa, W)
+        T = A["T"][it.ravel()]
+        Qr = np.repeat(Q, it.shape[1], axis=0)
+        cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
+        dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1)
+        j = np.argmin(dist, axis=1)
+        rows = np.arange(len(Q))
+        cpb = cp.reshape(len(Q), -1, 3)[rows, j]
+        N = A["N"][it[rows, j]]
+        dj = dist[rows, j]
+        inside = np.einsum("ij,ij->i", Q - cpb, N) < 0.0
+        depth = np.where(inside, dj, -dj)
+        keep = (depth > -reach) & (depth < 2.5 * self.h)
+        if not keep.any():
+            return empty
+        return W[keep], N[keep] @ a.rot(qa).T, depth[keep]
 
     def penetrations(self, a, b, qa, qb, resting=None):
         """Points of b gone into a at poses qa, qb (dynamics): (world points

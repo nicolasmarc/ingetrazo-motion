@@ -42,11 +42,23 @@ LABELS = {
     "screw": ("Hélicoïdale", "Screw"),
 }
 
+LABELS_ES = {
+    "fixed": "Pieza fija", "moving": "Pieza móvil", "pivot": "Pivote", "slider": "Corredera",
+    "guide": "Guía / raíl", "driver": "Motor 0–100 %", "validate": "Validar",
+    "trajectory": "Trayectoria", "coupling": "Acoplamiento", "axis": "Eje",
+    "contact": "Contacto", "parts": "Piezas", "joint": "Unión", "scan": "Detectar",
+    "cylindrical": "Pivote desliz.", "ball": "Rótula", "lock": "Empotramiento",
+    "elastic": "Elástica", "spring": "Muelle", "annular": "Lin. anular",
+    "pointplane": "Puntual", "planar": "Apoyo plano", "screw": "Helicoidal",
+}
+
+
 def label(name):
     """The tool's name in the panel's language."""
-    from .lang import english
+    from .lang import language
     fr, en = LABELS[name]
-    return en if english() else fr
+    lang = language()
+    return fr if lang == "fr" else LABELS_ES.get(name, en) if lang == "es" else en
 
 
 FALLBACK_ACCENT = QColor(232, 115, 12)       # orange

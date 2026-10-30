@@ -224,8 +224,8 @@ EN = {
     "Couple moteur {nm} : maxi {mx} N·m (à {t} s), moyen {mean} N·m.":
         "Driver torque {nm}: max {mx} N·m (at {t} s), mean {mean} N·m.",
     "{name} : en butée à partir de {t} s.": "{name}: on its limit from {t} s.",
-    "ⓘ sans matériau, masse estimée (boîtes, 700 kg/m³) : {names}.":
-        "ⓘ no material, mass estimated (boxes, 700 kg/m³): {names}.",
+    "ⓘ sans matériau, masse estimée (volume des pièces, 700 kg/m³) : {names}.":
+        "ⓘ no material, mass estimated (parts' volume, 700 kg/m³): {names}.",
     "Masse totale : {m} kg — ": "Total mass: {m} kg — ",
     "ⓘ {n} groupe(s) sans matériau : masse non comptée.":
         "ⓘ {n} group(s) without material: mass not counted.",

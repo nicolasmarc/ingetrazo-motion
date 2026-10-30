@@ -218,7 +218,7 @@ class Impacts:
         ov = np.all((lo[:, None, :] <= hi[None, :, :]) & (lo[None, :, :] <= hi[:, None, :]), axis=2)
         ov &= self.allowed
         found = [self._box_points(C, R, P, ov), self._balls(C, R, ov),
-                 self._surfaces(x, lo, hi)]
+                 None if self.hard else self._surfaces(x, lo, hi)]
         found = [f for f in found if f is not None]
         if not found:
             return
@@ -248,7 +248,7 @@ class Impacts:
                 # (they move less than the margin meanwhile)
                 key = (id(s_), id(t_))
                 c = cache.get(key)
-                if c is None or self._calls - c[0] >= self.refresh:
+                if c is None or self._calls - c[0] >= self.hard_refresh:
                     idx, it = self.S.candidates(s_, t_, qs, qt, rest, 4.0 * self.S.h)
                     cache[key] = c = (self._calls, idx, it)
                 p, n, d = self.S.penetrations_of(s_, t_, qs, qt, c[1], c[2])
@@ -263,6 +263,92 @@ class Impacts:
         return a_box, b_box, p, n, d, cnt[pair].astype(float), np.zeros(len(d), bool)
 
     refresh = 8                       # steps between two searches of the points near
+    hard = False                      # mesh contacts as unilateral constraints (Dynamics)
+    per_pair = 6                      # points kept per pair of parts (hard contacts)
+    hard_refresh = 2                  # calls between two searches (hard contacts)
+
+    def _moved(self, b, q0, q1):
+        """How far any point of b may have gone from pose q0 to q1."""
+        if b.fixed if hasattr(b, "fixed") else False:
+            return 0.0
+        rad = self.__dict__.setdefault("_radius", {})
+        R = rad.get(id(b))
+        if R is None:
+            lo = np.min([np.asarray(bx.center) - np.linalg.norm(bx.half) for bx in b.boxes], axis=0)
+            hi = np.max([np.asarray(bx.center) + np.linalg.norm(bx.half) for bx in b.boxes], axis=0)
+            R = rad[id(b)] = float(np.linalg.norm(hi - lo))
+        R0, R1 = b.rot(q0), b.rot(q1)
+        ang = math.acos(max(-1.0, min(1.0, (np.trace(R0.T @ R1) - 1.0) / 2.0)))
+        return float(np.linalg.norm(np.asarray(q1[:3]) - np.asarray(q0[:3]))) + ang * R
+
+    def hard_points(self, x, reach):
+        """Contacts of the parts' real surfaces as constraints: for every
+        pair whose boxes come close, its few most telling points (the
+        deepest, then the furthest from those kept) within ``reach`` of
+        touching. (ka, kb, p, n, d): moving indices of the part pushed
+        along n and of the other (-1: fixed), world points and normals,
+        depths (> 0 in, < 0 a gap)."""
+        empty = None
+        if not self.mesh_pairs:
+            return empty
+        m = self.dyn.m
+        moving = {id(b): k for k, b in enumerate(self.dyn.bodies)}
+        lo_hi = {}
+        for b in self.mesh_bodies:
+            q = m.pose(x, b)
+            Rb = b.rot(q)
+            los, his = [], []
+            for bx in b.boxes:
+                c = b.world_point(q, bx.center)
+                Rbx = bx.R if bx.R is not None else np.eye(3)
+                e = np.abs(Rb @ Rbx) @ np.asarray(bx.half, float)
+                los.append(c - e)
+                his.append(c + e)
+            lo_hi[id(b)] = (np.min(los, axis=0), np.max(his, axis=0))
+        r = reach + 1.5 * self.S.h
+        cache = self.__dict__.setdefault("_cand", {})
+        self._calls = getattr(self, "_calls", 0) + 1
+        out = []
+        for a, b, rest in self.mesh_pairs:
+            (la, ha), (lb, hb) = lo_hi[id(a)], lo_hi[id(b)]
+            if np.any(la - r > hb) or np.any(lb - r > ha):
+                continue
+            qa, qb = m.pose(x, a), m.pose(x, b)
+            P, N, D, KA, KB = [], [], [], [], []
+            for s_, t_, qs, qt in ((a, b, qa, qb), (b, a, qb, qa)):
+                key = (id(s_), id(t_))
+                c = cache.get(key)
+                # searched again once the parts may have moved by half the
+                # margin since: a turning wheel beside its frame is not
+                # searched again step after step
+                if c is None or (self._moved(s_, c[3], qs) + self._moved(t_, c[4], qt)
+                                 > c[5] - r):
+                    margin = 4.0 * self.S.h
+                    idx, it = self.S.candidates(s_, t_, qs, qt, rest, margin)
+                    cache[key] = c = (self._calls, idx, it, np.array(qs), np.array(qt), margin)
+                p, n, d = self.S.gaps_of(s_, t_, qs, qt, c[1], c[2], reach)
+                if len(d):
+                    P.append(p); N.append(n); D.append(d)
+                    KA.append(np.full(len(d), moving.get(id(t_), -1)))
+                    KB.append(np.full(len(d), moving.get(id(s_), -1)))
+            if not D:
+                continue
+            p, n, d = np.vstack(P), np.vstack(N), np.concatenate(D)
+            ka, kb = np.concatenate(KA), np.concatenate(KB)
+            keep = [int(np.argmax(d))]               # the deepest, then spread out
+            dmin = np.linalg.norm(p - p[keep[0]], axis=1)
+            while len(keep) < min(self.per_pair, len(d)):
+                k = int(np.argmax(dmin))
+                if dmin[k] < 0.5 * self.S.h:
+                    break
+                keep.append(k)
+                dmin = np.minimum(dmin, np.linalg.norm(p - p[k], axis=1))
+            out.append((ka[keep], kb[keep], p[keep], n[keep], d[keep]))
+        if not out:
+            return empty
+        self.count = sum(len(o[4]) for o in out)
+        self.deepest = max(self.deepest, max(float(o[4].max()) for o in out))
+        return tuple(np.concatenate(v) for v in zip(*out))
 
     def _box_points(self, C, R, P, ov):
         """Corners and edge points of a box inside another box (no ball)."""
