@@ -691,62 +691,100 @@ class Dynamics:
         if imp is None or not getattr(imp, "hard", False):
             return None
         dt = float(getattr(imp, "dt", 1e-3))
-        speed = float(np.max(np.abs(u))) if len(u) else 0.0
+        # the fastest point of any part (m/s): a turning wheel's rim
+        U = np.asarray(u, float).reshape(-1, 6)
+        rad = np.array([imp.radius(b) for b in self.bodies])
+        speed = float(np.max(np.linalg.norm(U[:, :3], axis=1)
+                             + np.linalg.norm(U[:, 3:], axis=1) * rad)) if len(U) else 0.0
         reach = max(1.5 * imp.S.h, 2.0 * speed * dt) if imp.S is not None else 0.0
         pts = imp.hard_points(x, reach)
         if pts is None:
             return None
-        ka, kb, p, n, d = pts
-        rows = np.zeros((len(d), self.n))
+        ka, kb, p, n, d, mu = pts
+        # two directions across each normal, for the friction
+        t1 = np.cross(n, np.where(np.abs(n[:, :1]) < 0.9, [[1.0, 0, 0]], [[0, 1.0, 0]]))
+        t1 /= np.linalg.norm(t1, axis=1)[:, None]
+        t2 = np.cross(n, t1)
+        nc = len(d)
+        rows = np.zeros((3 * nc, self.n))        # normals, then t1, then t2
         for side, sgn in ((ka, 1.0), (kb, -1.0)):
-            ok = side >= 0
-            if not ok.any():
+            ok = np.nonzero(side >= 0)[0]
+            if not len(ok):
                 continue
             k = side[ok]
             r = p[ok] - cog[k]
-            rn = np.cross(r, n[ok])
-            for c in range(3):
-                rows[np.nonzero(ok)[0], 6 * k + c] += sgn * n[ok][:, c]
-                rows[np.nonzero(ok)[0], 6 * k + 3 + c] += sgn * rn[:, c]
+            for blk, v in enumerate((n, t1, t2)):
+                rr = blk * nc + ok
+                rv = np.cross(r, v[ok])
+                for c in range(3):
+                    np.add.at(rows, (rr, 6 * k + c), sgn * v[ok][:, c])
+                    np.add.at(rows, (rr, 6 * k + 3 + c), sgn * rv[:, c])
         # J u_new >= target: a gap may close by the end of the step, a
         # depth is taken out bit by bit
         out = np.minimum(self.contact_bias * np.maximum(d - self.contact_slop, 0.0) / dt,
                          self.contact_out)
         target = np.where(d > 0, out, d / dt)
-        return rows, target, dt
+        return rows, target, mu, dt
+
+    pgs_sweeps = 60              # Gauss-Seidel sweeps over the contacts
 
     def _solve_with_contacts(self, Mi, F, Gm, C, gamma, u, t, hard):
-        J, target, dt = hard
+        """The joints exactly, the contacts by projected Gauss-Seidel on
+        what the joints leave free: each push >= 0, each friction within
+        the cone (|f_t| <= mu f_n, Coulomb, as a box per direction)."""
+        J, target, mu, dt = hard
+        nc = len(target)
         nj = Gm.shape[0]
-        H = np.vstack([Gm, J]) if nj else J
-        MiHt = Mi(H.T)
-        A = H @ MiHt
         MiF = Mi(F)
-        b = np.zeros(H.shape[0])
+        MiJt = Mi(J.T)
         if nj:
             dC = Gm @ u - self._motor_speeds(t)
             rhs_c = -gamma - 2 * self.k * dC - self.k ** 2 * C + self.motor_rates(t)
-            b[:nj] = rhs_c - Gm @ MiF
-        # contacts: J (u + dt a) >= target  ->  J a >= (target - J u) / dt
-        b[nj:] = (target - J @ u) / dt - J @ MiF
-        nc = J.shape[0]
-        active = b[nj:] > 0.0                    # those that would close in without a push
-        mu = np.zeros(H.shape[0])
-        for _ in range(12):
-            rows = np.concatenate([np.arange(nj), nj + np.nonzero(active)[0]]).astype(int)
-            sol = np.zeros(H.shape[0])
-            if len(rows):
-                sol[rows] = np.linalg.lstsq(A[np.ix_(rows, rows)], b[rows], rcond=1e-10)[0]
-            lam = sol[nj:]
-            acc = A[nj:] @ sol - b[nj:]          # >= 0 where the contact holds
-            pull = active & (lam < -1e-9)
-            close = ~active & (acc < -1e-9)
-            mu = sol
-            if not pull.any() and not close.any():
+            MiGt = Mi(Gm.T)
+            P = np.linalg.pinv(Gm @ MiGt, rcond=1e-12)
+            nu0 = P @ (Gm @ MiF - rhs_c)
+            a0 = MiF - MiGt @ nu0
+            WJt = MiJt - MiGt @ (P @ (Gm @ MiJt))   # a contact's push, joints holding
+        else:
+            a0, WJt = MiF, MiJt
+        A = J @ WJt
+        # wanted: J (u + dt a) >= target (normals), = 0 (friction)
+        want = np.concatenate([target, np.zeros(2 * nc)])
+        b = J @ a0 - (want - J @ u) / dt          # residual at no contact force
+        lam = getattr(self, "_lam_warm", None)
+        lam = lam if lam is not None and len(lam) == 3 * nc else np.zeros(3 * nc)
+        lam = np.where(np.concatenate([np.ones(nc), mu, mu]) > -1, lam, 0.0)
+        dg = np.diag(A)
+        # a direction the joints hold whole (a push along a pivot's own
+        # axis on its frame): nothing for the contact to do there
+        free = dg > 1e-9 * max(float(dg.max()), 1e-300)
+        lam[~free] = 0.0
+        diag = np.where(free, dg, 1.0)
+        w = A @ lam + b
+        order = np.nonzero(free)[0]
+        for _ in range(self.pgs_sweeps):
+            moved = 0.0
+            for i in order:
+                old = lam[i]
+                v = old - w[i] / diag[i]
+                if i < nc:
+                    v = max(v, 0.0)
+                else:
+                    lim = mu[i % nc] * lam[i % nc]
+                    v = min(max(v, -lim), lim)
+                if v != old:
+                    w += A[:, i] * (v - old)
+                    lam[i] = v
+                    moved = max(moved, abs(v - old) * diag[i])
+            if moved < 1e-9:
                 break
-            active = (active & ~pull) | close
-        a = MiF + MiHt @ mu
-        return a, -mu[:nj]
+        self._lam_warm = lam.copy()
+        a = a0 + WJt @ lam
+        if nj:
+            nu = P @ (Gm @ (MiF + MiJt @ lam) - rhs_c)
+        else:
+            nu = np.zeros(0)
+        return a, -nu
 
     def _motor_speeds(self, t, h=1e-5):
         out = []

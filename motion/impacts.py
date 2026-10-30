@@ -182,6 +182,12 @@ class Impacts:
                 axes = [(tuple(map(float, j.point)), tuple(map(float, j.axis))) for j in mine]
                 self.mesh_pairs.append((a, b, ("drawn", tuple(axes)) if axes else "drawn"))
 
+    @property
+    def surfaces_only(self):
+        """Every contact is between real surfaces (no box or ball shocks):
+        all of them can be constraints, and the step can be long."""
+        return bool(self.mesh_pairs) and not bool(np.any(self.allowed))
+
     # -- the parts' boxes at pose x ------------------------------------------
     def _world(self, x, Rb):
         C = self.box_c.copy()
@@ -267,16 +273,23 @@ class Impacts:
     per_pair = 6                      # points kept per pair of parts (hard contacts)
     hard_refresh = 2                  # calls between two searches (hard contacts)
 
+    def radius(self, b):
+        """Size of b (m): no point of it is further from its centre."""
+        rad = self.__dict__.setdefault("_radius", {})
+        R = rad.get(id(b))
+        if R is None:
+            if not b.boxes:
+                return 0.0
+            lo = np.min([np.asarray(bx.center) - np.linalg.norm(bx.half) for bx in b.boxes], axis=0)
+            hi = np.max([np.asarray(bx.center) + np.linalg.norm(bx.half) for bx in b.boxes], axis=0)
+            R = rad[id(b)] = float(np.linalg.norm(hi - lo))
+        return R
+
     def _moved(self, b, q0, q1):
         """How far any point of b may have gone from pose q0 to q1."""
         if b.fixed if hasattr(b, "fixed") else False:
             return 0.0
-        rad = self.__dict__.setdefault("_radius", {})
-        R = rad.get(id(b))
-        if R is None:
-            lo = np.min([np.asarray(bx.center) - np.linalg.norm(bx.half) for bx in b.boxes], axis=0)
-            hi = np.max([np.asarray(bx.center) + np.linalg.norm(bx.half) for bx in b.boxes], axis=0)
-            R = rad[id(b)] = float(np.linalg.norm(hi - lo))
+        R = self.radius(b)
         R0, R1 = b.rot(q0), b.rot(q1)
         ang = math.acos(max(-1.0, min(1.0, (np.trace(R0.T @ R1) - 1.0) / 2.0)))
         return float(np.linalg.norm(np.asarray(q1[:3]) - np.asarray(q0[:3]))) + ang * R
@@ -324,7 +337,8 @@ class Impacts:
                 if c is None or (self._moved(s_, c[3], qs) + self._moved(t_, c[4], qt)
                                  > c[5] - r):
                     margin = 4.0 * self.S.h
-                    idx, it = self.S.candidates(s_, t_, qs, qt, rest, margin)
+                    hard_rest = ("hard", rest[1] if isinstance(rest, tuple) else ())
+                    idx, it = self.S.candidates(s_, t_, qs, qt, hard_rest, margin)
                     cache[key] = c = (self._calls, idx, it, np.array(qs), np.array(qt), margin)
                 p, n, d = self.S.gaps_of(s_, t_, qs, qt, c[1], c[2], reach)
                 if len(d):
@@ -343,7 +357,10 @@ class Impacts:
                     break
                 keep.append(k)
                 dmin = np.minimum(dmin, np.linalg.norm(p - p[k], axis=1))
-            out.append((ka[keep], kb[keep], p[keep], n[keep], d[keep]))
+            ma = getattr(a, "friction", None)
+            mb = getattr(b, "friction", None)
+            f = math.sqrt((_FRICTION if ma is None else ma) * (_FRICTION if mb is None else mb))
+            out.append((ka[keep], kb[keep], p[keep], n[keep], d[keep], np.full(len(keep), f)))
         if not out:
             return empty
         self.count = sum(len(o[4]) for o in out)

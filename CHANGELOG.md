@@ -12,6 +12,20 @@
   « Plus… » shows every tool for the special cases (remembered).
 
 ### Added
+- **Every part touches every other, by default** (dynamics with « Chocs »):
+  no material and no contact to declare — the parts' real surfaces push
+  each other as they come together, never pull, with dry friction
+  (Coulomb, 0.4 without material). Solved as constraints with the joints,
+  so a motor's effort goes through a train of parts and the step is 1 ms;
+  what the model draws touching (a pawl on its stop) is a contact, what it
+  draws overlapping (a shaft in its bore, a hair of interference) is the
+  assembly. Checked: a block dropped on its plate rests on it without
+  bouncing, three dominoes fall one on the next and stay leaning, their
+  feet held by friction.
+- **Masses from the real volume**: a part without material weighs its
+  closed surface's volume at 700 kg/m³, its centre and inertia from it (a
+  wheel's rim and spokes, no longer the box around it).
+- **Spanish**: the panel follows IngeTrazo in Spanish too.
 - **Calculation mode**: « Cinématique » (the motors impose the motion) or
   « Dynamique » (masses, gravity, shocks), two buttons under the commands;
   the duration and « Chocs » show only in dynamics.

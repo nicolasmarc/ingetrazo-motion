@@ -86,3 +86,47 @@ def test_triangles_near_a_point_whatever_their_size():
     best = D.min(axis=1)
     assert not np.any((best < 0.004) & ~keep)
     assert np.allclose(D[np.nonzero(keep)[0], it[:, 0]], best[keep])
+
+
+def test_dominoes_fall_one_on_the_next():
+    # three dominoes on a plate, the first drawn leaning: no material, no
+    # contact to declare; each pushes the next down, friction holds their feet
+    def rot_y(T, ang, pivot):
+        c, s = math.cos(ang), math.sin(ang)
+        R = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+        return (T.reshape(-1, 3) - pivot) @ R.T + pivot
+    tris = {"plateau": box((-0.05, -0.05, -0.01), (0.15, 0.05, 0.0))}
+    for i in range(3):
+        x0 = 0.025 * i
+        T = box((x0, -0.01, 0.0), (x0 + 0.006, 0.01, 0.04)).reshape(-1, 3)
+        if i == 0:
+            T = rot_y(T, math.radians(12), np.array([x0 + 0.006, 0, 0]))
+        tris[f"d{i}"] = T.reshape(-1, 3, 3)
+    d = doc.empty()
+    d, _ = doc.add_body(d, ["plateau"], True, "plateau")
+    for i in range(3):
+        d, _ = doc.add_body(d, [f"d{i}"], False, f"d{i}")
+    d = doc.set_simulation(d, True, 0.6, True)
+    m, problems = doc.build(d, lambda u: tris[u].reshape(-1, 3), lambda u: u,
+                            triangles_of_group=tris.get)
+    assert not problems, problems
+    dyn = dynamics.Dynamics(m, contacts=dict(dt=1e-3))
+    dyn.method = "symplectic"
+    assert dyn.impacts.surfaces_only
+    dyn.impacts.hard = True
+    rows = dyn.run(0.6, dt=1e-3, every=50)
+    bs = {b.name: b for b in dyn.bodies}
+
+    def tilt(r, i):
+        b = bs[f"d{i}"]
+        z = b.rot(m.pose(r["x"], b)) @ np.array([0, 0, 1.0])
+        return math.degrees(math.atan2(z[0], z[2]))
+
+    first = [next((r["t"] for r in rows if tilt(r, i) > 20), None) for i in range(3)]
+    assert None not in first and first[0] < first[1] < first[2], first
+    assert all(tilt(rows[-1], i) > 55 for i in range(3)), [tilt(rows[-1], i) for i in range(3)]
+    # the feet stay where they stood (friction), the last lies on the plate
+    for i in range(1, 3):
+        b = bs[f"d{i}"]
+        foot = b.world_point(m.pose(rows[-1]["x"], b), (0.025 * i + 0.006, 0, 0))
+        assert abs(foot[0] - (0.025 * i + 0.006)) < 3e-3 and abs(foot[2]) < 1e-3, foot

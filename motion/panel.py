@@ -2638,8 +2638,11 @@ class MotionPanel(QWidget):
             if ms.get("active"):
                 m = self.mechanism()
                 T = float(ms.get("duree", 4.0))
+                # the travel at constant speed, from before the start to
+                # past the end: a kink at t = 0 or T (a start or a stop
+                # in no time) would be a shock the first or last step
                 motors = {jj.name: ("vitesse", (lambda t, lo=lo, hi=hi:
-                                                 lo + (hi - lo) * min(max(t / T, 0.0), 1.0)))
+                                                 lo + (hi - lo) * t / T))
                           for jj, lo, hi in m.drivers}
                 for name, v in (getattr(m, "torques", {}) or {}).items():
                     motors[name] = ("couple", (lambda t, v=v: v))
@@ -2661,6 +2664,15 @@ class MotionPanel(QWidget):
             dyn = dynamics.Dynamics(m, **sim.get("params", {}))
             dyn.method = sim.get("method", "rk4")
             dt = sim.get("dt", 0.002)
+            imp = dyn.impacts
+            if imp is not None and imp.mesh_pairs:
+                # the parts' real surfaces touch as constraints: they push,
+                # never pull, and carry a motor's effort through a train of
+                # parts; alone, they allow a step of 1 ms
+                imp.hard = True
+                if imp.surfaces_only:
+                    dt = max(dt, 1e-3)
+                    imp.dt = dt
             every = max(1, int(round(1.0 / (30 * dt))))
             steps = int(round(sim["duree"] / dt))
             prog = self._sim_progress(steps)

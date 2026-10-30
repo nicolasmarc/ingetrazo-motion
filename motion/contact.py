@@ -444,7 +444,59 @@ class Surfaces:
             self._skip[key] = mb
         return self._skip[key]
 
+    def drawn_depths(self, a, b):
+        """Signed depths of b's points in a as drawn (> 0 inside, < 0
+        out, nan: further than a few steps)."""
+        key = ("depth", a.name, b.name)
+        if key not in self._skip:
+            A, B = self.data[a.name], self.data[b.name]
+            out = np.full(len(B["P"]), np.nan)
+            g = A.setdefault("tgrid", {}).get(4.0 * self.h)
+            if g is None and len(A["T"]):
+                g = A["tgrid"][4.0 * self.h] = TriGrid(A["T"], 4.0 * self.h)
+            if g is not None:
+                keep, it = g.nearest(B["P"], 3)
+                ix = np.nonzero(keep)[0]
+                if len(ix):
+                    Q = B["P"][ix]
+                    T = A["T"][it.ravel()]
+                    Qr = np.repeat(Q, it.shape[1], axis=0)
+                    cp = closest_on_triangles(Qr, T[:, 0], T[:, 1], T[:, 2])
+                    dist = np.linalg.norm(Qr - cp, axis=1).reshape(len(Q), -1)
+                    j = np.argmin(dist, axis=1)
+                    rows = np.arange(len(Q))
+                    cpb = cp.reshape(len(Q), -1, 3)[rows, j]
+                    N = A["N"][it[rows, j]]
+                    dj = dist[rows, j]
+                    out[ix] = np.where(np.einsum("ij,ij->i", Q - cpb, N) < 0.0, dj, -dj)
+            self._skip[key] = out
+        return self._skip[key]
+
+    def hard_overlap(self, a, b, axes, tol=0.25):
+        """For contacts as constraints: b's points drawn inside a by more
+        than ``tol`` steps (an interference of the model) and, round the
+        pivots holding them, the hub; what only touches as drawn (a pawl
+        on its stop, a block on its plate) stays a contact."""
+        key = ("hard", a.name, b.name, tuple((tuple(p), tuple(d)) for p, d in axes), tol)
+        if key not in self._skip:
+            B = self.data[b.name]
+            dep = self.drawn_depths(a, b)
+            mb = np.nan_to_num(dep, nan=-1.0) > tol * self.h
+            ext = float(np.linalg.norm(B["hi"] - B["lo"]))
+            for p, d in axes:
+                p, d = np.asarray(p, float), np.asarray(d, float)
+                d = d / max(np.linalg.norm(d), 1e-12)
+                v = B["P"] - p
+                rad = np.linalg.norm(v - np.outer(v @ d, d), axis=1)
+                hub = (np.nan_to_num(dep, nan=-1.0) > -0.75 * self.h) & (rad < 0.2 * ext)
+                if hub.any():
+                    mb |= rad < float(rad[hub].max()) + 2.0 * self.h
+            self._skip[key] = mb
+        return self._skip[key]
+
     def _mask(self, a, b, resting):
+        if isinstance(resting, tuple) and resting[0] == "hard":
+            return self.hard_overlap(a, b, resting[1])
         if isinstance(resting, tuple):           # ("drawn", axes of the joints)
             return self.joint_overlap(a, b, resting[1])
         if resting == "drawn":
