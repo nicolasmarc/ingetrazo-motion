@@ -16,7 +16,7 @@ One JSON-safe dict (``app.set_document_data``), metres and radians::
      "jeu_min": 0.005, "pas": 51,
      "couples": {"<joint>": 1.5},                   # torque motors (N m or N), dynamics
      "simulation": {"active": false, "duree": 4.0,  # dynamics in validate / video
-                    "chocs": false},                # shocks between the parts' boxes
+                    "chocs": true},                 # parts touch each other (0.9: default)
      "materiau": {"<uid>": "chene", ...},           # material of each group
      "matieres": {"<key>": {"name": ..., "density": ...}}}   # the document's own
 
@@ -35,7 +35,7 @@ FORMAT = 1
 def empty():
     return {"format": FORMAT, "bodies": [], "joints": [], "drivers": [],
             "driver": None, "jeu_min": 0.005, "pas": 51, "materiau": {}, "matieres": {},
-            "couples": {}, "simulation": {"active": False, "duree": 4.0}}
+            "couples": {}, "simulation": {"active": False, "duree": 4.0, "chocs": True}}
 
 
 def normalized(data):
@@ -49,6 +49,9 @@ def normalized(data):
     if isinstance(data, dict) and "drivers" not in data and out["driver"]:
         out["drivers"] = [copy.deepcopy(out["driver"])]
     out["driver"] = copy.deepcopy(out["drivers"][0]) if out["drivers"] else None
+    # every part touches every other unless told otherwise (0.9): a file
+    # that never said keeps the contacts
+    out["simulation"].setdefault("chocs", True)
     return out
 
 

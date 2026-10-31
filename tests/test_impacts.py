@@ -101,7 +101,8 @@ def test_shocks_are_stored_in_the_document():
     assert d["simulation"] == {"active": True, "duree": 2.5, "chocs": True}
     d = doc.set_simulation(d, True, 2.5)                  # left as it was
     assert d["simulation"]["chocs"] is True
-    assert doc.empty()["simulation"].get("chocs", False) is False
+    assert doc.empty()["simulation"]["chocs"] is True          # 0.9: parts touch by default
+    assert doc.normalized({"simulation": {"active": True}})["simulation"]["chocs"] is True
 
 
 def test_validation_counts_shocks_as_no_fault():
