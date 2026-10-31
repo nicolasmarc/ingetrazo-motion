@@ -1407,3 +1407,21 @@ def test_curves_of_the_drop_leaf():
         _state["qapp"].processEvents()
         panel.grab().save(os.environ["MOTION_SHOT"])
     panel.tabs.setCurrentIndex(0)
+
+
+def test_motor_on_a_pinion_turns_until_the_wheel_has_turned_once():
+    # pinion 7 → wheel 21 (ratio −1/3): « Moteur » on the pinion gives 3 turns,
+    # the wheel's whole turn; on the wheel itself, one turn
+    from types import SimpleNamespace
+    import importlib
+    panel_mod = importlib.import_module(type(_state["panel"]).__module__) if _state.get("panel") \
+        else importlib.import_module("motion.panel")
+    data = {"joints": [{"kind": "pivot", "name": "pignon"}, {"kind": "pivot", "name": "roue"},
+                       {"kind": "coupling", "name": "g", "ja": "pignon", "jb": "roue",
+                        "ratio": -7 / 21}]}
+    me = SimpleNamespace(data=data)
+    turns = panel_mod.MotionPanel._turns_for_cycle
+    assert abs(turns(me, "pignon") - 3.0) < 1e-9
+    assert turns(me, "roue") == 1.0
+    data["joints"].append({"kind": "pivot", "name": "seul"})
+    assert turns(me, "seul") == 1.0

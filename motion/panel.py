@@ -1007,6 +1007,8 @@ class MotionPanel(QWidget):
         time, e.g. while a video is rendered): then nothing is rebuilt."""
         if getattr(self, "_quiet", 0):
             return
+        self._solid_restore()
+        self._solid_cache = None
         self._back_to_model_on_new_document()
         key = self._doc_key()
         if key is None:
@@ -2514,8 +2516,34 @@ class MotionPanel(QWidget):
         else:
             mj = next((k for k in self.mechanism().joints if k.name == j["name"]), None)
             lo = self.mechanism().joint_value(mj, np.zeros(self.mechanism().n)) if mj else 0.0
-            hi = lo + (2 * math.pi if self._is_angle(j["kind"]) else 0.1)  # a turn, 100 mm
+            if self._is_angle(j["kind"]):
+                # a turn of the slowest wheel it drives (a pinion driving a
+                # wheel 3 times bigger turns 3 times): the whole cycle
+                hi = lo + 2 * math.pi * self._turns_for_cycle(j["name"])
+            else:
+                hi = lo + 0.1                                     # 100 mm
         self._set_motor(j, lo, hi, made)
+
+    def _turns_for_cycle(self, name, cap=20.0):
+        """Turns of joint ``name`` for one turn of the slowest joint it
+        drives through couplings (gears, belts): 1 with none."""
+        rate = {name: 1.0}
+        todo = [name]
+        cps = [c for c in self.data["joints"] if c.get("kind") == "coupling"]
+        while todo:
+            a = todo.pop()
+            for c in cps:
+                r = float(c.get("ratio") or 0.0)
+                if not r:
+                    continue
+                if c.get("ja") == a and c.get("jb") not in rate:
+                    rate[c["jb"]] = rate[a] * r
+                    todo.append(c["jb"])
+                elif c.get("jb") == a and c.get("ja") not in rate:
+                    rate[c["ja"]] = rate[a] / r
+                    todo.append(c["ja"])
+        slow = min(abs(v) for v in rate.values())
+        return min(cap, max(1.0, 1.0 / slow)) if slow > 0 else 1.0
 
     def _set_motor(self, j, lo, hi, made=""):
         """``j`` becomes a motor from lo to hi; another motor already there:
@@ -3298,6 +3326,27 @@ class MotionPanel(QWidget):
                 hits.update((a, b))
         bodies = [m.ground] + m.bodies if wire else []
         hl = set(getattr(self, "_hl_bodies", ()) or ())
+        solid = False
+        if wire and self.source == "model" and self.solid_view and not getattr(self, "_force_paint", False):
+            if np.any(x):
+                self._solid_hide()
+                solid = bool(getattr(self, "_solid_groups", None))
+                if solid:
+                    try:
+                        from . import render as _render
+                        cam = getattr(viewport, "camera", None)
+                        fwd = _render.view_axes(float(getattr(cam, "yaw", 0.0)),
+                                                float(getattr(cam, "pitch", 0.0)))[2]
+                        _render.draw_projected(self._solid_shaded(), painter, x,
+                                               self.app.world_to_pixels, fwd,
+                                               {b.name for b in m.bodies}, hits)
+                    except Exception:
+                        solid = False
+                        self._solid_restore()
+            else:
+                self._solid_restore()
+        if solid:                                # the solids are drawn: outline only
+            bodies = [b for b in bodies if b.name in hl and not b.fixed]   # what is picked
         if self.source == "model" and not np.any(x):
             # drawn pose: the model shows the parts; only the ones clicked in
             # the list stand out (a small selection box is lost in a big model)
@@ -3498,6 +3547,65 @@ class MotionPanel(QWidget):
         return [by[u] for b in self.data["bodies"] if not b["fixed"]
                 for u in b["groups"] if u in by]
 
+    # -- the real parts move -------------------------------------------------
+    # Away from the drawn pose, the moving parts are taken out of IngeTrazo's
+    # view and drawn shaded where they are: the solids move, not an outline.
+    # Nothing is changed in the document (no undo step, nothing saved): the
+    # parts come back in place at the drawn pose, when the panel is hidden or
+    # the document changes, and before any save (see setup).
+    solid_view = True
+
+    def _solid_hide(self):
+        if getattr(self, "_solid_groups", None):
+            return
+        groups = [g for g in self._moving_groups() if not g.hidden]
+        if not groups:
+            return
+        self._quiet = getattr(self, "_quiet", 0) + 1
+        try:
+            for g in groups:
+                g.hidden = True
+            self._solid_groups = groups
+            self._refresh_view_cache(True)
+        finally:
+            self._quiet -= 1
+        try:
+            self.app.viewport.update()
+        except Exception:
+            pass
+
+    def _solid_restore(self):
+        groups = getattr(self, "_solid_groups", None)
+        if not groups:
+            return
+        self._quiet = getattr(self, "_quiet", 0) + 1
+        try:
+            for g in groups:
+                g.hidden = False
+            self._solid_groups = None
+            self._refresh_view_cache(False)
+        finally:
+            self._quiet -= 1
+        try:
+            self.app.viewport.update()
+        except Exception:
+            pass
+
+    def _solid_shaded(self):
+        """Shaded faces of the moving parts (cached for the mechanism)."""
+        m = self.mech
+        c = getattr(self, "_solid_cache", None)
+        if c is None or c[0] is not m:
+            from . import render as _render
+            polys = self._polys()
+            c = self._solid_cache = (m, _render.Shaded(m, polys,
+                                                       face_colours=getattr(self, "_poly_colours", None)))
+        return c[1]
+
+    def hideEvent(self, event):
+        self._solid_restore()
+        super().hideEvent(event)
+
     def _refresh_view_cache(self, hidden=None):
         # Best effort, viewport internals: forget the memoised placement
         # epoch so a group's ``hidden`` flag is seen. The draw batches key on
@@ -3516,13 +3624,21 @@ class MotionPanel(QWidget):
         sc = getattr(vp, "scene", None)
         if sc is None or not isinstance(getattr(sc, "version", None), int):
             return
+        depth = getattr(self, "_hide_depth", 0)
         if hidden:
-            self._real_version = sc.version
+            if depth == 0:
+                self._real_version = sc.version
+            self._hide_depth = depth + 1
             self._hide_count = getattr(self, "_hide_count", 0) + 1
             sc.version = -self._hide_count
-        elif hidden is False and getattr(self, "_real_version", None) is not None:
-            sc.version = self._real_version
-            self._real_version = None
+        elif hidden is False and depth > 0:
+            self._hide_depth = depth - 1
+            if self._hide_depth == 0 and getattr(self, "_real_version", None) is not None:
+                sc.version = self._real_version
+                self._real_version = None
+            else:
+                self._hide_count = getattr(self, "_hide_count", 0) + 1
+                sc.version = -self._hide_count
 
     def _viewport_image(self, width, shaded=None, x=None, hits=None):
         """The IngeTrazo view as an image: IngeTrazo renders the model
@@ -3588,12 +3704,15 @@ class MotionPanel(QWidget):
             return {}
         by = groups_by_uid(self._scene())
         out = {}
+        self._poly_colours = {}
         for b in self.data["bodies"]:
-            faces = []
+            faces, cols = [], []
             for u in b["groups"]:
                 g = by.get(u)
                 if g is None:
                     continue
+                gmat = getattr(g, "material", None) or {}
+                gcol = _rgb255(gmat.get("color") if isinstance(gmat, dict) else None)
                 for mesh, aff in _placements(g):
                     if not mesh.vertices:
                         continue
@@ -3607,8 +3726,12 @@ class MotionPanel(QWidget):
                         except KeyError:
                             P = np.array([_xyz(v.position) for v in f.loop])
                             faces.append(P if aff is None else P @ aff[0].T + aff[1])
+                        attrs = getattr(f, "attrs", None) or {}
+                        cols.append(_rgb255(attrs.get("color")) or gcol)
             if faces:
                 out[b["name"]] = faces
+                if any(c is not None for c in cols):
+                    self._poly_colours[b["name"]] = cols
         return out
 
     def full_turn(self):
@@ -3844,6 +3967,45 @@ def _box_segments(body, q):
     return np.array(out) if out else np.zeros((0, 3))
 
 
+def _rgb255(c):
+    """A face or material colour ((r, g, b[, a]) in 0..1 or 0..255) as
+    0..255 integers; None when there is none."""
+    if c is None:
+        return None
+    try:
+        v = [float(x) for x in list(c)[:3]]
+    except Exception:
+        return None
+    if len(v) < 3:
+        return None
+    if max(v) <= 1.0:
+        v = [255 * x for x in v]
+    return tuple(int(round(min(255, max(0, x)))) for x in v)
+
+
+def _restore_before_save(panel):
+    """The moving parts are hidden while they are shown elsewhere: a save
+    (or an autosave) must find them in place. Wraps IngeTrazo's .igz
+    writer; if its name changes, nothing is wrapped (the parts come back
+    anyway at the drawn pose)."""
+    try:
+        from formats import igz
+    except Exception:
+        return
+    original = getattr(igz, "save_scene", None)
+    if original is None or getattr(original, "_motion_wrapped", False):
+        return
+
+    def save_scene(*a, **kw):
+        try:
+            panel._solid_restore()
+        except Exception:
+            pass
+        return original(*a, **kw)
+    save_scene._motion_wrapped = True
+    igz.save_scene = save_scene
+
+
 def setup(app):
     panel = MotionPanel(app)
     # Taller than a laptop screen once every row is shown: in a scroll area
@@ -3861,6 +4023,7 @@ def setup(app):
     dock = app.add_panel("Motion", scroll, start_hidden=False)
     app.add_overlay(panel.paint)
     app.on_document_changed(panel.reload)
+    _restore_before_save(panel)
 
     def show(source=None):
         if source:

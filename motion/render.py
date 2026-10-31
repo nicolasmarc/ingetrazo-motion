@@ -100,7 +100,7 @@ class Shaded:
     """``polys``: {body name: [ (k, 3) arrays of face corners, reference
     pose ]}; bodies without polygons are drawn from their boxes."""
 
-    def __init__(self, mech, polys=None, max_faces=40000):
+    def __init__(self, mech, polys=None, max_faces=40000, face_colours=None):
         self.m = mech
         self.items = []                           # (body, V, faces, colour)
         polys = polys or {}
@@ -115,6 +115,9 @@ class Shaded:
                 for f in faces:
                     idx.append(np.arange(o, o + len(f)))
                     o += len(f)
+                fc = (face_colours or {}).get(body.name)
+                if fc is not None and len(fc) == len(faces):    # the model's own paint
+                    fcols = [QColor(*c) if c is not None else None for c in fc]
             else:
                 V, idx, fcols = self._boxes(body)
             if not len(V):

@@ -22,6 +22,20 @@
   assembly. Checked: a block dropped on its plate rests on it without
   bouncing, three dominoes fall one on the next and stay leaning, their
   feet held by friction.
+- **The real parts move** in IngeTrazo's view during playback (shaded
+  solids where they are, no longer an orange outline); the document is
+  never changed, a save during playback keeps every part visible.
+- **« Pesanteur »** box in dynamics, ticked by default (9.81 m/s²); unticked,
+  the mechanism is weightless.
+- **Contacts and gravity on by default** in dynamics, as in an everyday
+  physics space: parts fall, swing about their axes and push each other.
+- **Detection**: a bore filled by the other part's shaft (even when the
+  shaft is not recognised as a cylinder) is a pivot; an arm on a pivot
+  with a bolt through a slot of the other part is a lock (tightened).
+- **« Moteur » on a gear train**: one turn of the slowest wheel it drives
+  (a 7-tooth pinion on a 21-tooth wheel: 3 turns), the whole cycle.
+- Validated on a Geneva-type mechanism against the author's CAD: same
+  rocker stroke and same tilt of the crown as the drawing gives.
 - **Masses from the real volume**: a part without material weighs its
   closed surface's volume at 700 kg/m³, its centre and inertia from it (a
   wheel's rim and spokes, no longer the box around it).
