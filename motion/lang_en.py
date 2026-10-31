@@ -469,4 +469,6 @@ EN = {
     "Bronze": "Bronze", "Fonte grise": "Grey cast iron", "POM (acétal)": "POM (acetal)",
     "PA 6 (nylon)": "PA 6 (nylon)", "PEHD": "HDPE", "PLA (impression 3D)": "PLA (3D printing)",
     "ABS": "ABS", "PMMA (acrylique)": "PMMA (acrylic)", "Verre": "Glass",
+    " {n} encastrement(s) (bras serrés).":
+        " {n} lock(s) (arms bolted).",
 }

@@ -707,4 +707,6 @@ ES = {
         'PMMA (acrílico)',
     'Verre':
         'Vidrio',
+    " {n} encastrement(s) (bras serrés).":
+        " {n} empotramiento(s) (brazos apretados).",
 }

@@ -3092,11 +3092,14 @@ class MotionPanel(QWidget):
             self.set_source("model")
         d, made = doc.apply_detection(self.data, parts, frame, proposals)
         d = self._guess_materials(d, [u for b in d["bodies"] for u in b["groups"]])
-        n = {k: sum(1 for x in proposals if x.kind == k) for k in ("pivot", "slider", "ball", "gears")}
+        n = {k: sum(1 for x in proposals if x.kind == k)
+             for k in ("pivot", "slider", "ball", "lock", "gears")}
         msg = _T("Détection : {p} pivot(s), {s} glissière(s), {g} engrenage(s) ; pièce fixe : {f}.",
                 p=n['pivot'], s=n['slider'], g=n['gears'], f=parts[frame][0])
         if n["ball"]:
             msg += _T(" {n} rotule(s).", n=n["ball"])
+        if n["lock"]:
+            msg += _T(" {n} encastrement(s) (bras serrés).", n=n["lock"])
         if not d["drivers"]:
             msg += _T(" Choisir un moteur dans la liste.")
         self._store(d, msg)
@@ -3137,8 +3140,9 @@ class MotionPanel(QWidget):
         tree.setHeaderLabels([_T("Liaison"), _T("Pièces"), _T("Détail"), _T("Confiance")])
         tree.setRootIsDecorated(False)
         label = {"pivot": _T("Pivot"), "slider": _T("Glissière"), "ball": _T("Rotule"),
-                 "gears": _T("Engrenage")}
-        icon = {"pivot": "pivot", "slider": "slider", "ball": "ball", "gears": "coupling"}
+                 "lock": _T("Encastrement"), "gears": _T("Engrenage")}
+        icon = {"pivot": "pivot", "slider": "slider", "ball": "ball", "lock": "lock",
+                "gears": "coupling"}
         items = []
         for x in props:
             it = QTreeWidgetItem([label[x.kind], f"{parts[x.a][0]} ↔ {parts[x.b][0]}",

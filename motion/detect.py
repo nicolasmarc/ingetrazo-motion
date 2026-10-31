@@ -86,7 +86,7 @@ class Part:
 
 @dataclass
 class Proposal:
-    kind: str                         # "pivot" | "slider" | "gears"
+    kind: str                         # "pivot" | "slider" | "ball" | "lock" | "gears"
     a: object                         # part keys (gears: the two gear parts)
     b: object
     point: np.ndarray = None
@@ -322,6 +322,57 @@ def _pivots(p, q, size):
     return Proposal("pivot", p.key, q.key, pts.mean(axis=0), _unit(best["axis"]), score, det,
                     dict(radius=best["radius"], fits=len(same), gap=max(best["gap"], 0.0),
                          shaft=best["shaft"]))
+
+
+def _filled_bore(p, q, size):
+    """A bore of one part filled by the other, whose shaft was not
+    recognised as a cylinder (merged into the faces round it, a knurl, a
+    coarse mesh): the other's points line the bore all round, along its
+    length. A pivot on the bore's axis, with a lower confidence."""
+    found = []
+    for b_part, s_part in ((q, p), (p, q)):
+        if s_part.points is None or not len(s_part.points):
+            continue
+        for h in b_part.cylinders:
+            if h.convex or h.span < 270.0:
+                continue
+            ax = _unit(h.axis)
+            # a cylinder of the other on this axis was recognised (a shaft
+            # that does not fit, a bore beside it — a hinge's knuckles):
+            # the fit test has spoken
+            h_lo, h_hi = min(h.t0, h.t1), max(h.t0, h.t1)
+
+            def _beside(c):
+                v = np.asarray(c.point) - np.asarray(h.point)
+                if (abs(abs(_unit(c.axis) @ ax) - 1) > 1e-3
+                        or np.linalg.norm(np.cross(v, ax)) > 0.5 * h.radius):
+                    return False
+                tc = v @ ax
+                c_lo, c_hi = tc + min(c.t0, c.t1), tc + max(c.t0, c.t1)
+                return c_hi > h_lo - 0.5 * h.radius and c_lo < h_hi + 0.5 * h.radius
+            if any(_beside(c) for c in s_part.cylinders):
+                continue
+            w = s_part.points - np.asarray(h.point)
+            t = w @ ax
+            along = (t > min(h.t0, h.t1) - 1e-4) & (t < max(h.t0, h.t1) + 1e-4)
+            wr = w - np.outer(t, ax)
+            rad = np.linalg.norm(wr, axis=1)
+            wall = along & (rad > 0.75 * h.radius) & (rad < 1.02 * h.radius)
+            if wall.sum() < 12:
+                continue
+            e1 = _basis(ax)[0]
+            e2 = np.cross(ax, e1)
+            ang = np.sort(np.degrees(np.arctan2(wr[wall] @ e2, wr[wall] @ e1)))
+            gaps = np.diff(np.concatenate([ang, [ang[0] + 360.0]]))
+            if gaps.max() > 60.0:
+                continue
+            tw = t[wall]
+            ov = float(tw.max() - tw.min())
+            found.append(Proposal("pivot", p.key, q.key, np.asarray(h.point) + 0.5 * (tw.max() + tw.min()) * ax,
+                                  ax, 0.6, f"Ø {2000 * h.radius:.1f} mm, alésage de « {b_part.name} » "
+                                  f"rempli, portée {1000 * ov:.1f} mm",
+                                  dict(radius=h.radius, fits=1, gap=0.0, shaft=s_part.key)))
+    return max(found, key=lambda x: x.extra["radius"]) if found else None
 
 
 def _ball(p, q, size):
@@ -735,6 +786,66 @@ def _gears(parts, pivots, size):
     return out
 
 
+def _held_round(c, o_part, s_part=None):
+    """Shaft ``c`` held by ``o_part``: its points close round the shaft on
+    both sides, along it (a slot or a hole). With ``s_part``, along the
+    whole of that part on the shaft's axis (a bolt's shank between its
+    head and its nut, not recognised as a cylinder of its own)."""
+    if o_part.points is None or not len(o_part.points):
+        return False
+    ax = _unit(c.axis)
+    w = o_part.points - np.asarray(c.point)
+    t = w @ ax
+    rad = np.linalg.norm(w - np.outer(t, ax), axis=1)
+    t_lo, t_hi = min(c.t0, c.t1), max(c.t0, c.t1)
+    if s_part is not None and s_part.points is not None and len(s_part.points):
+        ws = s_part.points - np.asarray(c.point)
+        ts = ws @ ax
+        on = np.linalg.norm(ws - np.outer(ts, ax), axis=1) < 1.05 * c.radius
+        if on.any():
+            t_lo, t_hi = min(t_lo, ts[on].min()), max(t_hi, ts[on].max())
+    near = ((rad > 0.9 * c.radius) & (rad < 1.6 * c.radius)
+            & (t > t_lo - 1e-4) & (t < t_hi + 1e-4))
+    if near.sum() < 8:
+        return False
+    # along the shaft, not only at one end (the knuckle beside a knuckle)
+    if np.ptp(t[near]) < 0.25 * c.radius:
+        return False
+    e1 = _basis(ax)[0]
+    e2 = np.cross(ax, e1)
+    wr = w[near] - np.outer(t[near], ax)
+    ang = np.sort(np.degrees(np.arctan2(wr @ e2, wr @ e1)))
+    gaps = np.diff(np.concatenate([ang, [ang[0] + 360.0]]))
+    return gaps.max() <= 200.0
+
+
+def _clamped(p, q, pivot):
+    """(pivot, lock proposal) when one of p, q has a shaft parallel to the
+    pivot, off its axis, engaged in the other (its points all round the
+    shaft, a hair out: a slot or a hole) — a bolt holding the two together.
+    None otherwise."""
+    if p is None or q is None or pivot.axis is None:
+        return None
+    ax = _unit(pivot.axis)
+    for s_part, o_part in ((p, q), (q, p)):
+        if not len(o_part.points):
+            continue
+        for c in s_part.cylinders:
+            if not c.convex or abs(abs(_unit(c.axis) @ ax) - 1) > 1e-3:
+                continue
+            v = np.asarray(c.point) - np.asarray(pivot.point)
+            off = np.linalg.norm(v - (v @ ax) * ax)
+            if off < 2.5 * c.radius:
+                continue                          # the pivot's own pin
+            if not _held_round(c, o_part):       # the other's points round it
+                continue
+            det = (f"serrage : axe Ø {2000 * c.radius:.1f} mm dans "
+                   f"« {o_part.name} », à {1000 * off:.1f} mm du pivot")
+            return pivot, Proposal("lock", pivot.a, pivot.b, np.asarray(pivot.point), ax,
+                                   min(1.0, pivot.score + 0.2), det, dict(pivot=pivot))
+    return None
+
+
 def scan(parts, size=None):
     """Proposals for ``parts`` (list of :class:`Part`) and the key of the
     part proposed as the frame. ``size``: model size (tolerances)."""
@@ -748,7 +859,7 @@ def scan(parts, size=None):
             p, q = parts[i], parts[j]
             if not _near(p, q, gap):
                 continue
-            pv = _pivots(p, q, size)
+            pv = _pivots(p, q, size) or _filled_bore(p, q, size)
             if pv:
                 props.append(pv)
             sl = _slider(p, q, size)
@@ -757,9 +868,34 @@ def scan(parts, size=None):
             bl = _ball(p, q, size) if not pv else None
             if bl:
                 props.append(bl)
+
     pivots = _axles(parts, [x for x in props if x.kind == "pivot"])
-    props = pivots + [x for x in props if x.kind != "pivot"]
+    # an arm on a pivot with a bolt through a slot of the other part: the
+    # bolt is tightened, the two parts are one (an arm bolted on a wheel,
+    # set at the angle wanted)
+    by = {p.key: p for p in parts}
+    locks = []
+    for x in pivots:
+        c = _clamped(by.get(x.a), by.get(x.b), x)
+        if c:
+            locks.append(c)
+    gone = {id(x) for x, _ in locks}
+    # two parts each locked to a third are one: no pivot between them
+    root = {}
+
+    def find(k):
+        while root.get(k, k) != k:
+            k = root[k]
+        return k
+    for _, lk in locks:
+        ra, rb = find(lk.a), find(lk.b)
+        if ra != rb:
+            root[ra] = rb
+    pivots = [x for x in pivots if id(x) not in gone and find(x.a) != find(x.b)]
+    props = pivots + [lk for _, lk in locks] + [x for x in props if x.kind != "pivot"]
     props += _gears(parts, pivots, size)
+    geared = {frozenset((x.a, x.b)) for x in props if x.kind == "gears"}
+    props = [x for x in props if not (x.kind == "lock" and frozenset((x.a, x.b)) in geared)]
     # frame: the part the most joints lean on, then the largest
     deg = {p.key: 0 for p in parts}
     for x in props:
@@ -769,7 +905,8 @@ def scan(parts, size=None):
     vol = {p.key: abs(p.volume) if p.volume else float(np.prod(np.maximum(p.hi - p.lo, 1e-9)))
            for p in parts}
     frame = max(deg, key=lambda k: (deg[k], vol[k])) if deg else None
-    props.sort(key=lambda x: ({"pivot": 0, "slider": 1, "ball": 2, "gears": 3}[x.kind], -x.score))
+    props.sort(key=lambda x: ({"pivot": 0, "lock": 1, "slider": 2, "ball": 3, "gears": 4}[x.kind],
+                              -x.score))
     return props, frame
 
 

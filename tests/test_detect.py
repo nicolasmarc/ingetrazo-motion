@@ -226,3 +226,28 @@ def test_a_boss_seen_in_the_sections():
                        lo=T.reshape(-1, 3).min(0), hi=T.reshape(-1, 3).max(0))
     pt, ax, kind, det = detect.own_axis(part, triangles=T)
     assert abs(abs(ax[1]) - 1) < 1e-9 and np.hypot(pt[0] - c[0], pt[2] - c[2]) < 1e-4, det
+
+
+def test_an_arm_bolted_through_a_slot_is_a_lock():
+    # a wheel on its pin carries an arm on the same pin; a bolt of the arm,
+    # 20 mm off the axis, goes through an arc slot of the wheel: the bolt
+    # is tightened, the arm and the wheel are one part (not a pivot)
+    import math as _m
+    from motion.detect import Cylinder, Part, Proposal, _clamped
+    Y = np.array([0.0, 1.0, 0.0])
+    pin = Proposal("pivot", "roue", "bras", np.zeros(3), Y, 0.8, "")
+    bolt = Cylinder(np.array([0.02, 0.0, 0.0]), Y, 0.003, -0.004, 0.004, True, 360.0, 0.0)
+    arm = Part("bras", "bras", cylinders=[bolt],
+               points=np.array([[0.02 + 0.003 * _m.cos(a), 0.0, 0.003 * _m.sin(a)]
+                                for a in np.linspace(0, 2 * _m.pi, 24)]))
+    # the slot's two walls, 3.5 mm from the bolt's axis on either side (radially)
+    walls = [[r * _m.cos(a), y, r * _m.sin(a)] for r in (0.0165, 0.0235)
+             for a in np.radians(np.linspace(-30, 30, 13)) for y in (-0.002, 0.002)]
+    wheel = Part("roue", "roue", points=np.array(walls))
+    for p in (arm, wheel):
+        p.lo, p.hi = p.points.min(0), p.points.max(0)
+    got = _clamped(wheel, arm, pin)
+    assert got and got[1].kind == "lock" and got[0] is pin
+    # no slot round the bolt (it stands in the air): still a pivot
+    wheel.points = np.array([w for w in walls if w[0] < 0.01] + [[-0.02, 0, 0]])
+    assert _clamped(wheel, arm, pin) is None

@@ -158,6 +158,19 @@ class Impacts:
         for j in m.joints:
             if j.kind != "coupling" and getattr(j, "a", None) is not None:
                 held.setdefault(frozenset((id(j.a), id(j.b))), []).append(j)
+        # parts locked together, even through a third (two arms bolted on
+        # one wheel): one solid, they never knock each other
+        root = {}
+
+        def find(k):
+            while root.get(k, k) != k:
+                k = root[k]
+            return k
+        for j in m.joints:
+            if j.kind in ("lock", "elastic") and getattr(j, "a", None) is not None:
+                ra, rb = find(id(j.a)), find(id(j.b))
+                if ra != rb:
+                    root[ra] = rb
         self.mesh_pairs = []
         for i, a in enumerate(self.mesh_bodies):
             for b in self.mesh_bodies[i + 1:]:
@@ -167,7 +180,7 @@ class Impacts:
                 if key in gears:
                     continue
                 js = held.get(key, [])
-                if any(j.kind in ("lock", "elastic") for j in js):
+                if any(j.kind in ("lock", "elastic") for j in js) or find(id(a)) == find(id(b)):
                     continue                    # one part: they never knock
                 # what touches or overlaps as drawn is the assembly (a shaft
                 # in its bore, a hair of interference): only what comes into
@@ -379,7 +392,19 @@ class Impacts:
                     idx = self.S.near_points(s_, t_, qs, qt,
                                              self._hard_mask(s_, t_, qs, qt, rest), margin)
                     cache[key] = c = (self._calls, idx, None, np.array(qs), np.array(qt), margin)
-                near, it = self.S.nearest_now(s_, t_, qs, qt, c[1])
+                # the points left far are looked at again once the parts
+                # may have closed by two steps
+                f = self.__dict__.setdefault("_full", {})
+                fq = f.get(key)
+                full = fq is None or self._moved_rel(s_, t_, fq[0], fq[1], qs, qt) > 2.0 * self.S.h
+                if full:
+                    f[key] = (np.array(qs), np.array(qt))
+                pv = self.__dict__.setdefault("_prev", {})
+                pq = pv.get(key)
+                mv = 1e9 if pq is None else self._moved_rel(s_, t_, pq[0], pq[1], qs, qt)
+                pv[key] = (np.array(qs), np.array(qt))
+                near, it = self.S.nearest_now(s_, t_, qs, qt, c[1], full=full,
+                                              moved=mv, reach=reach)
                 p, n, d = self.S.gaps_of(s_, t_, qs, qt, near, it, reach)
                 if len(d):
                     P.append(p); N.append(n); D.append(d)

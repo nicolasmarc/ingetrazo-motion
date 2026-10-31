@@ -345,6 +345,7 @@ class Surfaces:
                                    tsize=float(np.sqrt(np.max(np.sum(
                                        (T - T.mean(axis=1)[:, None]) ** 2, axis=2)))) if len(T) else 0.0)
         self._skip = {}
+        self._last = {}
         self._gears = set()
         for j in mech.joints:
             if j.kind == "coupling":
@@ -603,20 +604,107 @@ class Surfaces:
             g = grids[("coarse", margin)] = TriGrid(A["T"], margin)
         return idx[g.near_mask(L)]
 
-    def nearest_now(self, a, b, qa, qb, idx):
+    def nearest_now(self, a, b, qa, qb, idx, full=False, moved=0.0, reach=None):
         """For b's points ``idx`` (found near a a few steps ago): those
-        still near and their nearest triangles of a as they are now — as a
-        block lands, its corners' nearest face changes from the side to the
-        top of the plate."""
+        within ``reach`` (or 4 steps) and their nearest triangles of a as
+        they are now — as a block lands, its corners' nearest face changes
+        from the side to the top of the plate. ``moved``: how far the parts
+        may have gone since the last call; a point further than that from
+        mattering is not looked at."""
         A, B = self.data[a.name], self.data[b.name]
         if not len(idx):
             return idx, np.zeros((0, 3), int)
-        L = _unapply(a, qa, _apply(b, qb, B["P"][idx]))
         g = A.setdefault("tgrid", {}).get(4.0 * self.h)
         if g is None:
             g = A["tgrid"][4.0 * self.h] = TriGrid(A["T"], 4.0 * self.h)
-        keep, it = g.nearest(L, 3)
-        return idx[keep], it
+        key = (a.name, b.name)
+        st = self._last.get(key)
+        if st is None:
+            n = len(B["P"])
+            # nearest triangle (-1: never seen, -2: far), distance then,
+            # how far the parts have gone since
+            st = self._last[key] = [np.full(n, -1, np.int64), np.zeros(n), np.zeros(n)]
+        last, dist0, since = st
+        since += moved
+        need = 4.0 * self.h if reach is None else float(reach) + 0.5 * self.h
+        best = last[idx].copy()
+        if full:
+            best[best == -2] = -1
+        # what cannot have come within reach is left as it was
+        look = (best == -1) | ((best >= 0) & (dist0[idx] - since[idx] < need))
+        if full:
+            look |= best >= 0
+        sel = np.nonzero(look)[0]
+        if not len(sel):
+            return idx[:0], np.zeros((0, 3), int)
+        ids = idx[sel]
+        L = _unapply(a, qa, _apply(b, qb, B["P"][ids]))
+        b_s = best[sel]
+        # each point remembers its nearest triangle and looks round it (the
+        # parts move by a fraction of a step); new points, or points left
+        # alone for a while, ask the whole grid
+        walk = (b_s >= 0) & (since[ids] < 1.5 * self.h)
+        d_s = np.full(len(sel), np.inf)
+        if walk.any():
+            ring = self._ring(A)
+            Lk = L[walk]
+            b_k = b_s[walk]
+            for _ in range(3):                    # walk at most three rings a call
+                R = ring[b_k]                     # (n, K), -1 padding
+                ok = R >= 0
+                rows, cols = np.nonzero(ok)
+                T = A["T"][R[rows, cols]]
+                cp = closest_on_triangles(Lk[rows], T[:, 0], T[:, 1], T[:, 2])
+                D = np.full(R.shape, np.inf)
+                D[rows, cols] = np.linalg.norm(Lk[rows] - cp, axis=1)
+                j = np.argmin(D, axis=1)
+                nb = R[np.arange(len(R)), j]
+                dk = D[np.arange(len(R)), j]
+                changed = nb != b_k
+                b_k = nb
+                if not changed.any():
+                    break
+            b_s[walk], d_s[walk] = b_k, dk
+        grid = ~walk
+        if grid.any():
+            keep, it = g.nearest(L[grid], 3)
+            bn = np.full(int(grid.sum()), -2, np.int64)
+            bn[keep] = it[:, 0]
+            T = A["T"][np.maximum(bn, 0)]
+            cp = closest_on_triangles(L[grid], T[:, 0], T[:, 1], T[:, 2])
+            dn = np.where(bn >= 0, np.linalg.norm(L[grid] - cp, axis=1), 4.0 * self.h)
+            b_s[grid], d_s[grid] = bn, dn
+        b_s[d_s > 4.0 * self.h] = -2
+        d_s = np.minimum(d_s, 4.0 * self.h)
+        last[ids], dist0[ids], since[ids] = b_s, d_s, 0.0
+        ok = (b_s >= 0) & (d_s < need)
+        return ids[ok], np.repeat(b_s[ok][:, None], 3, axis=1)
+
+    def _ring(self, A):
+        """For each triangle, the triangles sharing a corner with it (itself
+        included), padded with -1: where its nearest point can go next."""
+        R = A.get("ring")
+        if R is None:
+            T = A["T"]
+            V = np.round(T.reshape(-1, 3) / max(self.h * 1e-4, 1e-12)).astype(np.int64)
+            _, vid = np.unique(V, axis=0, return_inverse=True)
+            vid = vid.reshape(-1, 3)
+            tri = np.repeat(np.arange(len(T)), 3)
+            v = vid.ravel()
+            order = np.argsort(v, kind="stable")
+            v_s, t_s = v[order], tri[order]
+            starts = np.searchsorted(v_s, np.arange(vid.max() + 1), "left")
+            ends = np.searchsorted(v_s, np.arange(vid.max() + 1), "right")
+            K = 24
+            R = np.full((len(T), K), -1, np.int64)
+            for i in range(len(T)):
+                nb = np.unique(np.concatenate([t_s[starts[c]:ends[c]] for c in vid[i]]))
+                if len(nb) > K:                   # a fan's centre: the nearest
+                    c = T[nb].mean(axis=1)
+                    nb = nb[np.argsort(np.linalg.norm(c - T[i].mean(axis=0), axis=1))[:K]]
+                R[i, :len(nb)] = nb
+            A["ring"] = R
+        return R
 
     def _sparse(self, B, f=2.5):
         """Fewer points for the dynamics: the mesh vertices first, then one

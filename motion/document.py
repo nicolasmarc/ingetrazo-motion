@@ -188,15 +188,16 @@ def apply_detection(data, parts, frame, proposals):
         names[key] = nm
     made, by_prop = [], {}
     for x in proposals:
-        if x.kind not in ("pivot", "slider", "ball"):
+        if x.kind not in ("pivot", "slider", "ball", "lock"):
             continue
         a, b = (x.a, x.b) if x.b != frame else (x.b, x.a)
-        stem = {"pivot": _T("pivot"), "slider": _T("glissière"), "ball": _T("rotule")}[x.kind]
+        stem = {"pivot": _T("pivot"), "slider": _T("glissière"), "ball": _T("rotule"),
+                "lock": _T("encastrement")}[x.kind]
         jn = f"{stem} {names[a]}–{names[b]}"
         if jn in {b_["name"] for b_ in d["bodies"]} | {j["name"] for j in d["joints"]}:
             jn = unique_name(d, jn + " ")
-        if x.kind == "ball":
-            d, jn = add_joint(d, "ball", names[a], names[b], point=x.point, name=jn)
+        if x.kind in ("ball", "lock"):
+            d, jn = add_joint(d, x.kind, names[a], names[b], point=x.point, name=jn)
             made.append(jn)
             continue
         d, jn = add_joint(d, x.kind, names[a], names[b], point=x.point, axis=x.axis, name=jn)
