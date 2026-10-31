@@ -186,6 +186,12 @@ class TriGrid:
         o = np.argsort(key, kind="stable")
         self.key, self.tri = key[o], tri[o]
 
+    def near_mask(self, X):
+        """Points X with some triangle within reach (or a little more)."""
+        X = np.asarray(X, float).reshape(-1, 3)
+        K = GridTree._key(np.floor((X - self.lo) / self.cell).astype(np.int64))
+        return np.searchsorted(self.key, K, "right") > np.searchsorted(self.key, K, "left")
+
     def nearest(self, X, k=3):
         """For points X (m, 3): (keep mask, triangle indices (kept, k)) of
         the k nearest triangles, for the points with any within reach."""
@@ -578,6 +584,40 @@ class Surfaces:
         keep, it = g.nearest(L, 3)
         return idx[keep], it
 
+    def near_points(self, a, b, qa, qb, mask, margin):
+        """b's points (all of them, but those in ``mask``) within about
+        ``margin`` of a's surface: the few that may touch it in the next
+        steps, searched once while the parts move by less than that."""
+        A, B = self.data[a.name], self.data[b.name]
+        idx = np.nonzero(~mask)[0] if mask is not None else np.arange(len(B["P"]))
+        if not len(idx) or not len(A["T"]):
+            return np.zeros(0, int)
+        L = _unapply(a, qa, _apply(b, qb, B["P"][idx]))
+        box = np.all((L >= A["lo"] - margin) & (L <= A["hi"] + margin), axis=1)
+        idx, L = idx[box], L[box]
+        if not len(idx):
+            return idx
+        grids = A.setdefault("tgrid", {})
+        g = grids.get(("coarse", margin))
+        if g is None:
+            g = grids[("coarse", margin)] = TriGrid(A["T"], margin)
+        return idx[g.near_mask(L)]
+
+    def nearest_now(self, a, b, qa, qb, idx):
+        """For b's points ``idx`` (found near a a few steps ago): those
+        still near and their nearest triangles of a as they are now — as a
+        block lands, its corners' nearest face changes from the side to the
+        top of the plate."""
+        A, B = self.data[a.name], self.data[b.name]
+        if not len(idx):
+            return idx, np.zeros((0, 3), int)
+        L = _unapply(a, qa, _apply(b, qb, B["P"][idx]))
+        g = A.setdefault("tgrid", {}).get(4.0 * self.h)
+        if g is None:
+            g = A["tgrid"][4.0 * self.h] = TriGrid(A["T"], 4.0 * self.h)
+        keep, it = g.nearest(L, 3)
+        return idx[keep], it
+
     def _sparse(self, B, f=2.5):
         """Fewer points for the dynamics: the mesh vertices first, then one
         point in every cell of f sampling steps."""
@@ -634,6 +674,7 @@ class Surfaces:
         keep = (depth > -reach) & (depth < 2.5 * self.h)
         if not keep.any():
             return empty
+        self.last_ids = np.asarray(idx)[keep]      # which of b's points
         return W[keep], N[keep] @ a.rot(qa).T, depth[keep]
 
     def penetrations(self, a, b, qa, qb, resting=None):

@@ -700,7 +700,7 @@ class Dynamics:
         pts = imp.hard_points(x, reach)
         if pts is None:
             return None
-        ka, kb, p, n, d, mu = pts
+        ka, kb, p, n, d, mu, ids = pts
         # two directions across each normal, for the friction
         t1 = np.cross(n, np.where(np.abs(n[:, :1]) < 0.9, [[1.0, 0, 0]], [[0, 1.0, 0]]))
         t1 /= np.linalg.norm(t1, axis=1)[:, None]
@@ -724,7 +724,7 @@ class Dynamics:
         out = np.minimum(self.contact_bias * np.maximum(d - self.contact_slop, 0.0) / dt,
                          self.contact_out)
         target = np.where(d > 0, out, d / dt)
-        return rows, target, mu, dt
+        return rows, target, mu, dt, ids
 
     pgs_sweeps = 60              # Gauss-Seidel sweeps over the contacts
 
@@ -732,7 +732,7 @@ class Dynamics:
         """The joints exactly, the contacts by projected Gauss-Seidel on
         what the joints leave free: each push >= 0, each friction within
         the cone (|f_t| <= mu f_n, Coulomb, as a box per direction)."""
-        J, target, mu, dt = hard
+        J, target, mu, dt, ids = hard
         nc = len(target)
         nj = Gm.shape[0]
         MiF = Mi(F)
@@ -751,9 +751,15 @@ class Dynamics:
         # wanted: J (u + dt a) >= target (normals), = 0 (friction)
         want = np.concatenate([target, np.zeros(2 * nc)])
         b = J @ a0 - (want - J @ u) / dt          # residual at no contact force
-        lam = getattr(self, "_lam_warm", None)
-        lam = lam if lam is not None and len(lam) == 3 * nc else np.zeros(3 * nc)
-        lam = np.where(np.concatenate([np.ones(nc), mu, mu]) > -1, lam, 0.0)
+        # each point starts from its push at the last step (the same point
+        # of the same pair), new ones from nothing
+        lam = np.zeros(3 * nc)
+        warm = getattr(self, "_lam_warm", None)
+        if warm:
+            for i, key in enumerate(ids.tolist()):
+                v = warm.get(key)
+                if v is not None:
+                    lam[i], lam[nc + i], lam[2 * nc + i] = v
         dg = np.diag(A)
         # a direction the joints hold whole (a push along a pivot's own
         # axis on its frame): nothing for the contact to do there
@@ -781,7 +787,8 @@ class Dynamics:
                     moved = max(moved, abs(v - old) * diag[i])
             if moved < 1e-9:
                 break
-        self._lam_warm = lam.copy()
+        self._lam_warm = {key: (lam[i], lam[nc + i], lam[2 * nc + i])
+                          for i, key in enumerate(ids.tolist())}
         a = a0 + WJt @ lam
         if nj:
             nu = P @ (Gm @ (MiF + MiJt @ lam) - rhs_c)

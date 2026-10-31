@@ -294,6 +294,19 @@ class Impacts:
         ang = math.acos(max(-1.0, min(1.0, (np.trace(R0.T @ R1) - 1.0) / 2.0)))
         return float(np.linalg.norm(np.asarray(q1[:3]) - np.asarray(q0[:3]))) + ang * R
 
+    def _moved_rel(self, s, t, qs0, qt0, qs1, qt1):
+        """How far any point of t has gone in s's frame between the two
+        poses: exact, from the corners of t's box (a rigid motion moves
+        no point further than the furthest corner)."""
+        from .contact import _apply, _unapply
+        B = self.S.data[t.name]
+        lo, hi = B["lo"], B["hi"]
+        C = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+                      for z in (lo[2], hi[2])])
+        L0 = _unapply(s, qs0, _apply(t, qt0, C))
+        L1 = _unapply(s, qs1, _apply(t, qt1, C))
+        return float(np.max(np.linalg.norm(L1 - L0, axis=1)))
+
     def _hard_mask(self, a, b, qa, qb, rest):
         """b's points that are no contact with a: round their common
         pivots (for good), and those drawn inside a until they come out —
@@ -338,34 +351,48 @@ class Impacts:
         cache = self.__dict__.setdefault("_cand", {})
         self._calls = getattr(self, "_calls", 0) + 1
         out = []
-        for a, b, rest in self.mesh_pairs:
+        for pair_no, (a, b, rest) in enumerate(self.mesh_pairs):
             (la, ha), (lb, hb) = lo_hi[id(a)], lo_hi[id(b)]
             if np.any(la - r > hb) or np.any(lb - r > ha):
                 continue
             qa, qb = m.pose(x, a), m.pose(x, b)
-            P, N, D, KA, KB = [], [], [], [], []
+            P, N, D, KA, KB, ID = [], [], [], [], [], []
             for s_, t_, qs, qt in ((a, b, qa, qb), (b, a, qb, qa)):
                 key = (id(s_), id(t_))
                 c = cache.get(key)
                 # searched again once the parts may have moved by half the
                 # margin since: a turning wheel beside its frame is not
                 # searched again step after step
-                if c is None or (self._moved(s_, c[3], qs) + self._moved(t_, c[4], qt)
-                                 > c[5] - r):
-                    margin = 4.0 * self.S.h
-                    idx, it = self.S.candidates(s_, t_, qs, qt,
-                                                self._hard_mask(s_, t_, qs, qt, rest), margin,
-                                                sparse=False)   # a thin stop is not missed
-                    cache[key] = c = (self._calls, idx, it, np.array(qs), np.array(qt), margin)
-                p, n, d = self.S.gaps_of(s_, t_, qs, qt, c[1], c[2], reach)
+                h = self.__dict__.get("_held", {}).get(key)
+                released = False
+                if h is not None and h.any():             # drawn inside: out yet?
+                    ix = np.nonzero(h)[0]
+                    out_ = ~(self.S.depths_at(s_, t_, qs, qt, ix) > 0.0)
+                    if out_.any():
+                        h[ix[out_]] = False
+                        released = True
+                if (c is None or released
+                        or self._moved_rel(s_, t_, c[3], c[4], qs, qt) > c[5] - r):
+                    # every point (a thin stop is not missed), within a
+                    # wide margin: searched again only every few millimetres
+                    margin = 12.0 * self.S.h
+                    idx = self.S.near_points(s_, t_, qs, qt,
+                                             self._hard_mask(s_, t_, qs, qt, rest), margin)
+                    cache[key] = c = (self._calls, idx, None, np.array(qs), np.array(qt), margin)
+                near, it = self.S.nearest_now(s_, t_, qs, qt, c[1])
+                p, n, d = self.S.gaps_of(s_, t_, qs, qt, near, it, reach)
                 if len(d):
                     P.append(p); N.append(n); D.append(d)
                     KA.append(np.full(len(d), moving.get(id(t_), -1)))
                     KB.append(np.full(len(d), moving.get(id(s_), -1)))
+                    # a point's name from step to step: pair, side, index
+                    ID.append(pair_no * 2 ** 33
+                              + (s_ is b) * 2 ** 32 + self.S.last_ids.astype(np.int64))
             if not D:
                 continue
             p, n, d = np.vstack(P), np.vstack(N), np.concatenate(D)
             ka, kb = np.concatenate(KA), np.concatenate(KB)
+            ids = np.concatenate(ID)
             # the deepest, then spread out over what touches (a face resting
             # on its corners), then over what comes near
             keep = [int(np.argmax(d))]
@@ -382,7 +409,8 @@ class Impacts:
             ma = getattr(a, "friction", None)
             mb = getattr(b, "friction", None)
             f = math.sqrt((_FRICTION if ma is None else ma) * (_FRICTION if mb is None else mb))
-            out.append((ka[keep], kb[keep], p[keep], n[keep], d[keep], np.full(len(keep), f)))
+            out.append((ka[keep], kb[keep], p[keep], n[keep], d[keep], np.full(len(keep), f),
+                        ids[keep]))
         if not out:
             return empty
         self.count = sum(len(o[4]) for o in out)
