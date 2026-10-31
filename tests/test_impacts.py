@@ -98,7 +98,7 @@ def test_parts_held_by_a_joint_do_not_knock():
 def test_shocks_are_stored_in_the_document():
     from motion import document as doc
     d = doc.set_simulation(doc.empty(), True, 2.5, chocs=True)
-    assert d["simulation"] == {"active": True, "duree": 2.5, "chocs": True}
+    assert d["simulation"] == {"active": True, "duree": 2.5, "chocs": True, "pesanteur": True}
     d = doc.set_simulation(d, True, 2.5)                  # left as it was
     assert d["simulation"]["chocs"] is True
     assert doc.empty()["simulation"]["chocs"] is True          # 0.9: parts touch by default

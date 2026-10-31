@@ -709,4 +709,8 @@ ES = {
         'Vidrio',
     " {n} encastrement(s) (bras serrés).":
         " {n} empotramiento(s) (brazos apretados).",
+    'Pesanteur':
+        'Gravedad',
+    "Pesanteur (9,81 m/s², vers le bas de l'axe Z) : cochée par défaut, toute pièce libre tombe ou bascule sur son axe. Décochée : mécanisme en apesanteur, seuls les moteurs, ressorts et contacts agissent.":
+        'Gravedad (9,81 m/s², hacia abajo según el eje Z): marcada por defecto, toda pieza libre cae o bascula sobre su eje. Desmarcada: mecanismo en ingravidez, solo actúan los motores, los muelles y los contactos.',
 }

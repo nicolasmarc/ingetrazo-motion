@@ -871,6 +871,14 @@ class MotionPanel(QWidget):
                                     "tenues par une liaison ne se heurtent pas."))
         self.chocs_on.toggled.connect(lambda on: self._dynamics_toggled(self.dyn_on.isChecked()))
         drow.addWidget(self.chocs_on)
+        self.grav_on = QCheckBox(_T("Pesanteur"))
+        self.grav_on.setChecked(True)
+        self.grav_on.setToolTip(_T("Pesanteur (9,81 m/s², vers le bas de l'axe Z) : cochée par "
+                                   "défaut, toute pièce libre tombe ou bascule sur son axe. "
+                                   "Décochée : mécanisme en apesanteur, seuls les moteurs, "
+                                   "ressorts et contacts agissent."))
+        self.grav_on.toggled.connect(lambda on: self._dynamics_toggled(self.dyn_on.isChecked()))
+        drow.addWidget(self.grav_on)
         drow.addStretch(1)
         self._mode_shown(False)
 
@@ -1013,12 +1021,13 @@ class MotionPanel(QWidget):
             self.jeu.blockSignals(False)
             self.pas.setValue(int(self.data.get("pas", 51)))
             sim = self.data.get("simulation") or {}
-            for w_ in (self.dyn_on, self.dur, self.chocs_on):
+            for w_ in (self.dyn_on, self.dur, self.chocs_on, self.grav_on):
                 w_.blockSignals(True)
             self.dyn_on.setChecked(bool(sim.get("active")))
             self.dur.setValue(float(sim.get("duree", 4.0)))
-            self.chocs_on.setChecked(bool(sim.get("chocs")))
-            for w_ in (self.dyn_on, self.dur, self.chocs_on):
+            self.chocs_on.setChecked(bool(sim.get("chocs", True)))
+            self.grav_on.setChecked(bool(sim.get("pesanteur", True)))
+            for w_ in (self.dyn_on, self.dur, self.chocs_on, self.grav_on):
                 w_.blockSignals(False)
             self._mode_shown(self.dyn_on.isChecked())
         self._invalidate()
@@ -1174,7 +1183,7 @@ class MotionPanel(QWidget):
             self.buttons[n].setEnabled(editable)
         for n in ("parts", "joint"):
             self.main_buttons[n].setEnabled(editable)
-        for w_ in (self.mode_kin, self.mode_dyn, self.dur, self.chocs_on):
+        for w_ in (self.mode_kin, self.mode_dyn, self.dur, self.chocs_on, self.grav_on):
             w_.setEnabled(editable)
         if not editable:                         # an example shows its own kind
             self._mode_shown(bool((self.sample_info or {}).get("simulation")))
@@ -2148,13 +2157,14 @@ class MotionPanel(QWidget):
                 b_.blockSignals(True)
                 b_.setChecked(on)
                 b_.blockSignals(False)
-        for w_ in (self.dur_label, self.dur, self.chocs_on):
+        for w_ in (self.dur_label, self.dur, self.chocs_on, self.grav_on):
             w_.setVisible(bool(dyn))
 
     def _dynamics_toggled(self, on):
         if self.source != "model":
             return
-        d = doc.set_simulation(self.data, on, self.dur.value(), self.chocs_on.isChecked())
+        d = doc.set_simulation(self.data, on, self.dur.value(), self.chocs_on.isChecked(),
+                               self.grav_on.isChecked())
         self._store(d, _T("Dynamique : simulation dans le temps.") if on else _T("Dynamique : arrêtée."))
 
     def _selected_bodies(self):
@@ -2647,6 +2657,8 @@ class MotionPanel(QWidget):
                 for name, v in (getattr(m, "torques", {}) or {}).items():
                     motors[name] = ("couple", (lambda t, v=v: v))
                 sim = dict(duree=T, dt=0.002, params=dict(motors=motors))
+                if not ms.get("pesanteur", True):    # weightless
+                    sim["params"]["gravity"] = (0.0, 0.0, 0.0)
                 if ms.get("chocs"):            # stiff contacts: a finer step
                     # semi-implicit Euler at 0.1 ms: one evaluation a step,
                     # and it follows a much finer reference better than

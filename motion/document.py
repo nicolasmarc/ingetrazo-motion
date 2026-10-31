@@ -16,7 +16,8 @@ One JSON-safe dict (``app.set_document_data``), metres and radians::
      "jeu_min": 0.005, "pas": 51,
      "couples": {"<joint>": 1.5},                   # torque motors (N m or N), dynamics
      "simulation": {"active": false, "duree": 4.0,  # dynamics in validate / video
-                    "chocs": true},                 # parts touch each other (0.9: default)
+                    "chocs": true,                  # parts touch each other (0.9: default)
+                    "pesanteur": true},             # gravity (0.9: a box, ticked by default)
      "materiau": {"<uid>": "chene", ...},           # material of each group
      "matieres": {"<key>": {"name": ..., "density": ...}}}   # the document's own
 
@@ -35,7 +36,8 @@ FORMAT = 1
 def empty():
     return {"format": FORMAT, "bodies": [], "joints": [], "drivers": [],
             "driver": None, "jeu_min": 0.005, "pas": 51, "materiau": {}, "matieres": {},
-            "couples": {}, "simulation": {"active": False, "duree": 4.0, "chocs": True}}
+            "couples": {}, "simulation": {"active": False, "duree": 4.0, "chocs": True,
+                                          "pesanteur": True}}
 
 
 def normalized(data):
@@ -52,6 +54,7 @@ def normalized(data):
     # every part touches every other unless told otherwise (0.9): a file
     # that never said keeps the contacts
     out["simulation"].setdefault("chocs", True)
+    out["simulation"].setdefault("pesanteur", True)       # gravity on unless unticked
     return out
 
 
@@ -255,9 +258,12 @@ def set_torque(data, joint, value):
     return d
 
 
-def set_simulation(data, active, duree=None, chocs=None):
-    """Dynamics on or off, its length (s) and the shocks between parts."""
+def set_simulation(data, active, duree=None, chocs=None, pesanteur=None):
+    """Dynamics on or off, its length (s), the contacts between parts and
+    gravity (9.81 m/s², on by default)."""
     d = normalized(data)
+    if pesanteur is not None:
+        d["simulation"]["pesanteur"] = bool(pesanteur)
     d["simulation"]["active"] = bool(active)
     if duree is not None:
         d["simulation"]["duree"] = float(duree)

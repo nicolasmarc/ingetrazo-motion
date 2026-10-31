@@ -130,3 +130,13 @@ def test_dominoes_fall_one_on_the_next():
         b = bs[f"d{i}"]
         foot = b.world_point(m.pose(rows[-1]["x"], b), (0.025 * i + 0.006, 0, 0))
         assert abs(foot[0] - (0.025 * i + 0.006)) < 5e-3 and abs(foot[2]) < 1e-3, foot
+
+
+def test_gravity_is_a_box_ticked_by_default():
+    d = doc.empty()
+    assert d["simulation"]["pesanteur"] is True
+    assert doc.normalized({"simulation": {"active": True}})["simulation"]["pesanteur"] is True
+    d = doc.set_simulation(d, True, 1.0, True, pesanteur=False)
+    assert d["simulation"]["pesanteur"] is False
+    d = doc.set_simulation(d, True, 1.0)                    # left as it was
+    assert d["simulation"]["pesanteur"] is False
