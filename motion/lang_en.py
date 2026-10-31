@@ -475,4 +475,6 @@ EN = {
         'Gravity',
     "Pesanteur (9,81 m/s², vers le bas de l'axe Z) : cochée par défaut, toute pièce libre tombe ou bascule sur son axe. Décochée : mécanisme en apesanteur, seuls les moteurs, ressorts et contacts agissent.":
         'Gravity (9.81 m/s², down the Z axis): ticked by default, any free part falls or swings about its axis. Unticked: the mechanism is weightless, only motors, springs and contacts act.',
+    "Pièces libres, non menées par les moteurs : calcul en Dynamique (contacts et pesanteur) pour qu'elles bougent.":
+        'Free parts, not led by the motors: calculation in Dynamics (contacts and gravity) so that they move.',
 }

@@ -96,6 +96,44 @@ def _face_areas(V, idx):
     return out
 
 
+def simplify(faces, cols, budget):
+    """Fewer triangles for drawing live: the corners snapped to a grid
+    (vertex clustering), the triangles that collapse dropped, the coarsest
+    grid that still keeps under ``budget`` triangles... starting from the
+    finest that does. The shape stays whole (a gear keeps its teeth down to
+    the grid's size), unlike keeping the largest faces. Returns (faces,
+    colours) as lists of (3, 3) arrays and colours."""
+    tris, tcols = [], []
+    for f, c in zip(faces, cols if cols is not None else [None] * len(faces)):
+        f = np.asarray(f, float)
+        for k in range(1, len(f) - 1):
+            tris.append((f[0], f[k], f[k + 1]))
+            tcols.append(c)
+    if not tris or len(tris) <= budget:
+        return [np.array(t) for t in tris], tcols
+    T = np.array(tris)                                   # (n, 3, 3)
+    span = float(np.max(T.reshape(-1, 3).max(0) - T.reshape(-1, 3).min(0))) or 1.0
+    cell = span / 400.0
+    for _ in range(12):
+        key = np.floor(T.reshape(-1, 3) / cell).astype(np.int64)
+        _, inv = np.unique(key, axis=0, return_inverse=True)
+        inv = inv.reshape(-1, 3)
+        ok = (inv[:, 0] != inv[:, 1]) & (inv[:, 1] != inv[:, 2]) & (inv[:, 0] != inv[:, 2])
+        srt = np.sort(inv[ok], axis=1)
+        _, first = np.unique(srt, axis=0, return_index=True)
+        keep = np.nonzero(ok)[0][np.sort(first)]
+        if len(keep) <= budget:
+            break
+        cell *= 1.4
+    # each cluster at the mean of its corners
+    P = T.reshape(-1, 3)
+    sums = np.zeros((inv.max() + 1, 3))
+    np.add.at(sums, inv.ravel(), P)
+    cnt = np.bincount(inv.ravel(), minlength=len(sums))[:, None]
+    C = sums / np.maximum(cnt, 1)
+    return [C[inv[i]] for i in keep], [tcols[i] for i in keep]
+
+
 class Shaded:
     """``polys``: {body name: [ (k, 3) arrays of face corners, reference
     pose ]}; bodies without polygons are drawn from their boxes."""
@@ -244,7 +282,7 @@ class Shaded:
         cache[id(it)] = (key, prep)
         return prep
 
-    def faces(self, x, project, fwd, light, hits=(), bodies=None, need_front=False):
+    def faces(self, x, project, fwd, light, hits=(), bodies=None, need_front=False, cull=False):
         """Faces to paint, back to front: [(X, Y, colour (r, g, b), shade,
         tile)], with ``project(W) -> (px, py[, in_front])``."""
         out_d, out = [], []
@@ -278,6 +316,8 @@ class Shaded:
             cross2 = X * Y[nxt] - X[nxt] * Y
             area2 = np.abs(np.add.reduceat(cross2, pr["starts"])) * 0.5
             good &= area2 >= MIN_PIXEL_AREA
+            if cull:                              # faces turned away: hidden behind
+                good &= (n @ fwd) < 0.0
             dflat = depth[pr["flat"]]
             dep = (np.maximum.reduceat(dflat, pr["starts"]) if body.fixed
                    else np.add.reduceat(dflat, pr["starts"]) / pr["lens"])
@@ -370,7 +410,7 @@ class Shaded:
         p.restore()
 
 
-def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255):
+def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255, cull=False):
     """Draw ``shaded``'s faces through an outside projection (IngeTrazo's
     ``world_to_pixels``): ``project(P (N,3)) -> (px, py, in_front)``;
     ``fwd`` = viewing direction (for back-to-front order and shading);
@@ -379,7 +419,7 @@ def draw_projected(shaded, p, x, project, fwd, bodies=None, hits=(), alpha=255):
     fwd = fwd / np.linalg.norm(fwd)
     light = -fwd + np.array([-0.3, -0.4, 0.8])
     light /= np.linalg.norm(light)
-    polys = shaded.faces(x, project, fwd, light, hits, bodies, need_front=True)
+    polys = shaded.faces(x, project, fwd, light, hits, bodies, need_front=True, cull=cull)
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
     _paint(p, polys, alpha)

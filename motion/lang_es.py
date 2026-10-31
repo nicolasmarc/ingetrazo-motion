@@ -713,4 +713,6 @@ ES = {
         'Gravedad',
     "Pesanteur (9,81 m/s², vers le bas de l'axe Z) : cochée par défaut, toute pièce libre tombe ou bascule sur son axe. Décochée : mécanisme en apesanteur, seuls les moteurs, ressorts et contacts agissent.":
         'Gravedad (9,81 m/s², hacia abajo según el eje Z): marcada por defecto, toda pieza libre cae o bascula sobre su eje. Desmarcada: mecanismo en ingravidez, solo actúan los motores, los muelles y los contactos.',
+    "Pièces libres, non menées par les moteurs : calcul en Dynamique (contacts et pesanteur) pour qu'elles bougent.":
+        'Piezas libres, no movidas por los motores: cálculo en Dinámica (contactos y gravedad) para que se muevan.',
 }

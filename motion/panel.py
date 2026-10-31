@@ -1007,6 +1007,15 @@ class MotionPanel(QWidget):
         time, e.g. while a video is rendered): then nothing is rebuilt."""
         if getattr(self, "_quiet", 0):
             return
+        if getattr(self, "_solid_groups", None):
+            # our own hiding of the moving parts changes the scene's version:
+            # nothing to rebuild unless the mechanism itself changed
+            try:
+                same = doc.normalized(self.app.document_data(default=None)) == self.data
+            except Exception:
+                same = False
+            if same:
+                return
         self._solid_restore()
         self._solid_cache = None
         self._back_to_model_on_new_document()
@@ -3271,8 +3280,26 @@ class MotionPanel(QWidget):
         if not ok:
             self.say(_T("{p} % : position non atteinte.", p=round(100 * t)))
 
+    def _free_parts_need_dynamics(self):
+        """Kinematics leaves a part the motors do not lead where it is
+        drawn (a crown pushed by rollers, a pawl): with such parts, playing
+        means simulating — contacts and gravity move them."""
+        if self.source != "model" or self.has_simulation():
+            return False
+        try:
+            m = self.mechanism()
+            if not m.drivers:
+                return False
+            return solver.dof(m) > len(m.drivers)
+        except Exception:
+            return False
+
     def _play(self, on):
         self.play_btn.setText("⏸" if on else "▶")
+        if on and self._free_parts_need_dynamics():
+            self.mode_dyn.setChecked(True)            # stores the document
+            self.say(_T("Pièces libres, non menées par les moteurs : calcul en Dynamique "
+                        "(contacts et pesanteur) pour qu'elles bougent."))
         if on:
             self.rerun_simulation()
             m = self.mechanism()
@@ -3554,6 +3581,7 @@ class MotionPanel(QWidget):
     # parts come back in place at the drawn pose, when the panel is hidden or
     # the document changes, and before any save (see setup).
     solid_view = True
+    solid_faces = 4000
 
     def _solid_hide(self):
         if getattr(self, "_solid_groups", None):
@@ -3597,9 +3625,26 @@ class MotionPanel(QWidget):
         c = getattr(self, "_solid_cache", None)
         if c is None or c[0] is not m:
             from . import render as _render
-            polys = self._polys()
-            c = self._solid_cache = (m, _render.Shaded(m, polys,
-                                                       face_colours=getattr(self, "_poly_colours", None)))
+            polys = self._polys(triangles=True)
+            cols = getattr(self, "_poly_colours", None) or {}
+            # live drawing: a few thousand triangles keep it fluid (the
+            # video draws them all); each moving part simplified as a whole,
+            # its share by its size in faces, at least a few hundred
+            moving = {b.name for b in m.bodies}
+            root_all = sum(math.sqrt(len(polys[k])) for k in polys if k in moving) or 1.0
+            live, live_cols = {}, {}
+            for k, faces in polys.items():
+                if k not in moving:
+                    continue
+                # by the square root of its faces: a fine gear does not
+                # starve a plain disc of the triangles its shape needs
+                share = max(800, int(self.solid_faces * math.sqrt(len(faces)) / root_all))
+                f2, c2 = _render.simplify(faces, cols.get(k), share)
+                live[k] = f2
+                if k in cols:
+                    live_cols[k] = c2
+            c = self._solid_cache = (m, _render.Shaded(m, live, max_faces=10 * self.solid_faces,
+                                                       face_colours=live_cols))
         return c[1]
 
     def hideEvent(self, event):
@@ -3698,8 +3743,10 @@ class MotionPanel(QWidget):
             p.end()
         return img
 
-    def _polys(self):
-        """Face polygons of each body's groups (reference pose)."""
+    def _polys(self, triangles=False):
+        """Face polygons of each body's groups (reference pose); with
+        ``triangles``, every face cut in triangles (holes kept: a plate with
+        slots), as IngeTrazo itself triangulates it."""
         if self.source != "model":
             return {}
         by = groups_by_uid(self._scene())
@@ -3721,13 +3768,23 @@ class MotionPanel(QWidget):
                         V = V @ aff[0].T + aff[1]
                     index = {id(v): i for i, v in enumerate(mesh.vertices)}
                     for f in mesh.faces:
+                        attrs = getattr(f, "attrs", None) or {}
+                        fc = _rgb255(attrs.get("color")) or gcol
+                        if triangles and len(f.loop) > 3 and hasattr(f, "triangulate"):
+                            try:
+                                for tri in f.triangulate():
+                                    P = np.array([[q.x(), q.y(), q.z()] for q in tri], float)
+                                    faces.append(P if aff is None else P @ aff[0].T + aff[1])
+                                    cols.append(fc)
+                                continue
+                            except Exception:
+                                pass
                         try:
                             faces.append(V[[index[id(v)] for v in f.loop]])
                         except KeyError:
                             P = np.array([_xyz(v.position) for v in f.loop])
                             faces.append(P if aff is None else P @ aff[0].T + aff[1])
-                        attrs = getattr(f, "attrs", None) or {}
-                        cols.append(_rgb255(attrs.get("color")) or gcol)
+                        cols.append(fc)
             if faces:
                 out[b["name"]] = faces
                 if any(c is not None for c in cols):
