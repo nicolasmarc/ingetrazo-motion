@@ -311,14 +311,32 @@ class Impacts:
         """How far any point of t has gone in s's frame between the two
         poses: exact, from the corners of t's box (a rigid motion moves
         no point further than the furthest corner)."""
-        from .contact import _apply, _unapply
-        B = self.S.data[t.name]
-        lo, hi = B["lo"], B["hi"]
-        C = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
-                      for z in (lo[2], hi[2])])
-        L0 = _unapply(s, qs0, _apply(t, qt0, C))
-        L1 = _unapply(s, qs1, _apply(t, qt1, C))
-        return float(np.max(np.linalg.norm(L1 - L0, axis=1)))
+        corners = self.__dict__.setdefault("_corners", {})
+        C = corners.get(t.name)
+        if C is None:
+            B = self.S.data[t.name]
+            lo, hi = B["lo"], B["hi"]
+            C = corners[t.name] = np.array([[x, y, z] for x in (lo[0], hi[0])
+                                            for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        A0, b0 = self._rel(s, t, qs0, qt0)
+        A1, b1 = self._rel(s, t, qs1, qt1)
+        D = C @ (A1 - A0).T + (b1 - b0)
+        return float(np.sqrt(np.max(np.einsum("ij,ij->i", D, D))))
+
+    @staticmethod
+    def _rel(s, t, qs, qt):
+        """(A, b): t's drawn points -> s's drawn frame, L = A P + b (the
+        two transforms of contact._apply and _unapply in one)."""
+        Rt = t.rot(qt)
+        ct = np.asarray(t.center, float)
+        bt = (ct + np.asarray(qt[:3]) - Rt @ ct) if not t.fixed else np.zeros(3)
+        if t.fixed:
+            Rt = np.eye(3)
+        if s.fixed:
+            return Rt, bt
+        Rs = s.rot(qs)
+        cs = np.asarray(s.center, float)
+        return Rs.T @ Rt, Rs.T @ (bt - cs - np.asarray(qs[:3])) + cs
 
     def _hard_mask(self, a, b, qa, qb, rest):
         """b's points that are no contact with a: round their common
@@ -403,6 +421,8 @@ class Impacts:
                 pq = pv.get(key)
                 mv = 1e9 if pq is None else self._moved_rel(s_, t_, pq[0], pq[1], qs, qt)
                 pv[key] = (np.array(qs), np.array(qt))
+                if not len(c[1]):
+                    continue                              # nothing near: nothing to look at
                 near, it = self.S.nearest_now(s_, t_, qs, qt, c[1], full=full,
                                               moved=mv, reach=reach)
                 p, n, d = self.S.gaps_of(s_, t_, qs, qt, near, it, reach)
