@@ -15,7 +15,9 @@
   each one remembered open or closed; the settings in label / value rows.
 - During playback the parts are drawn by IngeTrazo itself (its own
   shading, edges and colours), moved in place and put back at the end, on
-  any change of the model and before any save.
+  any change of the model and before any save. A frame only changes their
+  matrices (drawn as instances): the scene is not rebuilt per frame, which
+  froze and garbled the view on a real PC.
 - The dynamics report gives the swing of each free part driven by the
   contacts (Genève : « Couronne : bascule de −7.7° à +12.6° »); the
   minimum-gap warnings are left out of a simulation, where parts touch.

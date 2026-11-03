@@ -3703,11 +3703,17 @@ class MotionPanel(QWidget):
             self._solid_orig = orig
             self._solid_groups = [g for g, _ in orig.values()]
             self._solid_key = key
-            # the viewport sees new transforms with a new scene version: one
-            # of Motion's own (negative), the real one comes back after
-            self._refresh_view_cache(True)
-            if not first:
-                self._refresh_view_cache(False)
+            # A group with a transform is drawn as an instance through its
+            # matrix: once every moving group has one, a frame only changes
+            # matrices — no rebuild of the scene's buffers. ONE version of
+            # Motion's own (negative) at the start moves them out of the
+            # merged buffers; the real one comes back at the end. A new
+            # version per frame rebuilt the whole scene each frame: frozen
+            # and garbled view on Nicolas's PC (essai 11).
+            if first or getattr(self, "_hide_depth", 0) == 0:
+                self._refresh_view_cache(True)
+            else:
+                self._refresh_view_cache(None)
             self._solid_version = getattr(self._scene(), "version", None)
         finally:
             self._quiet -= 1
