@@ -22,6 +22,8 @@
   — kept, it lost the moved parts while the merged buffers drew a second
   copy (garbled, frozen view on a real PC); each frame in between only
   moves matrices.
+- ▶ in « Dynamique » with a motor plays the simulation (it played the
+  kinematic sweep: the parts only the contacts move stayed still).
 - The dynamics report gives the swing of each free part driven by the
   contacts (Genève : « Couronne : bascule de −7.7° à +12.6° »); the
   minimum-gap warnings are left out of a simulation, where parts touch.

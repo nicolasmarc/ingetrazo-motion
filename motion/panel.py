@@ -3395,7 +3395,17 @@ class MotionPanel(QWidget):
         if on:
             self.rerun_simulation()
             m = self.mechanism()
-            if m.driver is not None and self.frames is None:
+            if self.has_simulation():
+                # Dynamics: the simulated poses, motors or not. With a
+                # motor, ▶ played the kinematic sweep instead: the parts
+                # the contacts move stayed still (the Couronne, essai 14)
+                sim = self.simulation()
+                if sim:
+                    self.frames = sim
+                elif sim is None and not getattr(self, "_sim_running", False):
+                    self.play_btn.setChecked(False)      # cancelled
+                    return
+            elif m.driver is not None and self.frames is None:
                 self.frames = solver.sweep(m, self.pas.value())
             self._dir = 1
             self.timer.start()

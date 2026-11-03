@@ -1425,3 +1425,23 @@ def test_motor_on_a_pinion_turns_until_the_wheel_has_turned_once():
     assert turns(me, "roue") == 1.0
     data["joints"].append({"kind": "pivot", "name": "seul"})
     assert turns(me, "seul") == 1.0
+
+
+def test_play_in_dynamics_with_a_motor_plays_the_simulation():
+    # ▶ with « Dynamique » and a motor played the kinematic sweep: the parts
+    # only the contacts move (a Geneva crown) stayed still (essai 14)
+    win = _window()
+    panel = _state["panel"]
+    sim = [dict(t=0.0, value=0.0, x=None, ok=True, res=0.0)]
+    old = (panel.has_simulation, panel.simulation, panel._free_parts_need_dynamics)
+    try:
+        panel.has_simulation = lambda: True
+        panel.simulation = lambda: sim
+        panel._free_parts_need_dynamics = lambda: False
+        panel.frames = None
+        panel._play(True)
+        assert panel.frames is sim
+    finally:
+        panel.timer.stop()
+        panel.has_simulation, panel.simulation, panel._free_parts_need_dynamics = old
+        panel.frames = None
