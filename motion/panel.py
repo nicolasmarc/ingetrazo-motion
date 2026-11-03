@@ -1060,7 +1060,9 @@ class MotionPanel(QWidget):
         # ones (a selection, Motion moving the parts during playback)
         cv = getattr(sc, "content_version", None)
         if isinstance(cv, int):
-            ver = cv
+            # minus Motion's own steps (parts taken out of the merged
+            # buffers for a playback, and put back)
+            ver = cv - getattr(self, "_content_shift", 0)
         try:
             data = json.dumps(self.app.document_data(default=None), sort_keys=True)
         except Exception:
@@ -3708,14 +3710,24 @@ class MotionPanel(QWidget):
             self._solid_orig = orig
             self._solid_groups = [g for g, _ in orig.values()]
             self._solid_key = key
-            # IngeTrazo's own way of moving parts live (the exploded view's
-            # slider): new matrices and a new scene version per frame. A
-            # view-only one (``bump_view``, 0.5.10+): the document stays
-            # unmodified. Older IngeTrazo: a version of Motion's own
-            # (negative), the real one comes back at the end.
             sc = self._scene()
-            if callable(getattr(sc, "bump_view", None)):
-                sc.bump_view()
+            if self._view_counts(sc):
+                # IngeTrazo 0.5.10+. Taking the parts out of the merged
+                # buffers (and back, see _solid_restore) is a change of the
+                # content: its caches are keyed on it. The instance pool is
+                # made again then — kept, it took the parts for still
+                # "unmoved", left them out and the view lost them; the
+                # merged buffers kept a second copy (essai 13). Each frame
+                # after only moves matrices: a view-only version.
+                if first:
+                    self._solid_clean = self._doc_clean()
+                    self._forget_view(("_inst_pool", "_inst_frame_memo", "_sil_table"))
+                    sc.version += 1
+                    self._content_shift = getattr(self, "_content_shift", 0) + 1
+                    if self._solid_clean:
+                        self._mark_clean()
+                else:
+                    sc.bump_view()
                 self._refresh_view_cache(None)
             elif first or getattr(self, "_hide_depth", 0) == 0:
                 self._refresh_view_cache(True)
@@ -3726,6 +3738,47 @@ class MotionPanel(QWidget):
             self._quiet -= 1
         try:
             self.app.viewport.update()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _view_counts(sc):
+        """IngeTrazo 0.5.10+: content and view versions kept apart."""
+        return (isinstance(getattr(sc, "content_version", None), int)
+                and callable(getattr(sc, "bump_view", None)))
+
+    def _forget_view(self, names):
+        vp = self.app.viewport
+        for name in names:
+            if hasattr(vp, name):
+                try:
+                    setattr(vp, name, None)
+                except Exception:
+                    pass
+
+    def _main_window(self):
+        try:
+            return self.app.viewport.window()
+        except Exception:
+            return None
+
+    def _doc_clean(self):
+        w = self._main_window()
+        try:
+            return w is not None and callable(getattr(w, "_is_dirty", None)) and not w._is_dirty()
+        except Exception:
+            return False
+
+    def _mark_clean(self):
+        """The parts are back where the document has them: what was
+        saved before the playback is still what is saved."""
+        w = self._main_window()
+        sc = self._scene()
+        try:
+            if w is not None and getattr(w, "_workspace", None) is None and hasattr(w, "_saved_content"):
+                w._saved_content = sc.content_version
+                if callable(getattr(w, "_update_title", None)):
+                    w._update_title()
         except Exception:
             pass
 
@@ -3746,8 +3799,12 @@ class MotionPanel(QWidget):
             while getattr(self, "_hide_depth", 0) > 0:
                 self._refresh_view_cache(False)
             sc = self._scene()
-            if callable(getattr(sc, "bump_view", None)):
-                sc.bump_view()
+            if self._view_counts(sc):
+                self._forget_view(("_inst_pool", "_inst_frame_memo", "_sil_table"))
+                sc.version += 1
+                self._content_shift = getattr(self, "_content_shift", 0) + 1
+                if getattr(self, "_solid_clean", False):
+                    self._mark_clean()
             self._refresh_view_cache(None)
             self._solid_version = getattr(sc, "version", None)
         finally:
