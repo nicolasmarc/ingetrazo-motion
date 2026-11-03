@@ -1056,6 +1056,11 @@ class MotionPanel(QWidget):
         ver = getattr(sc, "version", None)
         if getattr(self, "_real_version", None) is not None or (isinstance(ver, int) and ver < 0):
             return None
+        # IngeTrazo 0.5.10+: the document's own changes, not the view-only
+        # ones (a selection, Motion moving the parts during playback)
+        cv = getattr(sc, "content_version", None)
+        if isinstance(cv, int):
+            ver = cv
         try:
             data = json.dumps(self.app.document_data(default=None), sort_keys=True)
         except Exception:
@@ -3703,14 +3708,16 @@ class MotionPanel(QWidget):
             self._solid_orig = orig
             self._solid_groups = [g for g, _ in orig.values()]
             self._solid_key = key
-            # A group with a transform is drawn as an instance through its
-            # matrix: once every moving group has one, a frame only changes
-            # matrices — no rebuild of the scene's buffers. ONE version of
-            # Motion's own (negative) at the start moves them out of the
-            # merged buffers; the real one comes back at the end. A new
-            # version per frame rebuilt the whole scene each frame: frozen
-            # and garbled view on Nicolas's PC (essai 11).
-            if first or getattr(self, "_hide_depth", 0) == 0:
+            # IngeTrazo's own way of moving parts live (the exploded view's
+            # slider): new matrices and a new scene version per frame. A
+            # view-only one (``bump_view``, 0.5.10+): the document stays
+            # unmodified. Older IngeTrazo: a version of Motion's own
+            # (negative), the real one comes back at the end.
+            sc = self._scene()
+            if callable(getattr(sc, "bump_view", None)):
+                sc.bump_view()
+                self._refresh_view_cache(None)
+            elif first or getattr(self, "_hide_depth", 0) == 0:
                 self._refresh_view_cache(True)
             else:
                 self._refresh_view_cache(None)
@@ -3738,6 +3745,11 @@ class MotionPanel(QWidget):
             self._solid_key = None
             while getattr(self, "_hide_depth", 0) > 0:
                 self._refresh_view_cache(False)
+            sc = self._scene()
+            if callable(getattr(sc, "bump_view", None)):
+                sc.bump_view()
+            self._refresh_view_cache(None)
+            self._solid_version = getattr(sc, "version", None)
         finally:
             self._quiet -= 1
         try:
@@ -3786,7 +3798,11 @@ class MotionPanel(QWidget):
         # stays saved. If these names change, moving parts simply stay
         # drawn in place.
         vp = self.app.viewport
-        for name in ("_epoch_memo", "_epoch_same"):
+        # ``_sil_table`` (IngeTrazo 0.5.11): the silhouettes' table of
+        # placements, brought up to date from their matrices — kept across
+        # the end of a playback it read the matrix of a group that has none
+        # again, and every paint failed (garbled, frozen view, essai 12)
+        for name in ("_epoch_memo", "_epoch_same", "_sil_table"):
             if hasattr(vp, name):
                 try:
                     setattr(vp, name, None)
