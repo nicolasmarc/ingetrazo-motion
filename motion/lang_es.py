@@ -715,4 +715,20 @@ ES = {
         'Gravedad (9,81 m/s², hacia abajo según el eje Z): marcada por defecto, toda pieza libre cae o bascula sobre su eje. Desmarcada: mecanismo en ingravidez, solo actúan los motores, los muelles y los contactos.',
     "Pièces libres, non menées par les moteurs : calcul en Dynamique (contacts et pesanteur) pour qu'elles bougent.":
         'Piezas libres, no movidas por los motores: cálculo en Dinámica (contactos y gravedad) para que se muevan.',
+    'Mode':
+        'Modo',
+    'Physique':
+        'Física',
+    'Jeu minimal':
+        'Holgura mínima',
+    'Toutes les liaisons et outils':
+        'Todas las uniones y herramientas',
+    'Lecture et vidéo':
+        'Reproducción y vídeo',
+    'Compte rendu et courbes':
+        'Informe y curvas',
+    '{p} : bascule de {lo}° à {hi}° (libre, menée par les contacts).':
+        '{p}: bascula de {lo}° a {hi}° (libre, movida por los contactos).',
+    '{p} : course de {lo} mm à {hi} mm (libre, menée par les contacts).':
+        '{p}: recorrido de {lo} mm a {hi} mm (libre, movida por los contactos).',
 }

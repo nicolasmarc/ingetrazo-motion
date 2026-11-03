@@ -10,6 +10,15 @@
   socket, flat or round slides — and shown to confirm or change its kind;
   an edge selected: the joint by hand on it), « Moteur », « Valider ».
   « Plus… » shows every tool for the special cases (remembered).
+- **Panel in folding sections** like the Impression 3D panel (Calcul,
+  Mécanisme, Liaison choisie, Lecture et vidéo, Compte rendu et courbes),
+  each one remembered open or closed; the settings in label / value rows.
+- During playback the parts are drawn by IngeTrazo itself (its own
+  shading, edges and colours), moved in place and put back at the end, on
+  any change of the model and before any save.
+- The dynamics report gives the swing of each free part driven by the
+  contacts (Genève : « Couronne : bascule de −7.7° à +12.6° »); the
+  minimum-gap warnings are left out of a simulation, where parts touch.
 
 ### Added
 - **Every part touches every other, by default** (dynamics with « Chocs »):

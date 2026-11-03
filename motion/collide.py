@@ -384,7 +384,8 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contac
             c = cl[0]
             if worst is None or c["distance"] < worst["distance"]:
                 worst = dict(c, t=st["t"])
-            for c in cl:
+            # in a simulation parts touch on purpose: a small gap is not a fault
+            for c in ([] if contacts else cl):
                 if 0 <= c["distance"] < jeu_min - 1e-12:
                     problems.append(_T("{p} % : jeu {d} mm < {j} mm entre {a} ({ga}) et {b} ({gb})",
                                       p=pct, d=f"{c['distance'] * 1000:.1f}",

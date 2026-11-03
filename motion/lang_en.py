@@ -477,4 +477,20 @@ EN = {
         'Gravity (9.81 m/s², down the Z axis): ticked by default, any free part falls or swings about its axis. Unticked: the mechanism is weightless, only motors, springs and contacts act.',
     "Pièces libres, non menées par les moteurs : calcul en Dynamique (contacts et pesanteur) pour qu'elles bougent.":
         'Free parts, not led by the motors: calculation in Dynamics (contacts and gravity) so that they move.',
+    'Mode':
+        'Mode',
+    'Physique':
+        'Physics',
+    'Jeu minimal':
+        'Minimum gap',
+    'Toutes les liaisons et outils':
+        'All joints and tools',
+    'Lecture et vidéo':
+        'Playback and video',
+    'Compte rendu et courbes':
+        'Report and curves',
+    '{p} : bascule de {lo}° à {hi}° (libre, menée par les contacts).':
+        '{p}: swings from {lo}° to {hi}° (free, led by the contacts).',
+    '{p} : course de {lo} mm à {hi} mm (libre, menée par les contacts).':
+        '{p}: travels from {lo} mm to {hi} mm (free, led by the contacts).',
 }

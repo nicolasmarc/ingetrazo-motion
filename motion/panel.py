@@ -387,6 +387,53 @@ def QRectF_(x, y, w, h):
     return QRectF(x, y, w, h)
 
 
+class _Section(QWidget):
+    """A folding section as in IngeTrazo's own panels: a bold title with
+    its arrow, the content in a light frame; open or closed as last left
+    (``key`` in the settings)."""
+
+    def __init__(self, title, key, default, get, put):
+        super().__init__()
+        from PySide6.QtWidgets import QFrame
+        self._key, self._put = key, put
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 2, 0, 2)
+        v.setSpacing(2)
+        self.head = QToolButton()
+        self.head.setText(title)
+        self.head.setCheckable(True)
+        self.head.setAutoRaise(True)
+        self.head.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        f = self.head.font()
+        f.setBold(True)
+        self.head.setFont(f)
+        self.head.setStyleSheet("QToolButton { border: none; padding: 3px 2px; text-align: left; }")
+        v.addWidget(self.head)
+        self.frame = QFrame()
+        self.frame.setObjectName("motionSection")
+        self.frame.setStyleSheet("#motionSection { border: 1px solid rgba(128, 128, 128, 70); "
+                                 "border-radius: 4px; background: rgba(128, 128, 128, 18); }")
+        self.body = QVBoxLayout(self.frame)
+        self.body.setContentsMargins(8, 6, 8, 6)
+        self.body.setSpacing(4)
+        v.addWidget(self.frame, 1)
+        self.head.toggled.connect(self.set_open)
+        self.head.setChecked(bool(get(key, default)))
+        self.set_open(self.head.isChecked())
+
+    def set_open(self, on):
+        on = bool(on)
+        if self.head.isChecked() != on:
+            self.head.setChecked(on)             # comes back here through toggled
+            return
+        self.head.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+        self.frame.setVisible(on)
+        self._put(self._key, on)
+
+    def setTitle(self, text):
+        self.head.setText(text)
+
+
 class _PartList(QTreeWidget):
     """The list of parts and joints; a part dropped on another part asks
     ``on_drop(dropped, onto)`` (nothing moves in the list itself)."""
@@ -587,23 +634,24 @@ class MotionPanel(QWidget):
         self.status.setWordWrap(True)
         self.status.setStyleSheet("QLabel { padding: 2px 4px; border-radius: 3px; }")
         lay.addWidget(self.status)
-        # the kind of calculation, one choice, under the commands (filled
-        # below, with the duration and the shocks of the dynamics)
+        # the rest in folding sections, as IngeTrazo's own panels: a bold
+        # title with its arrow, the settings in a light frame under it, each
+        # section open or closed as last left
+        self.sec_calc = _Section(_T("Calcul"), "sec_calcul", True, self._setting, self._set_setting)
+        self.calc_form = QFormLayout()
+        self.calc_form.setContentsMargins(0, 0, 0, 0)
+        self.calc_form.setLabelAlignment(Qt.AlignLeft)
+        self.sec_calc.body.addLayout(self.calc_form)
         self.mode_lay = QHBoxLayout()
         self.mode_lay.setSpacing(4)
-        lay.addLayout(self.mode_lay)
-        self.more_btn = QToolButton()
-        self.more_btn.setText(_T("Plus…"))
+        self.calc_form.addRow(_T("Mode"), self.mode_lay)
+        lay.addWidget(self.sec_calc)
+        self.sec_more = _Section(_T("Toutes les liaisons et outils"), "plus", False,
+                                 self._setting, self._set_setting)
+        self.more_btn = self.sec_more.head
         self.more_btn.setToolTip(_T("Toutes les liaisons et les outils, pour les cas particuliers."))
-        self.more_btn.setCheckable(True)
-        self.more_btn.setAutoRaise(True)
-        self.more_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.more_btn.setArrowType(Qt.RightArrow)
-        mrow0 = QHBoxLayout()
-        mrow0.addWidget(self.more_btn)
-        mrow0.addStretch(1)
-        lay.addLayout(mrow0)
         self.more = QWidget()
+        self.sec_more.body.addWidget(self.more)
 
         grid = QGridLayout(self.more)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -643,10 +691,10 @@ class MotionPanel(QWidget):
         tb.setCheckable(True)
         tb.clicked.connect(lambda _c=False: self._action("trajectory"))
         self.buttons["trajectory"] = tb
-        lay.addWidget(self.more)
-        self.more_btn.toggled.connect(self._show_more)
-        self.more_btn.setChecked(self._setting("plus", False))
-        self._show_more(self.more_btn.isChecked())
+        lay.addWidget(self.sec_more)
+        self.sec_mech = _Section(_T("Mécanisme"), "sec_meca", True, self._setting, self._set_setting)
+        lay.addWidget(self.sec_mech)
+        mlay = self.sec_mech.body
 
         self.tree = _PartList(self._merge_parts)
         self.tree.setToolTip(_T("Glisser une pièce sur une autre pour les fusionner ; clic droit : "
@@ -668,11 +716,11 @@ class MotionPanel(QWidget):
         self.mat_hint = QLabel("")                    # one line, not one per part
         self.mat_hint.setWordWrap(True)
         self.mat_hint.setVisible(False)
-        lay.addWidget(self.mat_hint)
-        lay.addWidget(self.tree)
+        mlay.addWidget(self.mat_hint)
+        mlay.addWidget(self.tree)
         self.grip = _Grip(self.tree, self._save_list_height)
         self.grip.setToolTip(_T("Glisser pour agrandir la liste"))
-        lay.addWidget(self.grip)
+        mlay.addWidget(self.grip)
 
         row = QHBoxLayout()
         self.delete_btn = QToolButton()
@@ -689,7 +737,7 @@ class MotionPanel(QWidget):
         self.copy_btn.clicked.connect(self.copy_example)
         self.copy_btn.setVisible(False)
         row.addWidget(self.copy_btn)
-        lay.addLayout(row)
+        mlay.addLayout(row)
 
         self.mat_row = QWidget()
         mrow = QHBoxLayout(self.mat_row)
@@ -706,14 +754,15 @@ class MotionPanel(QWidget):
         self.mat_new.setToolTip(_T("Ajouter un matériau (ou corriger une valeur) pour ce document."))
         self.mat_new.clicked.connect(self._material_dialog)
         mrow.addWidget(self.mat_new)
-        lay.addWidget(self.mat_row)
+        mlay.addWidget(self.mat_row)
         self.mass_label = QLabel("")
         self.mass_label.setWordWrap(True)
-        lay.addWidget(self.mass_label)
+        mlay.addWidget(self.mass_label)
 
-        box = QGroupBox(_T("Liaison choisie"))
+        box = _Section(_T("Liaison choisie"), "sec_liaison", True, self._setting, self._set_setting)
         self.joint_box = box
-        form = QFormLayout(box)
+        form = QFormLayout()
+        box.body.addLayout(form)
         self.joint_form = form
         self.combo_a, self.combo_b = QComboBox(), QComboBox()
         form.addRow(_T("Pièce A"), self.combo_a)
@@ -779,6 +828,9 @@ class MotionPanel(QWidget):
         self._sync_enabled()
         lay.addWidget(box)
 
+        self.sec_play = _Section(_T("Lecture et vidéo"), "sec_lecture", True, self._setting,
+                                 self._set_setting)
+        lay.addWidget(self.sec_play)
         play = QHBoxLayout()
         self.play_btn = QToolButton()
         self.play_btn.setText("▶")
@@ -794,7 +846,7 @@ class MotionPanel(QWidget):
         self.pct.setMinimumWidth(42)
         play.addWidget(self.pct)
         play.addWidget(self.buttons["trajectory"])
-        lay.addLayout(play)
+        self.sec_play.body.addLayout(play)
         self.loop = QCheckBox(_T("Aller-retour"))
         self.loop.setChecked(True)
         prow = QHBoxLayout()
@@ -806,24 +858,17 @@ class MotionPanel(QWidget):
                                     "l'animation ombrée et les mesures à droite."))
         self.video_btn.clicked.connect(self._export_dialog)
         prow.addWidget(self.video_btn)
-        lay.addLayout(prow)
+        self.sec_play.body.addLayout(prow)
 
-        val = QHBoxLayout()
-        val.addWidget(QLabel(_T("Jeu mini")))
         self.jeu = QDoubleSpinBox()
         self.jeu.setRange(0, 100)
         self.jeu.setDecimals(1)
         self.jeu.setSuffix(" mm")
         self.jeu.setValue(5.0)
-        val.addWidget(self.jeu)
-        val.addWidget(QLabel(_T("Pas")))
         self.pas = QSpinBox()
         self.pas.setRange(3, 401)
         self.pas.setValue(51)
-        val.addWidget(self.pas)
-        lay.addLayout(val)
         drow = self.mode_lay
-        drow.addWidget(QLabel(_T("Calcul")))
         self.mode_kin = QToolButton()
         self.mode_dyn = QToolButton()
         from PySide6.QtWidgets import QButtonGroup
@@ -855,22 +900,21 @@ class MotionPanel(QWidget):
         self.dyn_on.toggled.connect(self._mode_shown)
         self.mode_dyn.toggled.connect(lambda on: self.dyn_on.setChecked(on))
         drow.addWidget(self.dyn_on)
-        self.dur_label = QLabel(_T("durée"))
-        drow.addWidget(self.dur_label)
+        drow.addStretch(1)
+        self.dur_label = QLabel(_T("Durée"))
         self.dur = QDoubleSpinBox()
         self.dur.setRange(0.1, 600)
         self.dur.setDecimals(1)
         self.dur.setSuffix(" s")
         self.dur.setValue(4.0)
         self.dur.editingFinished.connect(lambda: self._dynamics_toggled(self.dyn_on.isChecked()))
-        drow.addWidget(self.dur)
+        self.calc_form.addRow(self.dur_label, self.dur)
         self.chocs_on = QCheckBox(_T("Chocs"))
         self.chocs_on.setToolTip(_T("Chocs et appuis entre pièces libres (dominos, blocs, butées "
                                     "posées) : les boîtes des pièces se repoussent, avec le "
                                     "frottement et le rebond de leurs matériaux. Les pièces "
                                     "tenues par une liaison ne se heurtent pas."))
         self.chocs_on.toggled.connect(lambda on: self._dynamics_toggled(self.dyn_on.isChecked()))
-        drow.addWidget(self.chocs_on)
         self.grav_on = QCheckBox(_T("Pesanteur"))
         self.grav_on.setChecked(True)
         self.grav_on.setToolTip(_T("Pesanteur (9,81 m/s², vers le bas de l'axe Z) : cochée par "
@@ -878,8 +922,15 @@ class MotionPanel(QWidget):
                                    "Décochée : mécanisme en apesanteur, seuls les moteurs, "
                                    "ressorts et contacts agissent."))
         self.grav_on.toggled.connect(lambda on: self._dynamics_toggled(self.dyn_on.isChecked()))
-        drow.addWidget(self.grav_on)
-        drow.addStretch(1)
+        cg = QHBoxLayout()
+        cg.addWidget(self.chocs_on)
+        cg.addWidget(self.grav_on)
+        cg.addStretch(1)
+        self.cg_label = QLabel(_T("Physique"))
+        self.calc_form.addRow(self.cg_label, cg)
+        self.jeu_label, self.pas_label = QLabel(_T("Jeu minimal")), QLabel(_T("Pas"))
+        self.calc_form.addRow(self.jeu_label, self.jeu)
+        self.calc_form.addRow(self.pas_label, self.pas)
         self._mode_shown(False)
 
         self.out = QPlainTextEdit()
@@ -909,7 +960,11 @@ class MotionPanel(QWidget):
         self.tabs.addTab(cw, _T("Courbes"))
         self.tabs.currentChanged.connect(lambda _i: self._fill_curve_choices())
         self.tabs.setMinimumHeight(200)
-        lay.addWidget(self.tabs, 1)
+        self.sec_report = _Section(_T("Compte rendu et courbes"), "sec_rapport", True,
+                                   self._setting, self._set_setting)
+        self.sec_report.body.addWidget(self.tabs, 1)
+        lay.addWidget(self.sec_report, 1)
+        lay.addStretch(0)
 
     @staticmethod
     def _spin():
@@ -926,9 +981,15 @@ class MotionPanel(QWidget):
         except Exception:
             return default
 
+    def _set_setting(self, key, value):
+        try:
+            from PySide6.QtCore import QSettings
+            QSettings("IngeTrazo", "motion").setValue(key, value)
+        except Exception:
+            pass
+
     def _show_more(self, on):
-        self.more.setVisible(bool(on))
-        self.more_btn.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+        self.sec_more.set_open(bool(on))
         try:
             from PySide6.QtCore import QSettings
             QSettings("IngeTrazo", "motion").setValue("plus", bool(on))
@@ -1008,13 +1069,11 @@ class MotionPanel(QWidget):
         if getattr(self, "_quiet", 0):
             return
         if getattr(self, "_solid_groups", None):
-            # our own hiding of the moving parts changes the scene's version:
-            # nothing to rebuild unless the mechanism itself changed
-            try:
-                same = doc.normalized(self.app.document_data(default=None)) == self.data
-            except Exception:
-                same = False
-            if same:
+            # our own placing of the moving parts changes the scene's
+            # version: nothing to rebuild. Any other change (an edit of the
+            # model while paused): the parts go back first
+            sc = self._scene()
+            if getattr(sc, "version", None) == getattr(self, "_solid_version", object()):
                 return
         self._solid_restore()
         self._solid_cache = None
@@ -2168,8 +2227,10 @@ class MotionPanel(QWidget):
                 b_.blockSignals(True)
                 b_.setChecked(on)
                 b_.blockSignals(False)
-        for w_ in (self.dur_label, self.dur, self.chocs_on, self.grav_on):
+        for w_ in (self.dur_label, self.dur, self.chocs_on, self.grav_on, self.cg_label):
             w_.setVisible(bool(dyn))
+        for w_ in (self.jeu_label, self.jeu, self.pas_label, self.pas):   # kinematics only
+            w_.setVisible(not dyn)
 
     def _dynamics_toggled(self, on):
         if self.source != "model":
@@ -2877,6 +2938,30 @@ class MotionPanel(QWidget):
             e0, e1 = st[0]["ke"] + st[0]["pe"], st[-1]["ke"] + st[-1]["pe"]
             lines.append(_T("Simulation dynamique de {t} s : énergie {e0} → {e1} mJ.",
                            t=f"{st[-1]['value']:.1f}", e0=f"{1000 * e0:.0f}", e1=f"{1000 * e1:.0f}"))
+            # the parts no motor leads (a crown pushed by rollers): how far
+            # each one went, so that a small swing is read, not guessed
+            try:
+                drv = {j.name for j, _lo, _hi in m.drivers}
+                coupled = {c.jb.name for c in m.joints if c.kind == "coupling"} | \
+                          {c.ja.name for c in m.joints if c.kind == "coupling"}
+                for j in m.joints:
+                    if j.kind not in ("pivot", "slider") or j.name in drv or j.name in coupled:
+                        continue
+                    if not (j.a.fixed or j.b.fixed):
+                        continue
+                    vals = [m.continuous_value(j, r["x"]) for r in st if r.get("x") is not None]
+                    if not vals:
+                        continue
+                    lo, hi = min(vals), max(vals)
+                    part = j.b.name if j.a.fixed else j.a.name
+                    if j.kind == "pivot" and hi - lo > math.radians(0.5):
+                        lines.append(_T("{p} : bascule de {lo}° à {hi}° (libre, menée par les contacts).",
+                                        p=part, lo=f"{math.degrees(lo):+.1f}", hi=f"{math.degrees(hi):+.1f}"))
+                    elif j.kind == "slider" and hi - lo > 5e-4:
+                        lines.append(_T("{p} : course de {lo} mm à {hi} mm (libre, menée par les contacts).",
+                                        p=part, lo=f"{1000 * lo:+.1f}", hi=f"{1000 * hi:+.1f}"))
+            except Exception:
+                pass
             names = sorted({k for r in st for k in (r.get("couples") or {})})
             for nm in names:
                 vals = [r["couples"][nm] for r in st if nm in (r.get("couples") or {})]
@@ -3355,21 +3440,13 @@ class MotionPanel(QWidget):
         hl = set(getattr(self, "_hl_bodies", ()) or ())
         solid = False
         if wire and self.source == "model" and self.solid_view and not getattr(self, "_force_paint", False):
-            if np.any(x):
-                self._solid_hide()
-                solid = bool(getattr(self, "_solid_groups", None))
-                if solid:
-                    try:
-                        from . import render as _render
-                        cam = getattr(viewport, "camera", None)
-                        fwd = _render.view_axes(float(getattr(cam, "yaw", 0.0)),
-                                                float(getattr(cam, "pitch", 0.0)))[2]
-                        _render.draw_projected(self._solid_shaded(), painter, x,
-                                               self.app.world_to_pixels, fwd,
-                                               {b.name for b in m.bodies}, hits)
-                    except Exception:
-                        solid = False
-                        self._solid_restore()
+            if np.max(np.abs(x)) > 1e-6:
+                try:
+                    self._solid_place(x)
+                    solid = bool(getattr(self, "_solid_groups", None))
+                except Exception:
+                    solid = False
+                    self._solid_restore()
             else:
                 self._solid_restore()
         if solid:                                # the solids are drawn: outline only
@@ -3583,18 +3660,55 @@ class MotionPanel(QWidget):
     solid_view = True
     solid_faces = 4000
 
-    def _solid_hide(self):
-        if getattr(self, "_solid_groups", None):
+    def _solid_place(self, x):
+        """The moving parts' own groups placed where they are at pose x
+        (their transform, for the time of the playback): IngeTrazo draws
+        them itself, with their materials, edges and speed. Nothing is
+        kept: each group gets its own transform back at the drawn pose,
+        when the panel hides, the document changes and before any save."""
+        m = self.mech
+        key = hash(np.asarray(x, float).tobytes())
+        if getattr(self, "_solid_key", None) == key:
             return
-        groups = [g for g in self._moving_groups() if not g.hidden]
-        if not groups:
-            return
+        from PySide6.QtGui import QMatrix4x4
+        by = groups_by_uid(self._scene())
+        orig = getattr(self, "_solid_orig", None)
+        first = orig is None
+        if first:
+            orig = {}
         self._quiet = getattr(self, "_quiet", 0) + 1
         try:
-            for g in groups:
-                g.hidden = True
-            self._solid_groups = groups
+            names = {b.name: b for b in m.bodies}
+            for b in self.data["bodies"]:
+                body = names.get(b["name"])
+                if b["fixed"] or body is None:
+                    continue
+                q = m.pose(x, body)
+                R = body.rot(q)
+                c = np.asarray(body.center, float)
+                t = c + np.asarray(q[:3], float) - R @ c
+                M = QMatrix4x4(R[0, 0], R[0, 1], R[0, 2], t[0],
+                               R[1, 0], R[1, 1], R[1, 2], t[1],
+                               R[2, 0], R[2, 1], R[2, 2], t[2],
+                               0.0, 0.0, 0.0, 1.0)
+                for u in b["groups"]:
+                    g = by.get(u)
+                    if g is None:
+                        continue
+                    if u not in orig:
+                        xf = getattr(g, "xform", None)
+                        orig[u] = (g, None if xf is None else QMatrix4x4(xf))
+                    base = orig[u][1]
+                    g.xform = M if base is None else M * base
+            self._solid_orig = orig
+            self._solid_groups = [g for g, _ in orig.values()]
+            self._solid_key = key
+            # the viewport sees new transforms with a new scene version: one
+            # of Motion's own (negative), the real one comes back after
             self._refresh_view_cache(True)
+            if not first:
+                self._refresh_view_cache(False)
+            self._solid_version = getattr(self._scene(), "version", None)
         finally:
             self._quiet -= 1
         try:
@@ -3602,16 +3716,22 @@ class MotionPanel(QWidget):
         except Exception:
             pass
 
+    def _solid_hide(self):                      # kept for older callers
+        pass
+
     def _solid_restore(self):
-        groups = getattr(self, "_solid_groups", None)
-        if not groups:
+        orig = getattr(self, "_solid_orig", None)
+        if not orig:
             return
         self._quiet = getattr(self, "_quiet", 0) + 1
         try:
-            for g in groups:
-                g.hidden = False
+            for g, xf in orig.values():
+                g.xform = xf
+            self._solid_orig = None
             self._solid_groups = None
-            self._refresh_view_cache(False)
+            self._solid_key = None
+            while getattr(self, "_hide_depth", 0) > 0:
+                self._refresh_view_cache(False)
         finally:
             self._quiet -= 1
         try:
