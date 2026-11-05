@@ -2804,6 +2804,8 @@ class MotionPanel(QWidget):
                 self._sim_running = False
                 if prog is not None:
                     prog.close()
+                if imp is not None and imp.S is not None and hasattr(imp.S, "save_grids"):
+                    imp.S.save_grids()         # the next simulation of these parts: sooner
             if rows is None:                   # cancelled: not again until asked
                 self._sim_cache = (self.mech, None)
                 self.say(_T("Simulation interrompue : ▶ ou « Valider » la relance."))

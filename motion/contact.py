@@ -321,6 +321,9 @@ class Surfaces:
 
     walk_reach = 1.5      # sampling steps a point may have moved and still
                           # find its nearest triangle by walking round the last
+    grid_cell = 0.5       # sampling steps: the distance grids' cells (0.10)
+    grid_band = 2.5       # sampling steps the grids are exact each side of a surface
+    use_grids = True
 
     def __init__(self, mech, clouds, h):
         """``clouds``: {body name: [(group name, points (n, 3), triangles
@@ -740,6 +743,54 @@ class Surfaces:
         if not inside.any():
             return empty
         return W[inside], N[inside] @ a.rot(qa).T, dj[inside]
+
+    def distance_grid(self, body):
+        """The part's signed distance grid (0.10), made on first use."""
+        if not self.use_grids:
+            return None
+        A = self.data.get(body.name)
+        if A is None or not len(A["T"]):
+            return None
+        if "grid" not in A:
+            from . import sdf
+            A["grid"] = sdf.DistanceGrid(A["T"], self.grid_cell * self.h, self.grid_band * self.h)
+        return A["grid"]
+
+    def save_grids(self):
+        """Keep the distance grids' nodes for the next simulation."""
+        for A in self.data.values():
+            g = A.get("grid")
+            if g is not None:
+                g.save()
+
+    def gaps_by_grid(self, a, b, qa, qb, idx, reach):
+        """``gaps_of`` read from a's distance grid: no triangle to find,
+        and a normal that turns smoothly round edges."""
+        empty = (np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0))
+        if not len(idx):
+            return empty
+        G = self.distance_grid(a)
+        B = self.data[b.name]
+        W = _apply(b, qb, B["P"][idx])
+        Q = _unapply(a, qa, W)
+        dq, Nq = G.query(Q)
+        # where it may touch, the exact distance to the nearest triangles
+        # of the cell's corners (the triangles' own normal, as gaps_of)
+        with np.errstate(invalid="ignore"):
+            close = np.nonzero(np.abs(dq) < reach + G.cell)[0]
+        if len(close):
+            de, Ne, ok = G.exact(Q, close)
+            dq[close[ok]] = de[ok]
+            Nq[close[ok]] = Ne[ok]
+        self.last_gaps = dq                         # every point read: its gap
+        depth = -dq
+        reach = min(reach, G.band - G.cell)
+        with np.errstate(invalid="ignore"):
+            keep = np.isfinite(depth) & (depth > -reach) & (depth < 2.5 * self.h)
+        if not keep.any():
+            return empty
+        self.last_ids = np.asarray(idx)[keep]
+        return W[keep], Nq[keep] @ a.rot(qa).T, depth[keep]
 
     def gaps_of(self, a, b, qa, qb, idx, it, reach):
         """Signed gaps of the candidate points of b to a's surface, those

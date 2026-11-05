@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0 — unreleased
+
+### Changed
+- **Contacts read from distance grids**: each part's signed distance to its
+  own surface is kept on a grid of half the sampling step, worked out
+  where other parts come near and nowhere else, then kept on disk for the
+  next simulation of the same parts. A point's depth is read by
+  interpolation; where it may touch, the exact distance to the nearest
+  triangles of its cell's corners. Inside or not by three rays, as before.
+- A pair of parts looks as far as the two can close in a step (their own
+  speeds, the furthest of their points from their centre), not as far as
+  the fastest part of the mechanism.
+- Points read clear of a part are not read again until the parts have
+  moved enough; the joints' slopes are kept four steps.
+- Genève, 4 s in dynamics: 55 s the first time, 40 s the next ones
+  (91 s in 0.9 essai 16, ~250 s before); the same swing of the Couronne
+  (−7.7° → +12.8°).
+
 ## 0.9.0 — unreleased
 
 ### Changed

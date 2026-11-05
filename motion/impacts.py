@@ -284,6 +284,8 @@ class Impacts:
     refresh = 8                       # steps between two searches of the points near
     hard = False                      # mesh contacts as unilateral constraints (Dynamics)
     per_pair = 6                      # points kept per pair of parts (hard contacts)
+    margin_steps = 12.0               # sampling steps: the points kept near a part, searched
+                                      # again once the parts have moved by about that
     hard_refresh = 2                  # calls between two searches (hard contacts)
 
     def radius(self, b):
@@ -291,6 +293,13 @@ class Impacts:
         rad = self.__dict__.setdefault("_radius", {})
         R = rad.get(id(b))
         if R is None:
+            S = getattr(self, "S", None)
+            if S is not None and S.has(b) and len(S.data[b.name]["P"]):
+                # the furthest of its surface's points from its centre: a
+                # gear turning on its axle, not the corner of its box (0.10)
+                P = S.data[b.name]["P"]
+                R = rad[id(b)] = float(np.max(np.linalg.norm(P - np.asarray(b.center, float), axis=1)))
+                return R
             if not b.boxes:
                 return 0.0
             lo = np.min([np.asarray(bx.center) - np.linalg.norm(bx.half) for bx in b.boxes], axis=0)
@@ -388,6 +397,12 @@ class Impacts:
                 continue
             qa, qb = m.pose(x, a), m.pose(x, b)
             P, N, D, KA, KB, ID = [], [], [], [], [], []
+            sp = getattr(self, "speeds", None)
+            if sp is not None:
+                reach_p = min(reach, max(1.5 * self.S.h, 2.0 * self.dt * (
+                    sp.get(id(a), 0.0) + sp.get(id(b), 0.0))))
+            else:
+                reach_p = reach
             for s_, t_, qs, qt in ((a, b, qa, qb), (b, a, qb, qa)):
                 key = (id(s_), id(t_))
                 c = cache.get(key)
@@ -406,7 +421,7 @@ class Impacts:
                         or self._moved_rel(s_, t_, c[3], c[4], qs, qt) > c[5] - r):
                     # every point (a thin stop is not missed), within a
                     # wide margin: searched again only every few millimetres
-                    margin = 12.0 * self.S.h
+                    margin = self.margin_steps * self.S.h
                     idx = self.S.near_points(s_, t_, qs, qt,
                                              self._hard_mask(s_, t_, qs, qt, rest), margin)
                     cache[key] = c = (self._calls, idx, None, np.array(qs), np.array(qt), margin)
@@ -423,9 +438,27 @@ class Impacts:
                 pv[key] = (np.array(qs), np.array(qt))
                 if not len(c[1]):
                     continue                              # nothing near: nothing to look at
-                near, it = self.S.nearest_now(s_, t_, qs, qt, c[1], full=full,
-                                              moved=mv, reach=reach)
-                p, n, d = self.S.gaps_of(s_, t_, qs, qt, near, it, reach)
+                G = self.S.distance_grid(s_)
+                if G is not None and reach_p <= 2.0 * (G.band - G.cell):
+                    # 0.10: the depths read from s's distance grid (the
+                    # reach doubles what the parts may close in a step:
+                    # half of it within the grid's band is enough)
+                    # the points read clear of s by more than the band,
+                    # less what the parts have moved since: not read again
+                    gs = self.__dict__.setdefault("_grid_seen", {})
+                    st = gs.get(key)
+                    if st is None or st[0] is not c[1]:
+                        st = gs[key] = [c[1], np.full(len(c[1]), -1.0), np.zeros(len(c[1])), 0.0]
+                    st[3] += 0.0 if mv >= 1e9 else mv
+                    look = np.nonzero(st[1] - (st[3] - st[2]) < G.band - G.cell)[0]
+                    p, n, d = self.S.gaps_by_grid(s_, t_, qs, qt, c[1][look], reach_p)
+                    if len(look):
+                        st[1][look] = self.S.last_gaps
+                        st[2][look] = st[3]
+                else:
+                    near, it = self.S.nearest_now(s_, t_, qs, qt, c[1], full=full,
+                                                  moved=mv, reach=reach_p)
+                    p, n, d = self.S.gaps_of(s_, t_, qs, qt, near, it, reach_p)
                 if len(d):
                     P.append(p); N.append(n); D.append(d)
                     KA.append(np.full(len(d), moving.get(id(t_), -1)))

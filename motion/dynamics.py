@@ -477,6 +477,7 @@ class Dynamics:
         return np.concatenate([np.atleast_1d(v) for v in out]) if out else np.zeros(0)
 
     slopes_every = 1          # steps between two finite-difference slopes (see run)
+    slopes_hard = 4           # the same, hard contacts at a few milliseconds (Genève: the same swing)
 
     def _kin(self, x, u, t, eps=1e-6):
         """(C, G, gamma) row block by row block: pivots analytically (the
@@ -694,8 +695,12 @@ class Dynamics:
         # the fastest point of any part (m/s): a turning wheel's rim
         U = np.asarray(u, float).reshape(-1, 6)
         rad = np.array([imp.radius(b) for b in self.bodies])
-        speed = float(np.max(np.linalg.norm(U[:, :3], axis=1)
-                             + np.linalg.norm(U[:, 3:], axis=1) * rad)) if len(U) else 0.0
+        sp = (np.linalg.norm(U[:, :3], axis=1) + np.linalg.norm(U[:, 3:], axis=1) * rad
+              if len(U) else np.zeros(0))
+        speed = float(np.max(sp)) if len(sp) else 0.0
+        # each part's own: a pair's reach is what the two can close in a
+        # step, not the motor's wheel's rim elsewhere (0.10)
+        imp.speeds = {id(b): float(v) for b, v in zip(self.bodies, sp)}
         reach = max(1.5 * imp.S.h, 2.0 * speed * dt) if imp.S is not None else 0.0
         pts = imp.hard_points(x, reach)
         if pts is None:
@@ -878,7 +883,7 @@ class Dynamics:
             # degree a step, the joints' slopes hold for a few
             self.slopes_every = max(self.slopes_every, 3)
         elif dt <= 5e-3 and self.impacts is not None and getattr(self.impacts, "hard", False):
-            self.slopes_every = max(self.slopes_every, 2)
+            self.slopes_every = max(self.slopes_every, self.slopes_hard)
         rows = []
         t = t0
         steps = int(round(seconds / dt))
