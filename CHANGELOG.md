@@ -24,6 +24,9 @@
   moves matrices.
 - ▶ in « Dynamique » with a motor plays the simulation (it played the
   kinematic sweep: the parts only the contacts move stayed still).
+- Simulations with the parts' surfaces in contact take a step of 5 ms
+  (joints' slopes kept two steps): Genève 4 s in 91 s instead of ~250 s
+  here, the same swing of the Couronne; the block and dominoes hold.
 - The dynamics report gives the swing of each free part driven by the
   contacts (Genève : « Couronne : bascule de −7.7° à +12.6° »); the
   minimum-gap warnings are left out of a simulation, where parts touch.

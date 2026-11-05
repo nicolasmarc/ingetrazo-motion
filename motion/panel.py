@@ -2788,7 +2788,7 @@ class MotionPanel(QWidget):
                 # parts; alone, they allow a step of 1 ms
                 imp.hard = True
                 if imp.surfaces_only:
-                    dt = max(dt, 1e-3)
+                    dt = max(dt, self.hard_dt)
                     imp.dt = dt
             every = max(1, int(round(1.0 / (30 * dt))))
             steps = int(round(sim["duree"] / dt))
@@ -3675,6 +3675,8 @@ class MotionPanel(QWidget):
     # parts come back in place at the drawn pose, when the panel is hidden or
     # the document changes, and before any save (see setup).
     solid_view = True
+    hard_dt = 5e-3          # s: the step of a simulation with hard contacts only
+                            # (Genève: the same swing as at 1 ms, 2.5 times sooner)
     solid_faces = 4000
 
     def _solid_place(self, x):

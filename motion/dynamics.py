@@ -877,6 +877,8 @@ class Dynamics:
             # contacts as constraints, 1 ms: the parts turn a fraction of a
             # degree a step, the joints' slopes hold for a few
             self.slopes_every = max(self.slopes_every, 3)
+        elif dt <= 5e-3 and self.impacts is not None and getattr(self.impacts, "hard", False):
+            self.slopes_every = max(self.slopes_every, 2)
         rows = []
         t = t0
         steps = int(round(seconds / dt))

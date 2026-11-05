@@ -319,6 +319,9 @@ def budget_spacing(h, area, budget=POINT_BUDGET):
 class Surfaces:
     """The sampled surfaces of a mechanism's parts, and the checks."""
 
+    walk_reach = 1.5      # sampling steps a point may have moved and still
+                          # find its nearest triangle by walking round the last
+
     def __init__(self, mech, clouds, h):
         """``clouds``: {body name: [(group name, points (n, 3), triangles
         (m, 3, 3)) in the drawn position]}; the triangles (turned outward)
@@ -643,7 +646,7 @@ class Surfaces:
         # each point remembers its nearest triangle and looks round it (the
         # parts move by a fraction of a step); new points, or points left
         # alone for a while, ask the whole grid
-        walk = (b_s >= 0) & (since[ids] < 1.5 * self.h)
+        walk = (b_s >= 0) & (since[ids] < self.walk_reach * self.h)
         d_s = np.full(len(sel), np.inf)
         if walk.any():
             ring = self._ring(A)
