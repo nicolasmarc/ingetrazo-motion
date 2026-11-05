@@ -2788,7 +2788,11 @@ class MotionPanel(QWidget):
                 # parts; alone, they allow a step of 1 ms
                 imp.hard = True
                 if imp.surfaces_only:
-                    dt = max(dt, self.hard_dt)
+                    # stops, springs and dampers act as stiff forces: they
+                    # keep the 1 ms step (a drop leaf caught by its stay)
+                    stiff = any(getattr(jj, f, None) for jj in m.joints
+                                for f in ("limits", "slide_limits", "spring", "damper"))
+                    dt = max(dt, 1e-3 if stiff else self.hard_dt)
                     imp.dt = dt
             every = max(1, int(round(1.0 / (30 * dt))))
             steps = int(round(sim["duree"] / dt))
