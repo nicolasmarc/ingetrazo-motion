@@ -19,6 +19,11 @@
   (91 s in 0.9 essai 16, ~250 s before); the same swing of the Couronne
   (−7.7° → +12.5°).
 
+### Fixed
+- A part (or a joint's two parts) clicked in the list lights up again in
+  the model with IngeTrazo 0.6 (the selection was set, but drawn from caches
+  that needed a view-only step to refresh).
+
 ### Added
 - **Simulation you can watch**: while a dynamics (or beads) computes, a
   window over the bottom of the 3D view gives the time simulated and the

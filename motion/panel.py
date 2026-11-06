@@ -1571,6 +1571,17 @@ class MotionPanel(QWidget):
         else:
             self.k_label.setText(_T("Ressort"))
 
+    def _selection_shown(self):
+        """IngeTrazo 0.5.10+ draws the selection from caches keyed on the
+        scene's version: a view-only step makes it show (without it the
+        part clicked in the list was selected but nothing lit up, 0.6)."""
+        sc = self._scene()
+        bump = getattr(sc, "bump_view", None)
+        if callable(bump):
+            bump()
+            if getattr(self, "_solid_groups", None):
+                self._solid_version = getattr(sc, "version", None)
+
     def _highlight(self, name):
         """Show in the model what was clicked in the list: a part's groups
         (or, for a joint, both its parts' groups) become IngeTrazo's
@@ -1594,6 +1605,7 @@ class MotionPanel(QWidget):
                     sel.update(groups)
                     # the highlight lasts as long as this selection does
                     self._hl_sel = {id(g) for g in groups}
+                    self._selection_shown()
                 except Exception:
                     pass
             self._hl_bodies = set(names)
@@ -3438,6 +3450,7 @@ class MotionPanel(QWidget):
         if sel is not None:
             sel.clear()
             sel.update(groups)
+            self._selection_shown()
         warn = "; ".join(f"{k} ×{n}" for k, n in asm.warnings.items())
         self.say(_T("STEP : {n} pièce(s) importée(s)", n=len(groups))
                  + (_T(" — non lu : {w}", w=warn) if warn else "") + ".")
