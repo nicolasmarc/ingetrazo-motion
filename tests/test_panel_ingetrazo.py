@@ -612,7 +612,7 @@ def test_screw_and_the_other_new_tools_from_the_panel():
     win = _window()
     panel = _state["panel"]
     _reset(win, panel)
-    assert len(panel.buttons) == 19                  # 18 tools (« Axe », « Contact ») + the trajectory
+    assert len(panel.buttons) == 22                  # 21 tools (« Billes », « Bac », « Convoyeur ») + the trajectory
     for n in ("annular", "pointplane", "planar", "screw"):
         assert panel.buttons[n].isEnabled() and panel.buttons[n].text()
     scene = win.viewport.scene
