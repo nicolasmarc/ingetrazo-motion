@@ -37,7 +37,9 @@ def empty():
     return {"format": FORMAT, "bodies": [], "joints": [], "drivers": [],
             "driver": None, "jeu_min": 0.005, "pas": 51, "materiau": {}, "matieres": {},
             "couples": {}, "simulation": {"active": False, "duree": 4.0, "chocs": True,
-                                          "pesanteur": True}}
+                                          "pesanteur": True},
+            # 0.10: beads poured among the parts
+            "billes": {"sources": [], "puits": [], "convoyeurs": {}}}
 
 
 def normalized(data):
@@ -55,6 +57,8 @@ def normalized(data):
     # that never said keeps the contacts
     out["simulation"].setdefault("chocs", True)
     out["simulation"].setdefault("pesanteur", True)       # gravity on unless unticked
+    for k, v in (("sources", []), ("puits", []), ("convoyeurs", {})):
+        out["billes"].setdefault(k, v)
     return out
 
 
@@ -64,6 +68,91 @@ def unique_name(data, stem):
     while f"{stem}{k}" in used:
         k += 1
     return f"{stem}{k}"
+
+
+# -- beads (0.10) -------------------------------------------------------------
+
+BEAD_SOURCE = {"name": "Source", "point": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, -1.0],
+               "diametre": 0.006, "diametre_max": 0.006, "debit": 100.0, "nombre": 500,
+               "debut": 0.0, "fin": 1e9, "densite": 2500.0, "largeur": 0.03, "vitesse": 0.0,
+               "couleur": [0.85, 0.65, 0.15]}
+
+
+def add_bead_source(data, point, direction=(0.0, 0.0, -1.0), **values):
+    """New bead source at ``point`` (world, m) pouring along ``direction``."""
+    d = normalized(data)
+    names = {s["name"] for s in d["billes"]["sources"]}
+    k = 1
+    while f"Source{k}" in names:
+        k += 1
+    src = copy.deepcopy(BEAD_SOURCE)
+    src.update(name=f"Source{k}", point=[float(v) for v in point],
+               direction=[float(v) for v in direction])
+    src.update({k_: v for k_, v in values.items() if k_ in BEAD_SOURCE})
+    d["billes"]["sources"].append(src)
+    return d, src["name"]
+
+
+def set_bead_source(data, name, **values):
+    d = normalized(data)
+    for s in d["billes"]["sources"]:
+        if s["name"] == name:
+            s.update({k: v for k, v in values.items() if k in BEAD_SOURCE})
+    return d
+
+
+def remove_bead_source(data, name):
+    d = normalized(data)
+    d["billes"]["sources"] = [s for s in d["billes"]["sources"] if s["name"] != name]
+    return d
+
+
+def set_sink(data, part, on=True):
+    """A part that takes the beads it touches (and counts them)."""
+    d = normalized(data)
+    p = [n for n in d["billes"]["puits"] if n != part]
+    if on:
+        p.append(part)
+    d["billes"]["puits"] = p
+    return d
+
+
+def set_conveyor(data, part, direction=None, speed=None):
+    """A part whose surface carries the beads along ``direction`` at
+    ``speed`` m/s (a belt); speed None: not a conveyor any more."""
+    d = normalized(data)
+    if speed is None:
+        d["billes"]["convoyeurs"].pop(part, None)
+    else:
+        d["billes"]["convoyeurs"][part] = {"direction": [float(v) for v in direction],
+                                          "vitesse": float(speed)}
+    return d
+
+
+def has_beads(data):
+    return bool(normalized(data)["billes"]["sources"])
+
+
+def bead_parts(data, mech, triangles_of_group):
+    """[(part name, its body in ``mech``, its triangles turned outward)]."""
+    d = normalized(data)
+    by = {b.name: b for b in mech.bodies}
+    out = []
+    for b in d["bodies"]:
+        body = mech.ground if b.get("fixed") else by.get(b["name"])
+        if body is None:
+            continue
+        Ts = []
+        for uid in b["groups"]:
+            T = triangles_of_group(uid)
+            if T is not None and len(T):
+                T = np.asarray(T, float).reshape(-1, 3, 3)
+                o = T.reshape(-1, 3).mean(axis=0)
+                vol = np.einsum("ij,ij->i", T[:, 0] - o, np.cross(T[:, 1] - o, T[:, 2] - o)).sum()
+                Ts.append(T[:, ::-1] if vol < 0 else T)
+        if Ts:
+            out.append((b["name"], body, np.concatenate(Ts)))
+    return out
 
 
 # -- editing ----------------------------------------------------------------
@@ -120,6 +209,10 @@ def remove(data, name):
                    or (j.get("ja") in names and j.get("jb") in names)]
     names = {j["name"] for j in d["joints"]}
     d["drivers"] = [x for x in d["drivers"] if x["joint"] in names]
+    # a bead source, or the part's role for the beads
+    d["billes"]["sources"] = [x for x in d["billes"]["sources"] if x["name"] != name]
+    d["billes"]["puits"] = [x for x in d["billes"]["puits"] if x != name]
+    d["billes"]["convoyeurs"].pop(name, None)
     return normalized(d)
 
 

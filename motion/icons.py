@@ -14,7 +14,8 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPainterPath,
 NAMES = ("fixed", "moving", "pivot", "slider",
          "cylindrical", "ball", "lock", "elastic",
          "annular", "pointplane", "planar", "screw",
-         "guide", "coupling", "contact", "axis", "driver", "validate")
+         "guide", "coupling", "contact", "axis",
+         "source", "sink", "conveyor", "driver", "validate")
 
 LABELS = {
     "fixed": ("Pièce fixe", "Fixed part"),
@@ -40,6 +41,9 @@ LABELS = {
     "pointplane": ("Ponctuelle", "Point–plane"),
     "planar": ("Appui plan", "Planar"),
     "screw": ("Hélicoïdale", "Screw"),
+    "source": ("Billes", "Beads"),
+    "sink": ("Bac", "Bin"),
+    "conveyor": ("Convoyeur", "Conveyor"),
 }
 
 LABELS_ES = {
@@ -50,6 +54,7 @@ LABELS_ES = {
     "cylindrical": "Pivote desliz.", "ball": "Rótula", "lock": "Empotramiento",
     "elastic": "Elástica", "spring": "Muelle", "annular": "Lin. anular",
     "pointplane": "Puntual", "planar": "Apoyo plano", "screw": "Helicoidal",
+    "source": "Bolas", "sink": "Cubeta", "conveyor": "Transportador",
 }
 
 
@@ -440,7 +445,54 @@ def _contact(p, ink, acc):
     _arrow_head(p, QPointF(19.8, 10.6), math.radians(135), acc, 3.0)
 
 
-_DRAW = dict(contact=_contact, axis=_axis, annular=_annular, pointplane=_pointplane, planar=_planar, screw=_screw,
+def _source(p, ink, acc):
+    """A funnel, beads pouring out of it."""
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(4.0, 4.0), QPointF(10.5, 12.0))
+    p.drawLine(QPointF(20.0, 4.0), QPointF(13.5, 12.0))
+    p.drawLine(QPointF(10.5, 12.0), QPointF(10.5, 14.5))
+    p.drawLine(QPointF(13.5, 12.0), QPointF(13.5, 14.5))
+    p.setBrush(_soft(acc, 255))
+    p.setPen(_pen(acc, 1.0))
+    for x, y in ((8.5, 6.5), (12.0, 7.5), (15.5, 6.5), (12.0, 17.2), (10.2, 20.6), (13.8, 21.0)):
+        p.drawEllipse(QPointF(x, y), 1.6, 1.6)
+    p.setBrush(Qt.NoBrush)
+
+
+def _sink(p, ink, acc):
+    """A bin, beads falling in, a count."""
+    p.setPen(_pen(ink, 1.6))
+    p.drawLine(QPointF(4.0, 11.0), QPointF(6.0, 21.0))
+    p.drawLine(QPointF(6.0, 21.0), QPointF(18.0, 21.0))
+    p.drawLine(QPointF(18.0, 21.0), QPointF(20.0, 11.0))
+    p.setBrush(_soft(acc, 255))
+    p.setPen(_pen(acc, 1.0))
+    for x, y in ((9.0, 18.4), (12.4, 18.4), (15.6, 18.4), (10.8, 15.6), (14.0, 15.6), (12.0, 5.0)):
+        p.drawEllipse(QPointF(x, y), 1.6, 1.6)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.4))
+    p.drawLine(QPointF(12.0, 7.6), QPointF(12.0, 11.5))
+    _arrow_head(p, QPointF(12.0, 11.5), math.radians(-90), acc, 2.6)
+
+
+def _conveyor(p, ink, acc):
+    """A belt round two drums, beads riding on it, the way it goes."""
+    p.setPen(_pen(ink, 1.6))
+    p.drawEllipse(QPointF(6.0, 16.0), 3.0, 3.0)
+    p.drawEllipse(QPointF(18.0, 16.0), 3.0, 3.0)
+    p.drawLine(QPointF(6.0, 13.0), QPointF(18.0, 13.0))
+    p.drawLine(QPointF(6.0, 19.0), QPointF(18.0, 19.0))
+    p.setBrush(_soft(acc, 255))
+    p.setPen(_pen(acc, 1.0))
+    for x in (8.5, 12.0, 15.5):
+        p.drawEllipse(QPointF(x, 11.0), 1.6, 1.6)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(_pen(acc, 1.5))
+    p.drawLine(QPointF(7.0, 6.0), QPointF(17.0, 6.0))
+    _arrow_head(p, QPointF(17.0, 6.0), math.radians(0), acc, 3.0)
+
+
+_DRAW = dict(source=_source, sink=_sink, conveyor=_conveyor, contact=_contact, axis=_axis, annular=_annular, pointplane=_pointplane, planar=_planar, screw=_screw,
              cylindrical=_cylindrical, ball=_ball, lock=_lock, elastic=_elastic,
              spring=_spring, scan=_scan, coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
              guide=_guide, driver=_driver, validate=_validate,

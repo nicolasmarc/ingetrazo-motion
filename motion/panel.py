@@ -22,7 +22,7 @@ the document (``app.set_document_data``), one undo step per edit.
 import math
 import numpy as np
 from PySide6.QtCore import QPointF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPen
+from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                QDoubleSpinBox, QFormLayout, QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
@@ -100,6 +100,13 @@ TIPS = {
     "contact": "Contact — sélectionner la pièce poussée (tenue au bâti par son seul pivot) et "
                "celles qui la poussent : elle reste immobile, puis tourne juste assez pour ne "
                "jamais être traversée (croix de Genève, cliquet, came).",
+    "source": "Billes (Beads) — une source de petites billes : sélectionner la pièce au-dessus de "
+              "laquelle elles tombent (ou rien : au-dessus du modèle), puis leur diamètre, "
+              "leur nombre, leur débit. Elles roulent, s'empilent, s'écoulent, en Dynamique.",
+    "sink": "Bac (Bin) — sélectionner une pièce : elle compte les billes qui y arrivent (un bac, "
+            "une trémie de tri) ; elles y restent. De nouveau : ce n'est plus un bac.",
+    "conveyor": "Convoyeur (Conveyor) — sélectionner une pièce : sa surface entraîne les billes "
+                "dans une direction, à une vitesse (un tapis, une bande).",
     "axis": "Axe (Axis) — sélectionner une pièce : son axe (centre de la denture, alésage, forme "
             "ronde) tracé en ligne de construction, pour le vérifier ou s'en servir avec « Liaison ».",
     "coupling": "Couplage (Coupling) — engrenage, pignon-crémaillère, roulement : deux liaisons "
@@ -705,6 +712,7 @@ class MotionPanel(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.itemSelectionChanged.connect(self._item_selected)
+        self.tree.itemDoubleClicked.connect(self._item_double_clicked)
         # a click (not the list being refilled) shows the item in the model
         self.tree.itemClicked.connect(lambda it, _c: self._highlight(it.data(0, Qt.UserRole)))
         # The list keeps the height the user gives it with the grip under it
@@ -1244,7 +1252,29 @@ class MotionPanel(QWidget):
             if name in motors:
                 it.setIcon(1, icons.icon("driver", self.tree, 16))
                 it.setText(1, kinds[kind] + _T(" · moteur"))
+            if self.source == "model":
+                bl = self.data.get("billes") or {}
+                if name in (bl.get("puits") or ()):
+                    it.setIcon(1, icons.icon("sink", self.tree, 16))
+                    it.setText(1, kinds[kind] + _T(" · bac"))
+                cv = (bl.get("convoyeurs") or {}).get(name)
+                if cv:
+                    it.setIcon(1, icons.icon("conveyor", self.tree, 16))
+                    it.setText(1, kinds[kind] + _T(" · convoyeur {v} m/s", v=f"{cv['vitesse']:g}"))
             self.tree.addTopLevelItem(it)
+        if self.source == "model":
+            for src in (self.data.get("billes") or {}).get("sources", []):
+                d0, d1 = src["diametre"] * 1000, max(src.get("diametre_max") or 0, src["diametre"]) * 1000
+                dia = f"Ø {d0:g}" + (f"–{d1:g}" if d1 > d0 + 1e-9 else "") + " mm"
+                detail = _T("{dia} · {n} billes · {r}/s", dia=dia, n=src["nombre"],
+                            r=f"{src['debit']:g}")
+                it = QTreeWidgetItem([src["name"], icons.label("source"), detail])
+                for c_, t_ in enumerate((src["name"], icons.label("source"), detail)):
+                    it.setToolTip(c_, t_ + ("\n" + _T("Double-clic : ses réglages.") if c_ == 0 else ""))
+                it.setIcon(0, icons.icon("source", self.tree, 16))
+                it.setData(0, Qt.UserRole, src["name"])
+                it.setData(0, Qt.UserRole + 1, "source")
+                self.tree.addTopLevelItem(it)
         for c in range(3):
             self.tree.resizeColumnToContents(c)
         w = max(self.tree.viewport().width(), 200)     # no sideways scrolling: the
@@ -1256,7 +1286,8 @@ class MotionPanel(QWidget):
         self.copy_btn.setVisible(not editable and self.source not in NOT_COPYABLE)
         for n in ("fixed", "moving", "pivot", "slider", "guide",
                   "cylindrical", "ball", "lock", "elastic",
-                  "annular", "pointplane", "planar", "screw", "coupling", "axis", "contact"):
+                  "annular", "pointplane", "planar", "screw", "coupling", "axis", "contact",
+                  "source", "sink", "conveyor"):
             self.buttons[n].setEnabled(editable)
         for n in ("parts", "joint"):
             self.main_buttons[n].setEnabled(editable)
@@ -1477,6 +1508,18 @@ class MotionPanel(QWidget):
             txt += _T(" (+{n} sans matériau)", n=len(mp['missing']))
         return txt
 
+    def _item_double_clicked(self, it, _col=0):
+        """A bead source: its settings again."""
+        if it is None or it.data(0, Qt.UserRole + 1) != "source" or self.source != "model":
+            return
+        name = it.data(0, Qt.UserRole)
+        src = next((x for x in self.data["billes"]["sources"] if x["name"] == name), None)
+        if src is None:
+            return
+        vals = self._bead_dialog(src)
+        if vals is not None:
+            self._store(doc.set_bead_source(self.data, name, **vals), _T("{name} modifiée.", name=name))
+
     def _chosen(self):
         it = self.tree.currentItem()
         return it.data(0, Qt.UserRole) if it is not None else None
@@ -1581,8 +1624,10 @@ class MotionPanel(QWidget):
         is_joint = (self._joint_record(name) is not None if self.source == "model" else
                     any(j.name == name for j in self.mechanism().joints))
         # a joint chosen: its settings, no material (that is a part's)
-        self.mat_row.setVisible(not is_joint)
-        self.mass_label.setVisible(not is_joint)
+        it = self.tree.currentItem()
+        is_source = it is not None and it.data(0, Qt.UserRole + 1) == "source"
+        self.mat_row.setVisible(not is_joint and not is_source)
+        self.mass_label.setVisible(not is_joint and not is_source)
         self.joint_box.setVisible(is_joint)          # a part: its material only
         if is_joint:
             kind = (self._joint_record(name)["kind"] if self.source == "model" else
@@ -1884,6 +1929,169 @@ class MotionPanel(QWidget):
             said.append(_T("{p} : {d}", p=b_["name"], d=det))
         self.app.viewport.update()
         self.say(_T("Axe — ") + " ; ".join(said))
+
+    # ---- beads (0.10) ------------------------------------------------------------------
+    DENSITIES = (("Verre", 2500.0), ("Acier", 7850.0), ("Plastique", 1050.0),
+                 ("Roche", 2650.0), ("Bois", 600.0), ("Sable", 1600.0))
+    BEAD_COLORS = (("Or", (0.85, 0.65, 0.15)), ("Bleu", (0.20, 0.45, 0.85)),
+                   ("Rouge", (0.85, 0.25, 0.20)), ("Vert", (0.25, 0.65, 0.30)),
+                   ("Gris", (0.55, 0.55, 0.58)), ("Blanc", (0.92, 0.92, 0.90)))
+
+    def _bead_dialog(self, src):
+        """The source's settings; None when cancelled."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(icons.label("source") + " — " + src["name"])
+        form = QFormLayout(dlg)
+
+        def spin(v, lo, hi, dec, suf, step=1.0):
+            w = QDoubleSpinBox()
+            w.setRange(lo, hi)
+            w.setDecimals(dec)
+            w.setSingleStep(step)
+            w.setSuffix(suf)
+            w.setValue(v)
+            return w
+        dia = spin(src["diametre"] * 1000, 0.5, 200, 1, " mm", 0.5)
+        dmax = spin(max(src.get("diametre_max") or src["diametre"], src["diametre"]) * 1000,
+                    0.5, 200, 1, " mm", 0.5)
+        dmax.setToolTip(_T("Plus grand que le diamètre : des billes de toutes tailles entre "
+                           "les deux (des cailloux à trier)."))
+        count = QSpinBox()
+        count.setRange(1, 20000)
+        count.setValue(int(src["nombre"]))
+        rate = spin(src["debit"], 1, 5000, 0, _T(" /s"), 10)
+        dens = QComboBox()
+        for name, rho in self.DENSITIES:
+            dens.addItem(f"{_T(name)} ({rho:.0f} kg/m³)", rho)
+        k = min(range(len(self.DENSITIES)), key=lambda i: abs(self.DENSITIES[i][1] - src["densite"]))
+        dens.setCurrentIndex(k)
+        width = spin(src["largeur"] * 1000, 0, 2000, 0, " mm", 5)
+        width.setToolTip(_T("Largeur de la bouche : les billes naissent sur un disque de ce "
+                            "diamètre."))
+        start = spin(src["debut"], 0, 3600, 2, " s", 0.1)
+        color = QComboBox()
+        for name, c in self.BEAD_COLORS:
+            pm = QPixmap(14, 14)
+            pm.fill(QColor.fromRgbF(*c))
+            color.addItem(QIcon(pm), _T(name), list(c))
+        kc = min(range(len(self.BEAD_COLORS)), key=lambda i: sum(
+            (a - b) ** 2 for a, b in zip(self.BEAD_COLORS[i][1], src["couleur"])))
+        color.setCurrentIndex(kc)
+        form.addRow(_T("Diamètre"), dia)
+        form.addRow(_T("Diamètre maxi"), dmax)
+        form.addRow(_T("Nombre"), count)
+        form.addRow(_T("Débit"), rate)
+        form.addRow(_T("Matière"), dens)
+        form.addRow(_T("Largeur de la bouche"), width)
+        form.addRow(_T("Début"), start)
+        form.addRow(_T("Couleur"), color)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        d0 = dia.value() / 1000
+        return dict(diametre=d0, diametre_max=max(dmax.value() / 1000, d0), nombre=count.value(),
+                    debit=rate.value(), densite=float(dens.currentData()),
+                    largeur=width.value() / 1000, debut=start.value(),
+                    couleur=[float(v) for v in color.currentData()])
+
+    def _do_source(self):
+        """Billes: a source of beads above the selected part (or above the
+        whole model), its settings asked."""
+        if self.source != "model":
+            return
+        groups, _ = selection(self._scene())
+        if not groups:
+            groups = list(getattr(self._scene(), "groups", []) or [])
+        P = [group_points(g) for g in groups]
+        P = np.concatenate([p for p in P if len(p)]) if any(len(p) for p in P) else np.zeros((1, 3))
+        lo, hi = P.min(0), P.max(0)
+        size = float(np.linalg.norm(hi - lo))
+        point = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, hi[2] + max(0.02, 0.05 * size)]
+        data, name = doc.add_bead_source(self.data, point, largeur=min(max(0.2 * (hi[0] - lo[0]), 0.01), 0.3))
+        src = next(s for s in data["billes"]["sources"] if s["name"] == name)
+        vals = self._bead_dialog(src)
+        if vals is None:
+            return
+        data = doc.set_bead_source(data, name, **vals)
+        self._store(data, _T("{name} : {n} billes de {d} mm, en Dynamique.", name=name,
+                             n=vals["nombre"], d=f"{vals['diametre'] * 1000:g}"))
+        self._beads_need_dynamics()
+
+    def _beads_need_dynamics(self):
+        if not self.mode_dyn.isChecked():
+            self.mode_dyn.setChecked(True)
+
+    def _do_sink(self):
+        """Bac: the selected part counts the beads that come to it (again:
+        not any more)."""
+        if self.source != "model":
+            return
+        bodies, groups = self._selected_bodies()
+        if not bodies:
+            raise ValueError(_T("sélectionner une pièce"))
+        data = self.data
+        said = []
+        for b_ in bodies:
+            on = b_["name"] not in doc.normalized(data)["billes"]["puits"]
+            data = doc.set_sink(data, b_["name"], on)
+            said.append(_T("{p} : bac", p=b_["name"]) if on else
+                        _T("{p} : plus un bac", p=b_["name"]))
+        self._store(data, " ; ".join(said))
+
+    def _do_conveyor(self):
+        """Convoyeur: the selected part's surface carries the beads one way."""
+        if self.source != "model":
+            return
+        bodies, groups = self._selected_bodies()
+        if not bodies:
+            raise ValueError(_T("sélectionner une pièce"))
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+        b_ = bodies[0]
+        by = groups_by_uid(self._scene())
+        P = np.concatenate([group_points(by[u]) for u in b_["groups"] if u in by] or [np.zeros((1, 3))])
+        ext = P.max(0) - P.min(0)
+        cur = doc.normalized(self.data)["billes"]["convoyeurs"].get(b_["name"])
+        dlg = QDialog(self)
+        dlg.setWindowTitle(icons.label("conveyor") + " — " + b_["name"])
+        form = QFormLayout(dlg)
+        way = QComboBox()
+        dirs = (("+X", (1, 0, 0)), ("−X", (-1, 0, 0)), ("+Y", (0, 1, 0)), ("−Y", (0, -1, 0)),
+                ("+Z", (0, 0, 1)), ("−Z", (0, 0, -1)))
+        for t, v in dirs:
+            way.addItem(t, list(v))
+        long_axis = int(np.argmax(ext[:2]))               # its length, lying down
+        way.setCurrentIndex(2 * long_axis)
+        if cur:
+            k = min(range(len(dirs)), key=lambda i: -float(np.dot(dirs[i][1], cur["direction"])))
+            way.setCurrentIndex(k)
+        speed = QDoubleSpinBox()
+        speed.setRange(0.0, 20.0)
+        speed.setDecimals(2)
+        speed.setSingleStep(0.05)
+        speed.setSuffix(" m/s")
+        speed.setValue(cur["vitesse"] if cur else 0.2)
+        off = QCheckBox(_T("Pas un convoyeur"))
+        form.addRow(_T("Direction"), way)
+        form.addRow(_T("Vitesse"), speed)
+        if cur:
+            form.addRow(off)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        if off.isChecked():
+            self._store(doc.set_conveyor(self.data, b_["name"]),
+                        _T("{p} : plus un convoyeur", p=b_["name"]))
+            return
+        self._store(doc.set_conveyor(self.data, b_["name"], way.currentData(), speed.value()),
+                    _T("{p} : convoyeur {w} à {v} m/s", p=b_["name"], w=way.currentText(),
+                       v=f"{speed.value():g}"))
 
     def _do_contact(self):
         if self.source != "model":
@@ -2829,11 +3037,48 @@ class MotionPanel(QWidget):
                      for i, r in enumerate(rows)]
             if len(poses) > 1 and not poses[-1]["couples"]:
                 poses[-1]["couples"] = poses[-2]["couples"]
+            beads = (self._run_beads(m, rows, (getattr(m, "simulation", {}) or {}).get("pesanteur", True))
+                     if self.source == "model" else None)
+            if beads is not None:
+                for p_, b_ in zip(poses, beads):
+                    p_["billes"] = b_
             self._sim_cache = (self.mech, poses)
             self._sim_assumed = list(dyn.assumed)
             self._sim_impacts = (dyn.impacts.deepest if dyn.impacts is not None else None)
             self._fill_curve_choices()
         return self._sim_cache[1]
+
+    def _run_beads(self, m, rows, gravity=True):
+        """The beads poured on the mechanism's simulated motion (0.10):
+        per frame (positions, radii, source, taken by sink, lost); None
+        without a source."""
+        bl = (self.data.get("billes") or {}) if self.source == "model" else {}
+        if not bl.get("sources"):
+            self._sim_beads = None
+            return None
+        from . import particles
+        by = groups_by_uid(self._scene())
+        parts = doc.bead_parts(self.data, m, lambda u: self._triangles(by, u))
+        conv = {n: (c["direction"], c["vitesse"]) for n, c in (bl.get("convoyeurs") or {}).items()}
+        B = particles.Beads(m, parts, bl["sources"], sinks=bl.get("puits") or (),
+                            conveyors=conv, gravity=gravity)
+        prog = self._busy(_T("Billes…"))
+        try:
+            out = B.run(rows, progress=prog)
+        finally:
+            if prog is not None:
+                prog.close()
+            for p in B.parts:
+                p["grid"].save()
+        if out is None:
+            self.say(_T("Billes interrompues."))
+            self._sim_beads = None
+            return None
+        self._sim_beads = dict(sources=[s.name for s in B.sources],
+                               colors=[s.color for s in B.sources],
+                               born=sum(s.born for s in B.sources),
+                               taken=dict(B.taken), lost=B.lost, left=len(B.X))
+        return out
 
     def has_simulation(self):
         """A dynamic simulation is set (without running it)."""
@@ -2916,6 +3161,10 @@ class MotionPanel(QWidget):
             return
         self.report = rep
         self.frames = self.report["steps"]
+        if poses is not None and len(poses) == len(self.frames):
+            for st_, p_ in zip(self.frames, poses):    # the beads go with the poses
+                if "billes" in p_:
+                    st_["billes"] = p_["billes"]
         self._write_report()
         self._fill_curve_choices()
         if self.buttons["trajectory"].isChecked():
@@ -2975,6 +3224,12 @@ class MotionPanel(QWidget):
                                         p=part, lo=f"{1000 * lo:+.1f}", hi=f"{1000 * hi:+.1f}"))
             except Exception:
                 pass
+            sb = getattr(self, "_sim_beads", None)
+            if sb:
+                taken = " ; ".join(_T("{n} arrivées dans {p}", n=v, p=k) for k, v in sorted(sb["taken"].items()))
+                lines.append(_T("Billes : {b} versées, {left} encore en jeu, {lost} tombées hors du modèle.",
+                                b=sb["born"], left=sb["left"], lost=sb["lost"])
+                             + (" " + taken + "." if taken else ""))
             names = sorted({k for r in st for k in (r.get("couples") or {})})
             for nm in names:
                 vals = [r["couples"][nm] for r in st if nm in (r.get("couples") or {})]
@@ -3398,6 +3653,10 @@ class MotionPanel(QWidget):
             self.mode_dyn.setChecked(True)            # stores the document
             self.say(_T("Pièces libres, non menées par les moteurs : calcul en Dynamique "
                         "(contacts et pesanteur) pour qu'elles bougent."))
+        elif (on and self.source == "model" and not self.has_simulation()
+              and (self.data.get("billes") or {}).get("sources")):
+            self.mode_dyn.setChecked(True)
+            self.say(_T("Des billes : calcul en Dynamique (elles tombent, roulent, s'écoulent)."))
         if on:
             self.rerun_simulation()
             m = self.mechanism()
@@ -3545,6 +3804,12 @@ class MotionPanel(QWidget):
             for X, Y, o in zip(px, py, ok):
                 if o:
                     _draw_cog(painter, QPointF(X, Y), 6.0)
+        # beads (0.10)
+        if self.frames:
+            kb = int(round(self.t * (len(self.frames) - 1)))
+            bd = self.frames[kb].get("billes")
+            if bd is not None and len(bd[0]):
+                self._draw_beads(painter, bd)
         # trajectories
         pen = QPen(acc, 1.4, Qt.DashLine)
         for tr in self.trace_pts:
@@ -4199,6 +4464,51 @@ class MotionPanel(QWidget):
             segs = [s for s in segs if len(s)]
             cache[1][key] = _lighter(np.vstack(segs)) if segs else np.zeros((0, 2, 3))
         return cache[1][key]
+
+    def _draw_beads(self, painter, bd):
+        """The beads of a frame: shaded discs, the far ones first."""
+        from PySide6.QtGui import QRadialGradient
+        X = np.asarray(bd[0], float)
+        r = np.asarray(bd[1], float)
+        src = np.asarray(bd[2], int)
+        colors = (getattr(self, "_sim_beads", None) or {}).get("colors") or [(0.85, 0.65, 0.15)]
+        vp = self.app.viewport
+        fwd = np.array([0.0, 0.0, -1.0])
+        try:
+            cam = vp.camera
+            e, t = cam.eye(), cam.target
+            eye = np.array([e.x(), e.y(), e.z()])
+            fwd = np.array([t.x(), t.y(), t.z()]) - eye
+            fwd /= max(np.linalg.norm(fwd), 1e-12)
+        except Exception:
+            eye = None
+        side = np.cross(fwd, [0.0, 0.0, 1.0])
+        if np.linalg.norm(side) < 1e-6:
+            side = np.cross(fwd, [1.0, 0.0, 0.0])
+        side /= np.linalg.norm(side)
+        px, py, ok = self.app.world_to_pixels(X)
+        qx, qy, _ = self.app.world_to_pixels(X + r[:, None] * side)
+        px, py, qx, qy = (np.asarray(a, float) for a in (px, py, qx, qy))
+        rad = np.hypot(qx - px, qy - py)
+        order = np.argsort(-(X @ fwd))                     # far first
+        painter.setPen(Qt.NoPen)
+        shaded = len(X) < 4000
+        base = [QColor.fromRgbF(*colors[min(k, len(colors) - 1)]) for k in range(len(colors))]
+        for i in order:
+            if not ok[i] or rad[i] < 0.3:
+                continue
+            c = QPointF(px[i], py[i])
+            col = base[min(int(src[i]), len(base) - 1)]
+            if shaded and rad[i] > 2.0:
+                g = QRadialGradient(QPointF(px[i] - 0.35 * rad[i], py[i] - 0.35 * rad[i]), 1.3 * rad[i])
+                g.setColorAt(0.0, col.lighter(170))
+                g.setColorAt(0.45, col)
+                g.setColorAt(1.0, col.darker(220))
+                painter.setBrush(g)
+            else:
+                painter.setBrush(col)
+            painter.drawEllipse(c, rad[i], rad[i])
+        painter.setBrush(Qt.NoBrush)
 
     def _draw_segments(self, painter, pts, color, width):
         px, py, ok = self.app.world_to_pixels(pts)

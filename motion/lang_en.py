@@ -493,4 +493,89 @@ EN = {
         '{p}: swings from {lo}° to {hi}° (free, led by the contacts).',
     '{p} : course de {lo} mm à {hi} mm (libre, menée par les contacts).':
         '{p}: travels from {lo} mm to {hi} mm (free, led by the contacts).',
+    # -- beads (0.10) --
+    "Billes (Beads) — une source de petites billes : sélectionner la pièce au-dessus de laquelle elles tombent (ou rien : au-dessus du modèle), puis leur diamètre, leur nombre, leur débit. Elles roulent, s'empilent, s'écoulent, en Dynamique.":
+        'Beads — a source of small beads: select the part they fall onto (or nothing: above the model), then their diameter, number and rate. They roll, pile up and flow, in Dynamics.',
+    'Convoyeur (Conveyor) — sélectionner une pièce : sa surface entraîne les billes dans une direction, à une vitesse (un tapis, une bande).':
+        'Conveyor — select a part: its surface carries the beads one way at a speed (a belt).',
+    'Plus grand que le diamètre : des billes de toutes tailles entre les deux (des cailloux à trier).':
+        'Larger than the diameter: beads of every size between the two (stones to sort).',
+    ' /s':
+        ' /s',
+    'Largeur de la bouche : les billes naissent sur un disque de ce diamètre.':
+        'Width of the mouth: the beads appear on a disc of this diameter.',
+    'Diamètre':
+        'Diameter',
+    'Diamètre maxi':
+        'Max diameter',
+    'Nombre':
+        'Number',
+    'Débit':
+        'Rate',
+    'Matière':
+        'Material',
+    'Largeur de la bouche':
+        'Width of the mouth',
+    'Début':
+        'Start',
+    'Couleur':
+        'Colour',
+    '{name} : {n} billes de {d} mm, en Dynamique.':
+        '{name}: {n} beads of {d} mm, in Dynamics.',
+    'Pas un convoyeur':
+        'Not a conveyor',
+    'Direction':
+        'Direction',
+    'Vitesse':
+        'Speed',
+    '{p} : convoyeur {w} à {v} m/s':
+        '{p}: conveyor {w} at {v} m/s',
+    'Billes…':
+        'Beads…',
+    '{dia} · {n} billes · {r}/s':
+        '{dia} · {n} beads · {r}/s',
+    '{name} modifiée.':
+        '{name} changed.',
+    '{p} : plus un convoyeur':
+        '{p}: no longer a conveyor',
+    'Billes interrompues.':
+        'Beads stopped.',
+    "Des billes : calcul en Dynamique (elles tombent, roulent, s'écoulent).":
+        'Beads: computed in Dynamics (they fall, roll and flow).',
+    'Billes : {b} versées, {left} encore en jeu, {lost} tombées hors du modèle.':
+        'Beads: {b} poured, {left} still in play, {lost} fell out of the model.',
+    ' · convoyeur {v} m/s':
+        ' · conveyor {v} m/s',
+    'Double-clic : ses réglages.':
+        'Double-click: its settings.',
+    'Plastique':
+        'Plastic',
+    'Roche':
+        'Rock',
+    'Bois':
+        'Wood',
+    'Sable':
+        'Sand',
+    'Or':
+        'Gold',
+    'Bleu':
+        'Blue',
+    'Rouge':
+        'Red',
+    'Vert':
+        'Green',
+    'Gris':
+        'Grey',
+    'Blanc':
+        'White',
+    "Bac (Bin) — sélectionner une pièce : elle compte les billes qui y arrivent (un bac, une trémie de tri) ; elles y restent. De nouveau : ce n'est plus un bac.":
+        'Bin — select a part: it counts the beads that come to it (a bin, a sorting hopper); they stay in it. Again: no longer a bin.',
+    ' · bac':
+        ' · bin',
+    '{p} : bac':
+        '{p}: bin',
+    '{p} : plus un bac':
+        '{p}: no longer a bin',
+    '{n} arrivées dans {p}':
+        '{n} came to {p}',
 }

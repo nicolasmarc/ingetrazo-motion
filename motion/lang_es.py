@@ -731,4 +731,89 @@ ES = {
         '{p}: bascula de {lo}° a {hi}° (libre, movida por los contactos).',
     '{p} : course de {lo} mm à {hi} mm (libre, menée par les contacts).':
         '{p}: recorrido de {lo} mm a {hi} mm (libre, movida por los contactos).',
+    # -- beads (0.10) --
+    "Billes (Beads) — une source de petites billes : sélectionner la pièce au-dessus de laquelle elles tombent (ou rien : au-dessus du modèle), puis leur diamètre, leur nombre, leur débit. Elles roulent, s'empilent, s'écoulent, en Dynamique.":
+        'Bolas — una fuente de bolitas: seleccionar la pieza sobre la que caen (o nada: encima del modelo), luego su diámetro, número y caudal. Ruedan, se apilan y fluyen, en Dinámica.',
+    'Convoyeur (Conveyor) — sélectionner une pièce : sa surface entraîne les billes dans une direction, à une vitesse (un tapis, une bande).':
+        'Transportador — seleccionar una pieza: su superficie arrastra las bolas en una dirección, a una velocidad (una cinta).',
+    'Plus grand que le diamètre : des billes de toutes tailles entre les deux (des cailloux à trier).':
+        'Mayor que el diámetro: bolas de todos los tamaños entre ambos (piedras para clasificar).',
+    ' /s':
+        ' /s',
+    'Largeur de la bouche : les billes naissent sur un disque de ce diamètre.':
+        'Ancho de la boca: las bolas nacen en un disco de este diámetro.',
+    'Diamètre':
+        'Diámetro',
+    'Diamètre maxi':
+        'Diámetro máx.',
+    'Nombre':
+        'Número',
+    'Débit':
+        'Caudal',
+    'Matière':
+        'Material',
+    'Largeur de la bouche':
+        'Ancho de la boca',
+    'Début':
+        'Inicio',
+    'Couleur':
+        'Color',
+    '{name} : {n} billes de {d} mm, en Dynamique.':
+        '{name}: {n} bolas de {d} mm, en Dinámica.',
+    'Pas un convoyeur':
+        'No es transportador',
+    'Direction':
+        'Dirección',
+    'Vitesse':
+        'Velocidad',
+    '{p} : convoyeur {w} à {v} m/s':
+        '{p}: transportador {w} a {v} m/s',
+    'Billes…':
+        'Bolas…',
+    '{dia} · {n} billes · {r}/s':
+        '{dia} · {n} bolas · {r}/s',
+    '{name} modifiée.':
+        '{name} modificada.',
+    '{p} : plus un convoyeur':
+        '{p}: ya no es transportador',
+    'Billes interrompues.':
+        'Bolas interrumpidas.',
+    "Des billes : calcul en Dynamique (elles tombent, roulent, s'écoulent).":
+        'Bolas: cálculo en Dinámica (caen, ruedan y fluyen).',
+    'Billes : {b} versées, {left} encore en jeu, {lost} tombées hors du modèle.':
+        'Bolas: {b} vertidas, {left} aún en juego, {lost} caídas fuera del modelo.',
+    ' · convoyeur {v} m/s':
+        ' · transportador {v} m/s',
+    'Double-clic : ses réglages.':
+        'Doble clic: sus ajustes.',
+    'Plastique':
+        'Plástico',
+    'Roche':
+        'Roca',
+    'Bois':
+        'Madera',
+    'Sable':
+        'Arena',
+    'Or':
+        'Oro',
+    'Bleu':
+        'Azul',
+    'Rouge':
+        'Rojo',
+    'Vert':
+        'Verde',
+    'Gris':
+        'Gris',
+    'Blanc':
+        'Blanco',
+    "Bac (Bin) — sélectionner une pièce : elle compte les billes qui y arrivent (un bac, une trémie de tri) ; elles y restent. De nouveau : ce n'est plus un bac.":
+        'Cubeta — seleccionar una pieza: cuenta las bolas que llegan a ella (una cubeta, una tolva de clasificación); se quedan en ella. Otra vez: deja de ser cubeta.',
+    ' · bac':
+        ' · cubeta',
+    '{p} : bac':
+        '{p}: cubeta',
+    '{p} : plus un bac':
+        '{p}: ya no es cubeta',
+    '{n} arrivées dans {p}':
+        '{n} llegadas a {p}',
 }

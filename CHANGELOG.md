@@ -14,9 +14,23 @@
   the fastest part of the mechanism.
 - Points read clear of a part are not read again until the parts have
   moved enough; the joints' slopes are kept four steps.
-- Genève, 4 s in dynamics: 55 s the first time, 40 s the next ones
+- The joints' velocity terms are kept with their slopes (four steps).
+- Genève, 4 s in dynamics: 46 s the first time, about 35 s the next ones
   (91 s in 0.9 essai 16, ~250 s before); the same swing of the Couronne
-  (−7.7° → +12.8°).
+  (−7.7° → +12.5°).
+
+### Added
+- **Beads**: « Billes » pours small beads among the parts — diameter (or a
+  range of diameters: stones to sort), number, rate, material (glass,
+  steel, plastic, rock, wood, sand), mouth width, start, colour. They fall,
+  roll, pile up, run through a funnel or down a gutter, are thrown by a
+  turning wheel; « Convoyeur » makes a part's surface carry them one way at
+  a speed (a belt); « Bac » makes a part count the beads that come into it
+  (they stay, piled). Moved as position-based particles (steps of 1.7 ms,
+  a pile comes to rest), against the parts' distance grids at their
+  simulated poses; the parts do not feel the beads (one way). Drawn shaded
+  over the model during playback and in the video; the report counts them
+  (poured, in each bin, still in play, fallen out).
 
 ## 0.9.0 — unreleased
 

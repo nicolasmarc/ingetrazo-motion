@@ -511,15 +511,20 @@ class Dynamics:
                             du[6 * k + c] = eps
                             Gb[:, 6 * k + c] = (f(self.displace(x, du)) - f(self.displace(x, -du))) / (2 * eps)
                     memo[key] = Gb.copy()
-                um = np.zeros(self.n)
-                for k in ks:
-                    um[6 * k: 6 * k + 6] = u[6 * k: 6 * k + 6]
-                nu = float(np.linalg.norm(um))
-                if nu > 1e-12:
-                    h = 1e-4 / nu
-                    g = (f(self.displace(x, h * um)) - 2 * C + f(self.displace(x, -h * um))) / (h * h)
+                gkey = ("gamma",) + key
+                if not fresh and gkey in memo:
+                    g = memo[gkey]                 # with the slopes: a few steps
                 else:
-                    g = np.zeros(n)
+                    um = np.zeros(self.n)
+                    for k in ks:
+                        um[6 * k: 6 * k + 6] = u[6 * k: 6 * k + 6]
+                    nu = float(np.linalg.norm(um))
+                    if nu > 1e-12:
+                        h = 1e-4 / nu
+                        g = (f(self.displace(x, h * um)) - 2 * C + f(self.displace(x, -h * um))) / (h * h)
+                    else:
+                        g = np.zeros(n)
+                    memo[gkey] = g
                 if drv:
                     C = C - self.motors[j.name][1](t)
             Cs.append(C)
