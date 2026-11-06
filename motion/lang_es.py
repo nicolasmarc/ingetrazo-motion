@@ -816,4 +816,8 @@ ES = {
         '{p}: ya no es cubeta',
     '{n} arrivées dans {p}':
         '{n} llegadas a {p}',
+    '{t} s simulées sur {T} s':
+        '{t} s simulados de {T} s',
+    'encore environ {s} s':
+        'quedan unos {s} s',
 }

@@ -3004,7 +3004,7 @@ class MotionPanel(QWidget):
                     imp.dt = dt
             every = max(1, int(round(1.0 / (30 * dt))))
             steps = int(round(sim["duree"] / dt))
-            prog = self._sim_progress(steps)
+            prog = self._sim_progress(steps, sim["duree"], dyn)
             self._sim_running = True
             try:
                 rows = dyn.run(sim["duree"], dt=dt, every=every, progress=prog)
@@ -3062,7 +3062,20 @@ class MotionPanel(QWidget):
         conv = {n: (c["direction"], c["vitesse"]) for n, c in (bl.get("convoyeurs") or {}).items()}
         B = particles.Beads(m, parts, bl["sources"], sinks=bl.get("puits") or (),
                             conveyors=conv, gravity=gravity)
-        prog = self._busy(_T("Billes…"))
+        T_end = rows[-1]["t"] - rows[0]["t"] if rows else 0.0
+
+        def live():
+            # the beads as they are poured, on the parts at that moment
+            t = getattr(B, "live_t", None)
+            if t is None or not len(rows):
+                return
+            k = int(np.clip(np.searchsorted([r["t"] for r in rows], t), 0, len(rows) - 1))
+            if self.solid_view:
+                self._solid_place(np.asarray(rows[k]["x"], float))
+            self._live_beads = (B.X.astype(np.float32), B.r.astype(np.float32), B.col.copy())
+            self._sim_beads = dict(colors=[s_.color for s_ in B.sources])
+            self.app.viewport.repaint()
+        prog = self._live_progress(_T("Billes…"), T_end, live)
         try:
             out = B.run(rows, progress=prog)
         finally:
@@ -3111,22 +3124,71 @@ class MotionPanel(QWidget):
         step.close = dlg.close
         return step
 
-    def _sim_progress(self, steps):
-        """A progress window for a long run (shocks: thousands of steps),
-        so the window keeps answering; None for a short one or headless."""
-        if steps < 2000 or not self.isVisible():
+    def _live_progress(self, label, seconds, live=None):
+        """Progress while a simulation computes (0.10): a window over the
+        bottom of the 3D view with the time reached and the time left, and
+        the parts (``live()`` → pose, beads) moving in the view as they are
+        computed — something to watch, not a still screen. Its callback
+        ``(i, n)`` keeps everything answering; None headless."""
+        if not self.isVisible():
             return None
+        import time as _time
         from PySide6.QtWidgets import QProgressDialog
-        dlg = QProgressDialog(_T("Simulation dynamique…"), _T("Annuler"), 0, steps, self)
+        dlg = QProgressDialog(label, _T("Annuler"), 0, 1000, self)
         dlg.setWindowModality(Qt.WindowModal)
-        dlg.setMinimumDuration(400)
+        dlg.setMinimumDuration(0)
+        dlg.setMinimumWidth(420)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        try:
+            vp = self.app.viewport
+            g = vp.mapToGlobal(vp.rect().center())
+            dlg.adjustSize()
+            dlg.move(g.x() - dlg.width() // 2, vp.mapToGlobal(vp.rect().bottomLeft()).y()
+                     - dlg.height() - 40)
+        except Exception:
+            pass
+        dlg.setValue(0)
+        dlg.show()
+        QApplication.processEvents()
+        t0 = _time.monotonic()
+        shown = [0.0]
 
         def step(i, n):
-            dlg.setValue(i)
+            f = i / max(n, 1)
+            dlg.setValue(int(1000 * f))
+            el = _time.monotonic() - t0
+            left = el * (1 - f) / f if f > 0.02 else None
+            txt = label + "\n" + _T("{t} s simulées sur {T} s", t=f"{f * seconds:.1f}", T=f"{seconds:g}")
+            if left is not None:
+                txt += " — " + _T("encore environ {s} s", s=f"{left:.0f}")
+            dlg.setLabelText(txt)
+            if live is not None and _time.monotonic() - shown[0] > 0.4:
+                shown[0] = _time.monotonic()
+                try:
+                    live()
+                except Exception:
+                    pass
             QApplication.processEvents()
             return not dlg.wasCanceled()
-        step.close = dlg.close
+
+        def close():
+            dlg.close()
+            self._live_beads = None
+        step.close = close
         return step
+
+    def _sim_progress(self, steps, seconds=None, dyn=None):
+        """A progress window for a run; with the dynamics, the parts move
+        in the view as they are computed."""
+        if not self.isVisible():
+            return None
+
+        def live():
+            if dyn is not None and getattr(dyn, "live", None) is not None and self.solid_view:
+                self._solid_place(np.asarray(dyn.live[1], float))
+                self.app.viewport.repaint()
+        return self._live_progress(_T("Simulation dynamique…"), seconds or 0.0, live)
 
     def _chocs(self):
         sim = (self.sample_info or {}).get("simulation")
@@ -3804,8 +3866,11 @@ class MotionPanel(QWidget):
             for X, Y, o in zip(px, py, ok):
                 if o:
                     _draw_cog(painter, QPointF(X, Y), 6.0)
-        # beads (0.10)
-        if self.frames:
+        # beads (0.10): as they are computed, then those of the frame shown
+        lb = getattr(self, "_live_beads", None)
+        if lb is not None and len(lb[0]):
+            self._draw_beads(painter, lb)
+        elif self.frames:
             kb = int(round(self.t * (len(self.frames) - 1)))
             bd = self.frames[kb].get("billes")
             if bd is not None and len(bd[0]):

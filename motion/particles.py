@@ -348,7 +348,8 @@ class Beads:
                 break
             self.step(t, dt, frames)
             t += dt
-            if progress is not None and s % 20 == 0:
+            if progress is not None and s % 10 == 0:
+                self.live_t = t
                 if progress(s, steps) is False:
                     return None
         while kf < len(rows):

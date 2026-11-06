@@ -892,14 +892,20 @@ class Dynamics:
         rows = []
         t = t0
         steps = int(round(seconds / dt))
+        import time as _time
+        last = _time.monotonic()
+        self.live = (t, x)                     # the pose reached: shown while computing
         for i in range(steps + 1):
             if i % every == 0 or i == steps:
                 ke, pe = self.energy(x, u)
                 rows.append(dict(t=t, x=x.copy(), u=u.copy(), ke=ke, pe=pe))
             if i == steps:
                 break
-            if progress is not None and i % 100 == 0 and progress(i, steps) is False:
-                return None
+            if progress is not None and (i % 100 == 0 or _time.monotonic() - last > 0.12):
+                last = _time.monotonic()
+                self.live = (t, x)
+                if progress(i, steps) is False:
+                    return None
             x, u, a, lam = self.step(x, u, t, dt)
             if rows and rows[-1]["t"] == t:
                 rows[-1]["lam"] = lam

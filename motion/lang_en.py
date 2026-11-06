@@ -578,4 +578,8 @@ EN = {
         '{p}: no longer a bin',
     '{n} arrivées dans {p}':
         '{n} came to {p}',
+    '{t} s simulées sur {T} s':
+        '{t} s simulated of {T} s',
+    'encore environ {s} s':
+        'about {s} s left',
 }

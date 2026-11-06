@@ -20,6 +20,11 @@
   (−7.7° → +12.5°).
 
 ### Added
+- **Simulation you can watch**: while a dynamics (or beads) computes, a
+  window over the bottom of the 3D view gives the time simulated and the
+  time left, and the parts — and the beads — move in the view as they are
+  computed (no more still screen; there was no progress at all under
+  2000 steps).
 - **Beads**: « Billes » pours small beads among the parts — diameter (or a
   range of diameters: stones to sort), number, rate, material (glass,
   steel, plastic, rock, wood, sand), mouth width, start, colour. They fall,
