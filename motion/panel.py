@@ -67,13 +67,29 @@ def _detail(text):
         for fr, es in ((r"\bjeu\b", "holgura"), (r"\bportée\b", "longitud de apoyo"),
                        (r"\bappuis plans\b", "apoyos planos"), (r"\bappuis\b", "apoyos"),
                        (r"\bdents\b", "dientes"), (r"\brapport\b", "relación"), (r"\bet\b", "y"),
-                       (r"— axe « (.*?) » avec « (.*?) »", r"— eje « \1 » con « \2 »")):
+                       (r"— axe « (.*?) » avec « (.*?) »", r"— eje « \1 » con « \2 »"),
+                       (r"\bcouronne\b", "corona"), (r"\bsatellite\b", "satélite"),
+                       (r"\bsur\b", "sobre"), (r"\bdans\b", "en"),
+                       (r"tenue dans le bâti", "sujeta en el bastidor"),
+                       (r"un axe le traverse : il coulisse", "un eje lo atraviesa: desliza"),
+                       (r"l'alésage de « (.*?) » est décalé de (.*?) : le pivot suit l'arbre de "
+                        r"« (.*?) » \(modèle à corriger \?\)",
+                        r"el alojamiento de « \1 » está desplazado \2: el pivote sigue el eje de "
+                        r"« \3 » (¿corregir el modelo?)")):
             text = re.sub(fr, es, text)
         return text
     for fr, en in ((r"\bjeu\b", "gap"), (r"\bportée\b", "bearing length"),
                    (r"\bappuis plans\b", "flat contacts"), (r"\bappuis\b", "contacts"),
                    (r"\bdents\b", "teeth"), (r"\brapport\b", "ratio"), (r"\bet\b", "and"),
-                   (r"— axe « (.*?) » avec « (.*?) »", r"— pin « \1 » with « \2 »")):
+                   (r"— axe « (.*?) » avec « (.*?) »", r"— pin « \1 » with « \2 »"),
+                   (r"tenue dans le bâti", "held in the frame"),
+                   (r"un axe le traverse : il coulisse", "a pin crosses it: it slides"),
+                   (r"l'alésage de « (.*?) » est décalé de (.*?) : le pivot suit l'arbre de "
+                    r"« (.*?) » \(modèle à corriger \?\)",
+                    r"the bore of « \1 » is off by \2: the pivot follows the shaft of "
+                    r"« \3 » (model to fix?)"),
+                   (r"\bcouronne\b", "ring"), (r"\bsatellite\b", "planet"),
+                   (r"\bsur\b", "on"), (r"\bdans\b", "in")):
         text = re.sub(fr, en, text)
     return text
 
@@ -3293,6 +3309,7 @@ class MotionPanel(QWidget):
             lines += ["  " + p for p in rep["problems"][:60]]
             if len(rep["problems"]) > 60:
                 lines.append("  …")
+        lines += ["ℹ " + n for n in rep.get("notes") or []]
         if w is not None:
             lines.append(_T("Jeu le plus faible : {d} mm entre {a} ({ga}) et {b} ({gb}) à {p} %.",
                            d=f"{w['distance'] * 1000:.1f}", a=w['a'], ga=w['box_a'],
@@ -3314,6 +3331,8 @@ class MotionPanel(QWidget):
             # the parts no motor leads (a crown pushed by rollers): how far
             # each one went, so that a small swing is read, not guessed
             try:
+                if solver.dof(m) <= len(m.drivers):
+                    raise StopIteration          # every part led by the motors: none free
                 drv = {j.name for j, _lo, _hi in m.drivers}
                 coupled = {c.jb.name for c in m.joints if c.kind == "coupling"} | \
                           {c.ja.name for c in m.joints if c.kind == "coupling"}
@@ -3597,7 +3616,7 @@ class MotionPanel(QWidget):
             have = {frozenset((j["a"], j["b"])) for j in self.data["joints"]}
             props = [x for x in props
                      if not (x.a in body and x.b in body and frozenset((body[x.a], body[x.b])) in have)
-                     or x.kind == "gears"]
+                     or x.kind in ("gears", "planetary")]
         return names, props, frame
 
     def apply_scan(self, parts, frame, proposals):
@@ -3607,7 +3626,8 @@ class MotionPanel(QWidget):
         d, made = doc.apply_detection(self.data, parts, frame, proposals)
         d = self._guess_materials(d, [u for b in d["bodies"] for u in b["groups"]])
         n = {k: sum(1 for x in proposals if x.kind == k)
-             for k in ("pivot", "slider", "ball", "lock", "gears")}
+             for k in ("pivot", "slider", "ball", "lock", "gears", "planetary")}
+        n["gears"] += n["planetary"]
         msg = _T("Détection : {p} pivot(s), {s} glissière(s), {g} engrenage(s) ; pièce fixe : {f}.",
                 p=n['pivot'], s=n['slider'], g=n['gears'], f=parts[frame][0])
         if n["ball"]:
@@ -3654,9 +3674,10 @@ class MotionPanel(QWidget):
         tree.setHeaderLabels([_T("Liaison"), _T("Pièces"), _T("Détail"), _T("Confiance")])
         tree.setRootIsDecorated(False)
         label = {"pivot": _T("Pivot"), "slider": _T("Glissière"), "ball": _T("Rotule"),
-                 "lock": _T("Encastrement"), "gears": _T("Engrenage")}
+                 "lock": _T("Encastrement"), "gears": _T("Engrenage"),
+                 "planetary": _T("Train épicycloïdal")}
         icon = {"pivot": "pivot", "slider": "slider", "ball": "ball", "lock": "lock",
-                "gears": "coupling"}
+                "gears": "coupling", "planetary": "coupling"}
         items = []
         for x in props:
             it = QTreeWidgetItem([label[x.kind], f"{parts[x.a][0]} ↔ {parts[x.b][0]}",

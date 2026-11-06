@@ -319,6 +319,23 @@ def apply_detection(data, parts, frame, proposals):
             r = -r
         d, cn = add_coupling(d, ja, jb, r, name=unique_name(d, _T("engrenage") + " "))
         made.append(cn)
+    for x in proposals:
+        if x.kind != "planetary":
+            continue
+        # the planet turns on its carrier -zr/zp times the carrier turns
+        # (the ring held): the carrier's pivot leads the planet's
+        pc, pp = x.extra["pivot_carrier"], x.extra["pivot_planet"]
+        if id(pc) not in by_prop or id(pp) not in by_prop:
+            continue
+        ja, a0, a1, ax_a = by_prop[id(pc)]
+        jb, b0, b1, ax_b = by_prop[id(pp)]
+        car, pla = x.extra["carrier"], x.extra["planet"]
+        r = x.extra["ratio"]
+        r *= (1 if a1 == car else -1) * (1 if (b0 == car and b1 == pla) else -1)
+        if ax_a @ ax_b < 0:
+            r = -r
+        d, cn = add_coupling(d, ja, jb, r, name=unique_name(d, _T("train épicycloïdal") + " "))
+        made.append(cn)
     return d, made
 
 

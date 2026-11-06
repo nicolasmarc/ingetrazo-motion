@@ -251,3 +251,80 @@ def test_an_arm_bolted_through_a_slot_is_a_lock():
     # no slot round the bolt (it stands in the air): still a pivot
     wheel.points = np.array([w for w in walls if w[0] < 0.01] + [[-0.02, 0, 0]])
     assert _clamped(wheel, arm, pin) is None
+
+
+def _toothed(z, r_tip, r_root, centre=(0.0, 0.0, 0.0), inner=False, rim=None, ys=(-0.004, 0.004)):
+    """Points of a toothed outline about y (``inner``: the teeth point in,
+    with an outer rim of radius ``rim``)."""
+    pts = []
+    c = np.asarray(centre, float)
+    for k in range(z):
+        for da, hi in ((-0.35, False), (-0.15, True), (0.15, True), (0.35, False)):
+            t = 2 * math.pi * (k + da) / z
+            r = (r_tip if hi else r_root) if not inner else (r_root if hi else r_tip)
+            for y in ys:
+                pts.append(c + (r * math.cos(t), y, r * math.sin(t)))
+    if rim:
+        for t in np.linspace(0, 2 * math.pi, 90, endpoint=False):
+            for y in ys:
+                pts.append(c + (rim * math.cos(t), y, rim * math.sin(t)))
+    return np.array(pts)
+
+
+def test_internal_teeth_of_a_ring_gear():
+    P = _toothed(40, 0.038, 0.042, inner=True, rim=0.05)
+    got = detect.inner_teeth_of(P, np.zeros(3), np.array([0.0, 1.0, 0.0]))
+    assert got is not None and got[0] == 40 and abs(got[1] - 0.038) < 1e-3
+    # an external gear has no internal teeth
+    assert detect.inner_teeth_of(_toothed(20, 0.022, 0.018), np.zeros(3), np.array([0.0, 1.0, 0.0])) is None
+
+
+def test_planet_in_a_ring_on_a_crank_is_a_planetary_train():
+    # Cardan's circles: ring 40 teeth held, planet 20 teeth on a crank pin
+    # 20 mm off the ring's axis: the planet turns -2 times the crank on it
+    from motion.detect import Cylinder, Part, Proposal, _planetary
+    Y = np.array([0.0, 1.0, 0.0])
+    ring = Part("ring", "couronne", cylinders=[Cylinder(np.zeros(3), Y, 0.05, -0.004, 0.004, True, 360, 0)],
+                points=_toothed(40, 0.038, 0.042, inner=True, rim=0.05))
+    planet = Part("planet", "satellite", points=_toothed(20, 0.022, 0.018, centre=(0.02, 0, 0)))
+    crank = Part("crank", "manivelle", points=np.array([[0, 0.01, 0], [0.02, 0.01, 0]]))
+    frame = Part("frame", "bâti", points=np.array([[0, 0.02, 0]]))
+    for p in (ring, planet, crank, frame):
+        p.lo, p.hi = p.points.min(0), p.points.max(0)
+    pin = Proposal("pivot", "crank", "planet", np.array([0.02, 0, 0]), Y, 0.9, "")
+    main = Proposal("pivot", "frame", "crank", np.zeros(3), Y, 0.9, "")
+    got = _planetary([ring, planet, crank, frame], [pin, main], 0.2)
+    assert len(got) == 1 and got[0].kind == "planetary"
+    x = got[0]
+    assert x.extra["ratio"] == -2.0 and x.extra["carrier"] == "crank" and x.extra["planet"] == "planet"
+    # not meshing (the pin 5 mm further out): nothing
+    pin.point = np.array([0.025, 0, 0])
+    planet.points = _toothed(20, 0.022, 0.018, centre=(0.025, 0, 0))
+    assert not _planetary([ring, planet, crank, frame], [pin, main], 0.2)
+
+
+def test_planetary_train_turns_the_planet_twice_back_on_its_crank():
+    # the planet's pin on its crank's circle moves on a straight line
+    from motion.detect import Proposal
+    Y = np.array([0.0, 1.0, 0.0])
+    d = doc.empty()
+    pins = {"bâti": [[0, 0.02, 0]], "manivelle": [[0, 0.01, 0], [0.02, 0.01, 0]],
+            "satellite": [[0.02, 0, 0.0]], "couronne": [[0.05, 0, 0]]}
+    main = Proposal("pivot", "bâti", "manivelle", np.zeros(3), Y, 0.9, "")
+    pin = Proposal("pivot", "manivelle", "satellite", np.array([0.02, 0, 0]), Y, 0.9, "")
+    lock = Proposal("lock", "bâti", "couronne", np.zeros(3), Y, 0.6, "")
+    pl = Proposal("planetary", "couronne", "satellite", np.zeros(3), Y, 0.8, "",
+                  dict(pivot_carrier=main, pivot_planet=pin, ratio=-2.0, ring="couronne",
+                       carrier="manivelle", planet="satellite"))
+    d, made = doc.apply_detection(d, {k: (k, [k]) for k in pins}, "bâti", [main, pin, lock, pl])
+    cpl = next(j for j in d["joints"] if j["kind"] == "coupling")
+    d = doc.add_driver(d, cpl["ja"], 0.0, 2 * math.pi)
+    m, problems = doc.build(d, lambda u: np.array(pins[u]))
+    F = solver.sweep(m, 37)
+    sat = next(b for b in m.bodies if b.name == "satellite")
+    # a point of the planet on its pitch circle (radius 20 mm), at the
+    # ring's centre at the start, half a turn from where the planet meets
+    # the ring: on the ring's diameter across, a straight line
+    P = np.array([sat.world_point(m.pose(f["x"], sat), np.zeros(3)) for f in F])
+    assert all(f["ok"] for f in F)
+    assert np.max(np.abs(P[:, 0])) < 1e-6 and np.ptp(P[:, 2]) > 0.079

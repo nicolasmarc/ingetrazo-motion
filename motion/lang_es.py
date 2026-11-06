@@ -820,4 +820,12 @@ ES = {
         '{t} s simulados de {T} s',
     'encore environ {s} s':
         'quedan unos {s} s',
+    'train épicycloïdal':
+        'tren epicicloidal',
+    'Train épicycloïdal':
+        'Tren epicicloidal',
+    '{n} position(s) approchée(s) à {r} mm près : des liaisons en demandent un peu plus que le modèle ne donne (liaisons redondantes, cotes légèrement décalées).':
+        '{n} posición(es) alcanzada(s) con {r} mm de margen: algunas uniones piden algo más de lo que da el modelo (uniones redundantes, cotas algo desplazadas).',
+    'collision {a} / {b} : {n} positions, de {p0} % à {p1} %':
+        'colisión {a} / {b}: {n} posiciones, de {p0} % a {p1} %',
 }

@@ -582,4 +582,12 @@ EN = {
         '{t} s simulated of {T} s',
     'encore environ {s} s':
         'about {s} s left',
+    'train épicycloïdal':
+        'planetary train',
+    'Train épicycloïdal':
+        'Planetary train',
+    '{n} position(s) approchée(s) à {r} mm près : des liaisons en demandent un peu plus que le modèle ne donne (liaisons redondantes, cotes légèrement décalées).':
+        '{n} position(s) reached within {r} mm: some joints ask a little more than the model gives (redundant joints, slightly offset dimensions).',
+    'collision {a} / {b} : {n} positions, de {p0} % à {p1} %':
+        'collision {a} / {b}: {n} positions, from {p0} % to {p1} %',
 }

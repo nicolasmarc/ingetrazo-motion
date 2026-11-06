@@ -19,6 +19,20 @@
   (91 s in 0.9 essai 16, ~250 s before); the same swing of the Couronne
   (−7.7° → +12.5°).
 
+### Added (detection)
+- **Planetary trains**: a wheel turning in a ring gear (internal teeth) on
+  a pin of a carrier turning about the ring's axis — the planet turns
+  -zr/zp times the carrier on it (Cardan's 2 : 1 straight line, epicyclic
+  reducers); the ring with no joint of its own is held in the frame.
+- A piston in a faceted bore (its facets taken as planes): a slider when a
+  pin crosses it, else a pivot; a shaft in a bore of its size a little off
+  axis: the pivot on the shaft, with the offset said (model to fix).
+- The frame: by far the largest part (a housing round the rest).
+- The report: one line per pair of parts that collide (its range), not
+  one per position; positions reached within half a millimetre (redundant
+  joints, slightly offset dimensions) said once as a note; no "free part"
+  lines when the motors lead every part.
+
 ### Fixed
 - The panel without gaps: closed sections stay together at the top; the
   report, open, takes the room left; closed, the list of parts takes it;

@@ -86,7 +86,7 @@ class Part:
 
 @dataclass
 class Proposal:
-    kind: str                         # "pivot" | "slider" | "ball" | "lock" | "gears"
+    kind: str                         # "pivot" | "slider" | "ball" | "lock" | "gears" | "planetary"
     a: object                         # part keys (gears: the two gear parts)
     b: object
     point: np.ndarray = None
@@ -786,6 +786,167 @@ def _gears(parts, pivots, size):
     return out
 
 
+def inner_teeth_of(points, centre, axis, min_teeth=6):
+    """(z, tip radius, root radius) of internal teeth about ``axis`` (a
+    ring gear: the teeth point in; tip = the smallest radius), or None."""
+    u, v = _basis(axis)
+    P = np.asarray(points, float)
+    d = P - centre
+    d = d - np.outer(d @ axis, axis)
+    r = np.hypot(d @ u, d @ v)
+    ang = np.arctan2(d @ v, d @ u)
+    if not len(r):
+        return None
+    keep = r < 0.97 * r.max()                   # the inside, not the outer rim
+    r, ang = r[keep], ang[keep]
+    if len(r) < 8 * min_teeth:
+        return None
+    nb = 1440
+    prof = np.full(nb, np.inf)
+    k = ((ang + np.pi) / (2 * np.pi) * nb).astype(int) % nb
+    np.minimum.at(prof, k, r)
+    filled = np.isfinite(prof)
+    if filled.sum() < 4 * min_teeth:
+        return None
+    idx = np.nonzero(filled)[0]
+    prof = np.interp(np.arange(nb), idx, prof[idx], period=nb)
+    rmin, rmax = prof.min(), prof.max()
+    if rmax <= 0 or (rmax - rmin) / rmax < 0.02 or (rmax - rmin) / rmax > 0.35:
+        return None
+    above = prof > 0.5 * (rmin + rmax)
+    z = int(np.sum(above & ~np.roll(above, 1)))
+    if z < min_teeth:
+        return None
+    F = np.abs(np.fft.rfft(prof - prof.mean())) ** 2
+    total = F[1:].sum()
+    if total <= 0 or (F[max(z - 1, 1):z + 2].sum() + F[2 * z - 1:2 * z + 2].sum()) / total < 0.45:
+        return None
+    return z, float(rmin), float(rmax)
+
+
+def _ring_axis(part):
+    """Axis of a part round about one axis (a ring gear): its largest
+    cylinder, convex or bore."""
+    cs = sorted(part.cylinders, key=lambda c: -c.radius)
+    return (np.asarray(cs[0].point, float), _unit(cs[0].axis)) if cs else None
+
+
+def _planetary(parts, pivots, size):
+    """A wheel turning inside a ring gear (internal teeth) on a pin of a
+    carrier that turns about the ring's axis: a planetary train, the ring
+    held. The planet turns on the carrier ``-zr/zp`` times the carrier
+    (Cardan's 2 : 1, a straight-line motion; an epicyclic reducer)."""
+    by = {p.key: p for p in parts}
+    out = []
+    for R in parts:
+        ra = _ring_axis(R)
+        if ra is None or R.points is None or not len(R.points):
+            continue
+        rc, rx = ra
+        tr = inner_teeth_of(R.points, rc, rx)
+        if not tr:
+            continue
+        zr, rtip, rroot = tr
+        for X in pivots:
+            if abs(abs(X.axis @ rx) - 1) > 1e-3:
+                continue
+            for P_key, C_key in ((X.a, X.b), (X.b, X.a)):
+                if R.key in (P_key, C_key):
+                    continue
+                P = by[P_key]
+                tp = teeth_of(P.points, X.point, X.axis)
+                if not tp:
+                    continue
+                zp, ptip, proot = tp
+                d = np.asarray(X.point) - rc
+                e = np.linalg.norm(d - (d @ rx) * rx)
+                depth = 0.5 * ((rroot - rtip) + (ptip - proot))
+                pitch_r, pitch_p = 0.5 * (rtip + rroot), 0.5 * (ptip + proot)
+                if abs(e - (pitch_r - pitch_p)) > 0.6 * depth + 2e-4 * size:
+                    continue
+                # the carrier turns about the ring's axis
+                Y = None
+                for y in pivots:
+                    if C_key not in (y.a, y.b) or y is X:
+                        continue
+                    if abs(abs(y.axis @ rx) - 1) > 1e-3:
+                        continue
+                    w = np.asarray(y.point) - rc
+                    if np.linalg.norm(w - (w @ rx) * rx) < max(0.05 * rtip, 5e-4):
+                        Y = y
+                        break
+                if Y is None:
+                    continue
+                out.append(Proposal(
+                    "planetary", R.key, P_key, rc, rx, 0.8,
+                    f"couronne {zr} dents, satellite {zp} dents sur « {by[C_key].name} » "
+                    f"(rapport {zr}/{zp})",
+                    dict(pivot_carrier=Y, pivot_planet=X, ratio=-zr / zp, ring=R.key,
+                         carrier=C_key, planet=P_key)))
+    return out
+
+
+def _round_in(p, q, size):
+    """A round part of ``p`` held all round by ``q`` whose bore is not a
+    cylinder of its own (faceted, its facets taken as planes): a piston in
+    its bore — it slides when a pin crosses it — or a shaft in its seat."""
+    best = None
+    for c in p.cylinders:
+        if not c.convex or c.radius < 1e-3:
+            continue
+        if not _held_round(c, q):
+            continue
+        ax = _unit(c.axis)
+        w = q.points - np.asarray(c.point)
+        t = w @ ax
+        rad = np.linalg.norm(w - np.outer(t, ax), axis=1)
+        t_lo, t_hi = min(c.t0, c.t1), max(c.t0, c.t1)
+        on = (t > t_lo) & (t < t_hi) & (rad < 1.6 * c.radius)
+        if not on.any() or np.min(rad[on]) < 0.9 * c.radius:
+            continue                              # q's own matter inside: not a bore
+        if best is None or c.radius > best.radius:
+            best = c
+    if best is None:
+        return None
+    ax = _unit(best.axis)
+    pin = any(cc.convex and abs(_unit(cc.axis) @ ax) < 0.1 for cc in p.cylinders)
+    kind = "slider" if pin else "pivot"
+    det = (f"Ø {2000 * best.radius:.1f} mm dans « {q.name} »"
+           + (" ; un axe le traverse : il coulisse" if pin else ""))
+    return Proposal(kind, q.key, p.key, np.asarray(best.point, float), ax, 0.6, det,
+                    dict(radius=best.radius))
+
+
+def _offset_pivot(p, q, size):
+    """A shaft in a bore of the same size a little off its axis (a model
+    not quite right): the pivot on the shaft's axis, said."""
+    for s_part, h_part in ((p, q), (q, p)):
+        for sh in s_part.cylinders:
+            if not sh.convex:
+                continue
+            for h in h_part.cylinders:
+                if h.convex or abs(abs(sh.axis @ h.axis) - 1) > 1e-3:
+                    continue
+                if abs(h.radius - sh.radius) > 0.1 * sh.radius:
+                    continue
+                d = h.point - sh.point
+                off = np.linalg.norm(d - (d @ sh.axis) * sh.axis)
+                if off <= max(1e-4, 0.02 * sh.radius) or off > 0.5 * sh.radius:
+                    continue
+                th = d @ sh.axis
+                sign = 1.0 if sh.axis @ h.axis > 0 else -1.0
+                h0, h1 = sorted((th + sign * h.t0, th + sign * h.t1))
+                if min(sh.t1, h1) - max(sh.t0, h0) <= 0.05 * sh.radius:
+                    continue
+                det = (f"Ø {2000 * sh.radius:.1f} mm — l'alésage de « {h_part.name} » est "
+                       f"décalé de {1000 * off:.1f} mm : le pivot suit l'arbre de "
+                       f"« {s_part.name} » (modèle à corriger ?)")
+                return Proposal("pivot", p.key, q.key, np.asarray(sh.point, float),
+                                _unit(sh.axis), 0.5, det,
+                                dict(radius=sh.radius, offset=off, shaft=s_part.key))
+    return None
+
+
 def _held_round(c, o_part, s_part=None):
     """Shaft ``c`` held by ``o_part``: its points close round the shaft on
     both sides, along it (a slot or a hole). With ``s_part``, along the
@@ -860,9 +1021,16 @@ def scan(parts, size=None):
             if not _near(p, q, gap):
                 continue
             pv = _pivots(p, q, size) or _filled_bore(p, q, size)
+            rd = None
+            if not pv:
+                rd = _round_in(p, q, size) or _round_in(q, p, size)
+                if rd is not None and rd.kind == "pivot":
+                    pv, rd = rd, None
+            if not pv:
+                pv = _offset_pivot(p, q, size)
             if pv:
                 props.append(pv)
-            sl = _slider(p, q, size)
+            sl = rd or _slider(p, q, size)
             if sl and not pv:
                 props.append(sl)
             bl = _ball(p, q, size) if not pv else None
@@ -894,18 +1062,33 @@ def scan(parts, size=None):
     pivots = [x for x in pivots if id(x) not in gone and find(x.a) != find(x.b)]
     props = pivots + [lk for _, lk in locks] + [x for x in props if x.kind != "pivot"]
     props += _gears(parts, pivots, size)
+    planets = _planetary(parts, pivots, size)
+    props += planets
     geared = {frozenset((x.a, x.b)) for x in props if x.kind == "gears"}
     props = [x for x in props if not (x.kind == "lock" and frozenset((x.a, x.b)) in geared)]
     # frame: the part the most joints lean on, then the largest
     deg = {p.key: 0 for p in parts}
     for x in props:
-        if x.kind != "gears":
+        if x.kind not in ("gears", "planetary"):
             deg[x.a] += 1
             deg[x.b] += 1
     vol = {p.key: abs(p.volume) if p.volume else float(np.prod(np.maximum(p.hi - p.lo, 1e-9)))
            for p in parts}
     frame = max(deg, key=lambda k: (deg[k], vol[k])) if deg else None
-    props.sort(key=lambda x: ({"pivot": 0, "lock": 1, "slider": 2, "ball": 3, "gears": 4}[x.kind],
+    # a housing round the rest: by far the largest part is the frame
+    if len(vol) > 1:
+        big = sorted(vol, key=lambda k: -vol[k])
+        if vol[big[0]] > 5 * vol[big[1]] and deg.get(big[0], 0) > 0:
+            frame = big[0]
+    # a ring gear with no joint of its own, in a planetary train: held in the frame
+    for x in planets:
+        ring = x.extra["ring"]
+        if ring != frame and not any(ring in (y.a, y.b) for y in props
+                                     if y.kind not in ("gears", "planetary")):
+            props.append(Proposal("lock", frame, ring, x.point, x.axis, 0.6,
+                                  f"couronne « {by[ring].name} » tenue dans le bâti", {}))
+    props.sort(key=lambda x: ({"pivot": 0, "lock": 1, "slider": 2, "ball": 3, "gears": 4,
+                               "planetary": 5}[x.kind],
                               -x.score))
     return props, frame
 

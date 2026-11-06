@@ -327,6 +327,8 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contac
     returns False the validation stops and returns None."""
     from .solver import sweep
     rows, worst, problems = [], None, []
+    approx = []
+    hits_at = {}                          # (a, b): the % where they collide
     held = _held_pairs(mech) if contacts else None
     if poses is None:
         half = (lambda i, n: progress(i, 2 * n)) if progress is not None else None
@@ -363,9 +365,15 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contac
         rows.append(row)
         pct = round(100 * st["t"])
         if not st["ok"]:
-            problems.append(_T("{p} % : position non atteinte (résidu {r})", p=pct, r=f"{st['res']:.2e}"))
+            if st["res"] <= 5e-4:
+                # joints that ask a hair more than the model gives (a pin
+                # 0.1 mm off a slide's line): reached that close, said once
+                approx.append(st["res"])
+            else:
+                problems.append(_T("{p} % : position non atteinte (résidu {r})", p=pct,
+                                   r=f"{st['res']:.2e}"))
         for a, b in row["hits"]:
-            problems.append(_T("{p} % : collision {a} / {b}", p=pct, a=a, b=b))
+            hits_at.setdefault((a, b), []).append(pct)
         if poses is None:                 # in a simulation the stops act: not a fault
             for name, v, lim in row["limits"]:
                 problems.append(_T("{p} % : butée dépassée {name} = {v}", p=pct, name=name, v=f"{v:.4g}"))
@@ -391,4 +399,17 @@ def validate(mech, steps=51, jeu_min=0.0, ignore_joined=True, poses=None, contac
                                       p=pct, d=f"{c['distance'] * 1000:.1f}",
                                       j=f"{jeu_min * 1000:.1f}", a=c['a'], ga=c['box_a'],
                                       b=c['b'], gb=c['box_b']))
-    return dict(steps=rows, worst=worst, ok=not problems, problems=problems)
+    # one line per pair of parts: where they collide (a part through its
+    # housing all the way round: one line, not one per position)
+    for (a, b), ps in hits_at.items():
+        if len(ps) == 1:
+            problems.append(_T("{p} % : collision {a} / {b}", p=ps[0], a=a, b=b))
+        else:
+            problems.append(_T("collision {a} / {b} : {n} positions, de {p0} % à {p1} %",
+                               a=a, b=b, n=len(ps), p0=ps[0], p1=ps[-1]))
+    notes = []
+    if approx:
+        notes.append(_T("{n} position(s) approchée(s) à {r} mm près : des liaisons en demandent "
+                        "un peu plus que le modèle ne donne (liaisons redondantes, cotes "
+                        "légèrement décalées).", n=len(approx), r=f"{1000 * max(approx):.2f}"))
+    return dict(steps=rows, worst=worst, ok=not problems, problems=problems, notes=notes)
