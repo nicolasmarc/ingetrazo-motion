@@ -399,10 +399,11 @@ class _Section(QWidget):
     its arrow, the content in a light frame; open or closed as last left
     (``key`` in the settings)."""
 
-    def __init__(self, title, key, default, get, put):
+    def __init__(self, title, key, default, get, put, toggled=None):
         super().__init__()
         from PySide6.QtWidgets import QFrame
         self._key, self._put = key, put
+        self._toggled = toggled
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 2, 0, 2)
         v.setSpacing(2)
@@ -435,7 +436,13 @@ class _Section(QWidget):
             return
         self.head.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
         self.frame.setVisible(on)
+        from PySide6.QtWidgets import QSizePolicy
+        # closed: its title's height, no more (the panel had gaps between
+        # closed sections, the report pushed to the bottom)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred if on else QSizePolicy.Maximum)
         self._put(self._key, on)
+        if self._toggled is not None:
+            self._toggled(on)
 
     def setTitle(self, text):
         self.head.setText(text)
@@ -640,6 +647,7 @@ class MotionPanel(QWidget):
         self.status = QLabel("")
         self.status.setWordWrap(True)
         self.status.setStyleSheet("QLabel { padding: 2px 4px; border-radius: 3px; }")
+        self.status.setVisible(False)
         lay.addWidget(self.status)
         # the rest in folding sections, as IngeTrazo's own panels: a bold
         # title with its arrow, the settings in a light frame under it, each
@@ -973,6 +981,10 @@ class MotionPanel(QWidget):
         self.sec_report.body.addWidget(self.tabs, 1)
         lay.addWidget(self.sec_report, 1)
         lay.addStretch(0)
+        self._main_lay = lay
+        self.sec_report._toggled = lambda on: self._report_room()
+        self.sec_mech._toggled = lambda on: self._report_room()
+        self._report_room()
 
     @staticmethod
     def _spin():
@@ -1018,12 +1030,33 @@ class MotionPanel(QWidget):
             QSettings("IngeTrazo", "motion").setValue("hauteur_liste", int(h))
         except Exception:
             pass
+        self._report_room()
+
+    def _report_room(self):
+        """The report open: it takes the room left; closed: the sections
+        stay together at the top, the room left below them."""
+        lay = getattr(self, "_main_lay", None)
+        if lay is None:
+            return
+        rep = self.sec_report.head.isChecked()
+        mech = self.sec_mech.head.isChecked()
+        grow_list = mech and not rep            # the room left: to the list of parts
+        lay.setStretchFactor(self.sec_report, 1 if rep else 0)
+        lay.setStretchFactor(self.sec_mech, 1 if grow_list else 0)
+        lay.setStretch(lay.count() - 1, 0 if (rep or grow_list) else 1)
+        h = self._list_height()
+        if grow_list:
+            self.tree.setMinimumHeight(h)
+            self.tree.setMaximumHeight(16777215)
+        else:
+            self.tree.setFixedHeight(h)
 
     def say(self, text):
         first = getattr(self, "_said_first", "")
         if first and not text.startswith(first):  # what the command did on the way
             text = first + text
         self.status.setText(text)
+        self.status.setVisible(bool(text))       # nothing said: no empty line
         win = getattr(self.app, "window", None)
         bar = getattr(win, "statusBar", None)
         try:

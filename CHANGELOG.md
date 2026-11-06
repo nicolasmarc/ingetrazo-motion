@@ -20,6 +20,9 @@
   (−7.7° → +12.5°).
 
 ### Fixed
+- The panel without gaps: closed sections stay together at the top; the
+  report, open, takes the room left; closed, the list of parts takes it;
+  the message line shows only when there is something said.
 - A part (or a joint's two parts) clicked in the list lights up again in
   the model with IngeTrazo 0.6 (the selection was set, but drawn from caches
   that needed a view-only step to refresh).
