@@ -3070,11 +3070,10 @@ class MotionPanel(QWidget):
             if t is None or not len(rows):
                 return
             k = int(np.clip(np.searchsorted([r["t"] for r in rows], t), 0, len(rows) - 1))
-            if self.solid_view:
-                self._solid_place(np.asarray(rows[k]["x"], float))
+            self._live_x = np.asarray(rows[k]["x"], float).copy()
             self._live_beads = (B.X.astype(np.float32), B.r.astype(np.float32), B.col.copy())
             self._sim_beads = dict(colors=[s_.color for s_ in B.sources])
-            self.app.viewport.repaint()
+            self.app.viewport.update()
         prog = self._live_progress(_T("Billes…"), T_end, live)
         try:
             out = B.run(rows, progress=prog)
@@ -3163,7 +3162,7 @@ class MotionPanel(QWidget):
             if left is not None:
                 txt += " — " + _T("encore environ {s} s", s=f"{left:.0f}")
             dlg.setLabelText(txt)
-            if live is not None and _time.monotonic() - shown[0] > 0.4:
+            if live is not None and _time.monotonic() - shown[0] > 0.2:
                 shown[0] = _time.monotonic()
                 try:
                     live()
@@ -3175,6 +3174,11 @@ class MotionPanel(QWidget):
         def close():
             dlg.close()
             self._live_beads = None
+            self._live_x = None
+            try:
+                self.app.viewport.update()
+            except Exception:
+                pass
         step.close = close
         return step
 
@@ -3185,9 +3189,9 @@ class MotionPanel(QWidget):
             return None
 
         def live():
-            if dyn is not None and getattr(dyn, "live", None) is not None and self.solid_view:
-                self._solid_place(np.asarray(dyn.live[1], float))
-                self.app.viewport.repaint()
+            if dyn is not None and getattr(dyn, "live", None) is not None:
+                self._live_x = np.asarray(dyn.live[1], float).copy()
+                self.app.viewport.update()
         return self._live_progress(_T("Simulation dynamique…"), seconds or 0.0, live)
 
     def _chocs(self):
@@ -3774,6 +3778,9 @@ class MotionPanel(QWidget):
             return
         self._highlight_still_wanted()
         x = self.x if self.x is not None else np.zeros(m.n)
+        lx = getattr(self, "_live_x", None)
+        if lx is not None and len(lx) == m.n:
+            x = lx                    # computing: the pose reached, every paint (no flashing back)
         acc = icons.accent()
         hits = set()
         if self.frames:
