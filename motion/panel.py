@@ -71,6 +71,8 @@ def _detail(text):
                        (r"\bcouronne\b", "corona"), (r"\bsatellite\b", "satélite"),
                        (r"\bsur\b", "sobre"), (r"\bdans\b", "en"),
                        (r"tenue dans le bâti", "sujeta en el bastidor"),
+                       (r"vissé : « (.*?) » dans l'alésage Ø (.*?) de « (.*?) »",
+                        r"atornillado: « \1 » en el alojamiento Ø \2 de « \3 »"),
                        (r"un axe le traverse : il coulisse", "un eje lo atraviesa: desliza"),
                        (r"l'alésage de « (.*?) » est décalé de (.*?) : le pivot suit l'arbre de "
                         r"« (.*?) » \(modèle à corriger \?\)",
@@ -83,6 +85,8 @@ def _detail(text):
                    (r"\bdents\b", "teeth"), (r"\brapport\b", "ratio"), (r"\bet\b", "and"),
                    (r"— axe « (.*?) » avec « (.*?) »", r"— pin « \1 » with « \2 »"),
                    (r"tenue dans le bâti", "held in the frame"),
+                   (r"vissé : « (.*?) » dans l'alésage Ø (.*?) de « (.*?) »",
+                    r"screwed: « \1 » in the Ø \2 bore of « \3 »"),
                    (r"un axe le traverse : il coulisse", "a pin crosses it: it slides"),
                    (r"l'alésage de « (.*?) » est décalé de (.*?) : le pivot suit l'arbre de "
                     r"« (.*?) » \(modèle à corriger \?\)",
@@ -3243,6 +3247,39 @@ class MotionPanel(QWidget):
         step.close = close
         return step
 
+    def _read_progress(self, label):
+        """A progress window for a long reading: faces done and time left.
+        Its callback ``(i, n)`` returns False once cancelled; None headless."""
+        if not self.isVisible():
+            return None
+        import time as _time
+        from PySide6.QtWidgets import QProgressDialog
+        dlg = QProgressDialog(label, _T("Annuler"), 0, 1000, self)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(400)
+        dlg.setMinimumWidth(420)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        t0 = _time.monotonic()
+        last = [0.0]
+
+        def step(i, n):
+            now = _time.monotonic()
+            if now - last[0] < 0.1 and i < n:
+                return True
+            last[0] = now
+            f = min(i / max(n, 1), 1.0)
+            dlg.setValue(int(1000 * f))
+            txt = label + "\n" + _T("face {i} sur {n}", i=i, n=n)
+            el = now - t0
+            if f > 0.05 and el > 1.0:
+                txt += " — " + _T("encore environ {s} s", s=f"{el * (1 - f) / f:.0f}")
+            dlg.setLabelText(txt)
+            QApplication.processEvents()
+            return not dlg.wasCanceled()
+        step.close = dlg.close
+        return step
+
     def _sim_progress(self, steps, seconds=None, dyn=None):
         """A progress window for a run; with the dynamics, the parts move
         in the view as they are computed."""
@@ -3495,9 +3532,15 @@ class MotionPanel(QWidget):
     # ---- STEP import -----------------------------------------------------------------
     def import_step(self, path, tol=0.0002):
         """Add the parts of a STEP assembly to the model; they are left
-        selected, ready to become fixed or moving parts."""
+        selected, ready to become fixed or moving parts. A window shows
+        how far the reading is (it can be cancelled: nothing is added)."""
         from . import stepimport
-        asm, groups = stepimport.import_into(self.app, path, tol)
+        step = self._read_progress(_T("Lecture du STEP…"))
+        try:
+            asm, groups = stepimport.import_into(self.app, path, tol, progress=step)
+        finally:
+            if step is not None:
+                step.close()
         sel = getattr(self._scene(), "selection", None)
         if sel is not None:
             sel.clear()
@@ -3708,9 +3751,12 @@ class MotionPanel(QWidget):
                                               "STEP (*.step *.stp *.STEP *.STP)")
         if not path:
             return
+        from .stepread import Cancelled
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.import_step(path)
+        except Cancelled:
+            self.say(_T("Import STEP annulé."))
         except Exception as exc:
             QMessageBox.warning(self, _T("Importer STEP"), f"{type(exc).__name__} : {exc}")
         finally:

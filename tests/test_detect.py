@@ -328,3 +328,33 @@ def test_planetary_train_turns_the_planet_twice_back_on_its_crank():
     P = np.array([sat.world_point(m.pose(f["x"], sat), np.zeros(3)) for f in F])
     assert all(f["ok"] for f in F)
     assert np.max(np.abs(P[:, 0])) < 1e-6 and np.ptp(P[:, 2]) > 0.079
+
+
+def test_a_shoulder_screw_threaded_in_its_hole_is_a_lock():
+    # a shoulder screw (shoulder Ø 5, thread Ø 4 not seen as a cylinder)
+    # screwed into a plate's Ø 5 hole: one part with the plate — and a
+    # wheel turning on the shoulder pivots, as before (0.10)
+    from motion.detect import Cylinder, Part, _filled_bore
+    Y = np.array([0.0, 1.0, 0.0])
+    hole = Cylinder(np.array([0.0, 0.0035, 0.0]), Y, 0.0025, -0.0035, 0.0035, False, 360.0, 0.0)
+    plate_pts = [[0.0025 * math.cos(a), y, 0.0025 * math.sin(a)]
+                 for a in np.linspace(0, 2 * math.pi, 24, endpoint=False) for y in (0.0, 0.007)]
+    plate_pts += [[x, y, z] for x in (-0.02, 0.02) for y in (0.0, 0.007) for z in (-0.02, 0.02)]
+    plate = Part("plaque", "plaque", cylinders=[hole], points=np.array(plate_pts))
+    shoulder = Cylinder(np.array([0.0, -0.006, 0.0]), Y, 0.0025, -0.006, 0.006, True, 360.0, 0.0)
+    # the thread: a helix of points at r 2 mm, from the shoulder into the hole
+    t = np.linspace(0, 2 * math.pi * 9, 300)
+    thread = np.column_stack([0.002 * np.cos(t), 0.0066 * t / t[-1], 0.002 * np.sin(t)])
+    ring = [[0.0025 * math.cos(a), y, 0.0025 * math.sin(a)]
+            for a in np.linspace(0, 2 * math.pi, 24, endpoint=False) for y in (-0.012, 0.0)]
+    screw = Part("vis", "vis", cylinders=[shoulder], points=np.vstack([thread, ring]))
+    for p in (plate, screw):
+        p.lo, p.hi = p.points.min(0), p.points.max(0)
+    got = _filled_bore(screw, plate, 0.05)
+    assert got is not None and got.kind == "lock" and "vissé" in got.detail
+    # the same screw with a pin through the plate's hole, recognised as a
+    # cylinder: the fit test has spoken, no lock
+    screw.cylinders = [shoulder, Cylinder(np.array([0.0, 0.0035, 0.0]), Y, 0.0024, -0.0035, 0.0035,
+                                          True, 360.0, 0.0)]
+    got = _filled_bore(screw, plate, 0.05)
+    assert got is None or got.kind != "lock"

@@ -172,7 +172,7 @@ def test_closed_bspline_surface_face_across_its_seam():
     hi = [np.array([x, y, 1.5]) for x, y in side[::-1]]
     L = np.array(lo + hi)
     uv = Sf.to_uv_loop(L)
-    assert np.ptp(uv[:, 0]) < 0.5 * (Sf.u1 - Sf.u0) * Sf.su        # one side of the seam
+    assert np.ptp(uv[:, 0]) < 0.6 * (Sf.u1 - Sf.u0) * Sf.su        # one side of the seam (half the tube)
     tris, P = S._triangulate_uv([uv], Sf)
     T = P[np.asarray(tris)]
     area = 0.5 * np.abs((T[:, 1, 0] - T[:, 0, 0]) * (T[:, 2, 1] - T[:, 0, 1])
@@ -239,3 +239,38 @@ def test_surface_of_revolution_follows_its_profile():
     # between the two circles, far off
     cone = math.pi * (r0 + r0 + a) * math.hypot(a, a)
     assert abs(got - want) < 0.5 * abs(cone - want)
+
+
+def test_a_helix_keeps_a_few_points_per_turn():
+    # a thread's helix sampled finely (0.10: thousands of points made the
+    # face's triangulation stall): the kept chords stay within tolerance
+    # and turn at most 15° each
+    r, pitch, turns = 2.0, 0.7, 10
+    t = np.linspace(0, 2 * math.pi * turns, 20001)
+    P = np.column_stack([r * np.cos(t), r * np.sin(t), pitch * t / (2 * math.pi)])
+    tol = 0.2
+    Q = stepread._simplify_curve(stepread._simplify(P, tol), tol, math.radians(15))
+    assert len(Q) <= 26 * turns + 2 and (Q[0] == P[0]).all() and (Q[-1] == P[-1]).all()
+    # every dense point within tol of the kept polyline
+    from itertools import pairwise
+    worst = 0.0
+    for a, b in pairwise(Q):
+        ab = b - a
+        tt = np.clip(((P - a) @ ab) / (ab @ ab), 0, 1)
+        d = np.linalg.norm(a + np.outer(tt, ab) - P, axis=1)
+        worst = d if isinstance(worst, float) else np.minimum(worst, d)
+    assert worst.max() <= tol + 1e-9
+    # the turn of each chord
+    D = np.diff(Q, axis=0)
+    D /= np.linalg.norm(D, axis=1)[:, None]
+    assert (np.degrees(np.arccos(np.clip((D[:-1] * D[1:]).sum(1), -1, 1))) <= 16.5).all()
+
+
+def test_reading_tells_its_progress_and_can_stop():
+    import pytest
+    seen = []
+    _read("assemblage", progress=lambda i, n: seen.append((i, n)))
+    assert seen and all(n == seen[0][1] for _, n in seen)
+    assert [i for i, _ in seen] == list(range(1, len(seen) + 1)) and seen[-1][0] <= seen[-1][1]
+    with pytest.raises(stepread.Cancelled):
+        _read("bloc", progress=lambda i, n: False)

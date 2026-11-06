@@ -266,6 +266,8 @@ class _Reader:
         self.unit = self._unit()
         self.tol_f = tol / self.unit        # tolerance in file units
         self._edge_cache = {}
+        self.progress = None                # progress(i, n), see read()
+        self.done, self.total = 0, 1
 
     # basic access
     def get(self, ref, *types):
@@ -428,7 +430,7 @@ class _Reader:
             seg = pts[i1:i0 + 1][::-1]
         if not sense:
             seg = seg[::-1]
-        seg = _simplify(seg, self.tol_f)
+        seg = _simplify_curve(_simplify(seg, self.tol_f), self.tol_f, self.max_angle)
         seg[0], seg[-1] = p0, p1
         return seg
 
@@ -646,6 +648,9 @@ class _Reader:
         a = self.e[int(sref)][k]
         out = []
         for f in a[1]:
+            self.done += 1
+            if self.progress is not None and self.progress(self.done, self.total) is False:
+                raise Cancelled()
             try:
                 face = self.face(f)
             except Exception:
@@ -731,6 +736,52 @@ def _simplify(P, tol):
             keep.append(i)
     keep.append(len(P) - 1)
     return P[keep].copy()
+
+
+def _simplify_curve(P, tol, max_angle):
+    """Keep as few points of a densely sampled curve as the tolerance
+    allows: each kept chord stays within ``tol`` of the points it skips
+    and turns by at most ``max_angle`` (as arcs are cut). A thread's
+    helix, sampled finely, then gets a few points per turn, not
+    thousands."""
+    n = len(P)
+    if n <= 2:
+        return P.copy()
+    D = np.diff(P, axis=0)
+    L = np.linalg.norm(D, axis=1)
+    T = D / np.where(L > 0, L, 1.0)[:, None]
+    keep = [0]
+    a = 0
+    while a < n - 1:
+        j = a + 1
+        step = 1
+        while True:                 # grow while the chord a -> j + step fits
+            b = j + step
+            if b > n - 1 or not _chord_ok(P, T, a, b, tol, max_angle):
+                if step == 1:
+                    break
+                step = 1
+                continue
+            j = b
+            step *= 2
+        keep.append(j)
+        a = j
+    return P[keep].copy()
+
+
+def _chord_ok(P, T, a, b, tol, max_angle):
+    if b - a < 2:
+        return True
+    if float(T[a] @ T[b - 1]) < math.cos(max_angle):
+        return False
+    c = P[b] - P[a]
+    lc = float(np.linalg.norm(c))
+    Q = P[a + 1:b] - P[a]
+    if lc <= 0:
+        return float(np.linalg.norm(Q, axis=1).max()) <= tol
+    c = c / lc
+    d = Q - np.outer(Q @ c, c)
+    return float(np.sqrt((d * d).sum(axis=1)).max()) <= tol
 
 
 # -- B-splines ------------------------------------------------------------------------
@@ -1253,9 +1304,14 @@ class _BSplineSurface(_Surface):
             self.closed_u, self.closed_v = True, False
             self.swapped = True
         # a grid for the inverse, and a metric scale for uv
-        n = 24
-        self.gu = np.linspace(self.u0, self.u1, n)
-        self.gv = np.linspace(self.v0, self.v1, n)
+        # (dense enough along a long surface — a thread's flank turns many
+        # times: a coarse grid starts the search on the wrong turn)
+        nu = int(min(400, max(24, 4 * self.P.shape[0])))
+        nv = int(min(400, max(24, 4 * self.P.shape[1])))
+        while nu * nv > 40000:
+            nu, nv = max(24, int(nu * 0.8)), max(24, int(nv * 0.8))
+        self.gu = np.linspace(self.u0, self.u1, nu)
+        self.gv = np.linspace(self.v0, self.v1, nv)
         self.G = np.array([[self._eval(u, v) for v in self.gv] for u in self.gu])
         lu = np.linalg.norm(np.diff(self.G, axis=0), axis=2).sum(0).mean()
         lv = np.linalg.norm(np.diff(self.G, axis=1), axis=2).sum(1).mean()
@@ -1776,15 +1832,23 @@ def _refine(pts, tris, S, tol, max_angle, boundary=None, max_points=6000):
 
 # -- product structure ----------------------------------------------------------------
 
-def read(path_or_text, tol=0.0002, max_angle=math.radians(15)):
+class Cancelled(Exception):
+    """The reading was stopped from its ``progress`` callback."""
+
+
+def read(path_or_text, tol=0.0002, max_angle=math.radians(15), progress=None):
     """Read a STEP file (path, or its text). ``tol``: chord tolerance in
-    metres. Returns an :class:`Assembly`."""
+    metres. Returns an :class:`Assembly`. ``progress(i, n)`` is called
+    before each face (n: the faces in the file, a part placed twice
+    counting twice); returning False stops with :class:`Cancelled`."""
     text = path_or_text
     if "ISO-10303-21" not in str(path_or_text)[:200]:
         with open(path_or_text, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
     ents = parse(text)
     rd = _Reader(ents, tol, max_angle)
+    rd.progress = progress
+    rd.total = max(1, len(ents.ids("ADVANCED_FACE")) + len(ents.ids("FACE_SURFACE")))
     E = ents
 
     def first(rec_type):

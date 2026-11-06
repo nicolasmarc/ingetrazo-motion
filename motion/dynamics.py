@@ -711,6 +711,15 @@ class Dynamics:
         if pts is None:
             return None
         ka, kb, p, n, d, mu, ids = pts
+        # a contact without a direction (a grid's gradient flat in a thin
+        # wall, a degenerate triangle) tells nothing: left out
+        nl = np.linalg.norm(n, axis=1)
+        ok = np.isfinite(nl) & (nl > 1e-9) & np.isfinite(d) & np.isfinite(p).all(axis=1)
+        if not ok.all():
+            ka, kb, p, d, mu, ids = ka[ok], kb[ok], p[ok], d[ok], mu[ok], ids[ok]
+            n = n[ok] / nl[ok][:, None]
+            if not len(d):
+                return None
         # two directions across each normal, for the friction
         t1 = np.cross(n, np.where(np.abs(n[:, :1]) < 0.9, [[1.0, 0, 0]], [[0, 1.0, 0]]))
         t1 /= np.linalg.norm(t1, axis=1)[:, None]

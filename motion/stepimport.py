@@ -62,11 +62,11 @@ def build_groups(asm, soft_angle=35.0, orient=False):
     return groups
 
 
-def import_into(app, path, tol=0.0002):
+def import_into(app, path, tol=0.0002, progress=None):
     """Read ``path`` and add its parts to the open model (one undo step).
-    Returns (assembly, groups)."""
+    Returns (assembly, groups). ``progress``: see :func:`stepread.read`."""
     from core.history import SnapshotImport
-    asm = stepread.read(path, tol=tol)
+    asm = stepread.read(path, tol=tol, progress=progress)
     groups = build_groups(asm)
     vp = app.viewport
 

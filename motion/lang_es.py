@@ -828,4 +828,10 @@ ES = {
         '{n} posición(es) alcanzada(s) con {r} mm de margen: algunas uniones piden algo más de lo que da el modelo (uniones redundantes, cotas algo desplazadas).',
     'collision {a} / {b} : {n} positions, de {p0} % à {p1} %':
         'colisión {a} / {b}: {n} posiciones, de {p0} % a {p1} %',
+    'Lecture du STEP…':
+        'Leyendo el STEP…',
+    'face {i} sur {n}':
+        'cara {i} de {n}',
+    'Import STEP annulé.':
+        'Importación STEP cancelada.',
 }

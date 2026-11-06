@@ -590,4 +590,10 @@ EN = {
         '{n} position(s) reached within {r} mm: some joints ask a little more than the model gives (redundant joints, slightly offset dimensions).',
     'collision {a} / {b} : {n} positions, de {p0} % à {p1} %':
         'collision {a} / {b}: {n} positions, from {p0} % to {p1} %',
+    'Lecture du STEP…':
+        'Reading the STEP…',
+    'face {i} sur {n}':
+        'face {i} of {n}',
+    'Import STEP annulé.':
+        'STEP import cancelled.',
 }

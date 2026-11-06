@@ -34,6 +34,22 @@
   lines when the motors lead every part.
 
 ### Fixed
+- **STEP import of screws with modelled threads**: a thread's helix was
+  sampled into thousands of points, the face between two helices took more
+  than a minute to cut into triangles (and 180 000 of them per screw),
+  with no sign of life: the reading seemed stuck. Curves now keep only the
+  points the tolerance needs (a few per turn), long b-spline surfaces get
+  a finer starting grid for their parameters (a flank was read on the
+  wrong turn, leaving holes along the thread). A Geneva device with two
+  shoulder screws: 84 s → 4 s, screws closed, 3 400 triangles each. A
+  progress window shows the faces read and the time left, and can cancel.
+- **Detection: a screw in its hole** — a shoulder as wide as a bore stopping
+  at its mouth, the thread filling the bore: the screw is locked in the
+  part (« vissé »), and what turns on the shoulder pivots on it. A part
+  only touching a bore at its mouth (its face round the hole) no longer
+  makes a pivot.
+- Dynamics: a contact point without a direction (a flat gradient in a
+  thin wall) is left out instead of stopping the run with an error.
 - The panel without gaps: closed sections stay together at the top; the
   report, open, takes the room left; closed, the list of parts takes it;
   the message line shows only when there is something said.

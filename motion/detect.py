@@ -350,8 +350,20 @@ def _filled_bore(p, q, size):
                 tc = v @ ax
                 c_lo, c_hi = tc + min(c.t0, c.t1), tc + max(c.t0, c.t1)
                 return c_hi > h_lo - 0.5 * h.radius and c_lo < h_hi + 0.5 * h.radius
-            if any(_beside(c) for c in s_part.cylinders):
-                continue
+            beside = any(_beside(c) for c in s_part.cylinders)
+
+            def _overlap(c):
+                v = np.asarray(c.point) - np.asarray(h.point)
+                tc = v @ ax
+                c_lo, c_hi = tc + min(c.t0, c.t1), tc + max(c.t0, c.t1)
+                return min(c_hi, h_hi) - max(c_lo, h_lo)
+            coax = [c for c in s_part.cylinders if _beside(c)]
+            # a screw: a shoulder as wide as the bore stops at its mouth, and
+            # no recognised cylinder of it goes in (that one the fit test
+            # has spoken for — a hinge's pin)
+            screw = (any(c.convex and c.radius >= 0.95 * h.radius and _overlap(c) < 0.2 * h.radius
+                         for c in coax)
+                     and not any(_overlap(c) >= 0.2 * h.radius for c in coax))
             w = s_part.points - np.asarray(h.point)
             t = w @ ax
             along = (t > min(h.t0, h.t1) - 1e-4) & (t < max(h.t0, h.t1) + 1e-4)
@@ -368,6 +380,23 @@ def _filled_bore(p, q, size):
                 continue
             tw = t[wall]
             ov = float(tw.max() - tw.min())
+            if beside:
+                # a shoulder (or a shank) of the other stops at the bore's
+                # mouth and the rest of it fills the bore: a screw's
+                # thread in its hole — screwed in, the two are one
+                # inside the bore along it, not only at its two mouths
+                # (a hinge's knuckles each side)
+                bins = np.histogram(tw, bins=4, range=(h_lo, h_hi))[0]
+                if screw and (bins[1:3] > 0).all() and ov >= 0.5 * (h_hi - h_lo) \
+                        and ov >= 0.5 * h.radius:
+                    found.append(Proposal("lock", p.key, q.key,
+                                          np.asarray(h.point) + 0.5 * (tw.max() + tw.min()) * ax, ax, 0.6,
+                                          f"vissé : « {s_part.name} » dans l'alésage Ø "
+                                          f"{2000 * h.radius:.1f} mm de « {b_part.name} »",
+                                          dict(radius=h.radius, screw=s_part.key)))
+                continue
+            if ov < 0.25 * h.radius:
+                continue                          # only touching at the mouth
             found.append(Proposal("pivot", p.key, q.key, np.asarray(h.point) + 0.5 * (tw.max() + tw.min()) * ax,
                                   ax, 0.6, f"Ø {2000 * h.radius:.1f} mm, alésage de « {b_part.name} » "
                                   f"rempli, portée {1000 * ov:.1f} mm",
