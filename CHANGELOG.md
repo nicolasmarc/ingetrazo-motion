@@ -48,6 +48,14 @@
   part (« vissé »), and what turns on the shoulder pivots on it. A part
   only touching a bore at its mouth (its face round the hole) no longer
   makes a pivot.
+- **Video export with IngeTrazo 0.6** (a glass housing round a motor: black
+  and red blotches, parts frozen on the left, an opaque box hiding all on
+  the right): the left half is IngeTrazo's own drawing with the parts'
+  groups placed at each pose (as the playback), made opaque (the alpha a
+  glass leaves was read as premultiplied); the right half draws the model's
+  colours, and see-through parts ghosted (never painted red). A position
+  reached within half a millimetre (a model slightly off) is no longer
+  « non atteinte », and one not reached keeps the validated pose.
 - Dynamics: a contact point without a direction (a flat gradient in a
   thin wall) is left out instead of stopping the run with an error.
 - The panel without gaps: closed sections stay together at the top; the

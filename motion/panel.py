@@ -4359,7 +4359,23 @@ class MotionPanel(QWidget):
         vp = self.app.viewport
         img = None
         render = getattr(vp, "render_image", None)
-        hide = [g for g in self._moving_groups() if not g.hidden] if shaded is not None else []
+        placed = False
+        if (shaded is not None and x is not None and callable(render) and self.source == "model"
+                and getattr(self, "solid_view", True)):
+            # the parts' own groups placed at the pose (as the playback
+            # does): IngeTrazo draws them with their materials — a glass
+            # housing stays a glass, a part behind another is hidden.
+            # Hiding them and painting them over the picture drew every
+            # part in front of everything, from caches IngeTrazo 0.6 no
+            # longer refreshes that way (garbled, frozen video: 0.10)
+            try:
+                self._solid_place(x)
+                placed = bool(getattr(self, "_solid_groups", None))
+            except Exception:
+                placed = False
+                self._solid_restore()
+        hide = ([g for g in self._moving_groups() if not g.hidden]
+                if shaded is not None and not placed else [])
         if callable(render):
             self._quiet = getattr(self, "_quiet", 0) + 1
             try:
@@ -4378,6 +4394,17 @@ class MotionPanel(QWidget):
                 self._quiet -= 1
         lw, lh = max(vp.width(), 1), max(vp.height(), 1)
         rendered = img is not None and not img.isNull()
+        if rendered and img.hasAlphaChannel():
+            # the colours are already blended over the sky; the alpha left
+            # by a see-through material (a glass) is not a premultiplied
+            # one: read as such it gave black and red blotches. Opaque.
+            from PySide6.QtGui import QImage
+            try:
+                img = img.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+                if img.reinterpretAsFormat(QImage.Format_RGB32):
+                    img = img.convertToFormat(QImage.Format_RGB32)
+            except Exception:
+                pass
         if not rendered:                                 # no GL here
             from PySide6.QtGui import QImage
             img = QImage(width, max(1, int(round(width * lh / lw))), QImage.Format_RGB32)
@@ -4388,7 +4415,9 @@ class MotionPanel(QWidget):
         p.scale(img.width() / lw, img.height() / lh)
         self._force_paint = True
         try:
-            if shaded is not None and x is not None:
+            if placed and rendered:
+                self.paint(vp, p, wire=False)          # joints and trajectories
+            elif shaded is not None and x is not None:
                 from . import render as _render
                 cam = getattr(vp, "camera", None)
                 yaw = float(getattr(cam, "yaw", 0.0))
@@ -4419,14 +4448,25 @@ class MotionPanel(QWidget):
         by = groups_by_uid(self._scene())
         out = {}
         self._poly_colours = {}
+        self._poly_alphas = {}
         for b in self.data["bodies"]:
             faces, cols = [], []
+            ops = []
             for u in b["groups"]:
                 g = by.get(u)
                 if g is None:
                     continue
                 gmat = getattr(g, "material", None) or {}
                 gcol = _rgb255(gmat.get("color") if isinstance(gmat, dict) else None)
+                op = 1.0
+                if isinstance(gmat, dict):
+                    try:
+                        op = float(gmat.get("opacity", 1.0))
+                    except (TypeError, ValueError):
+                        op = 1.0
+                    if gcol is None and "glass" in str(gmat.get("mat", "")).lower():
+                        gcol = (196, 222, 236)            # a glass: light blue
+                ops.append(op)
                 for mesh, aff in _placements(g):
                     if not mesh.vertices:
                         continue
@@ -4456,6 +4496,8 @@ class MotionPanel(QWidget):
                 out[b["name"]] = faces
                 if any(c is not None for c in cols):
                     self._poly_colours[b["name"]] = cols
+                if ops and max(ops) < 0.99:               # see-through (glass)
+                    self._poly_alphas[b["name"]] = int(255 * max(0.15, min(0.6, max(ops))))
         return out
 
     def full_turn(self):
@@ -4530,7 +4572,8 @@ class MotionPanel(QWidget):
         if vue:
             yaw, pitch = math.radians(vue[0]), math.radians(vue[1])
         polys = self._polys() or (self.sample_info or {}).get("polys") or {}
-        shaded = render.Shaded(m, polys)
+        shaded = render.Shaded(m, polys, face_colours=getattr(self, "_poly_colours", None),
+                               alphas=getattr(self, "_poly_alphas", None))
         follow = None                                      # camera follows a part
         fname = (self.sample_info or {}).get("suivre")
         if fname:
@@ -4572,7 +4615,11 @@ class MotionPanel(QWidget):
                     ok = True
                 else:
                     guess = (1 - a) * sweep_rows[k]["x"] + a * sweep_rows[k + 1]["x"]
-                    x, ok, _ = solver.solve(m, lo + t * (hi - lo), guess)
+                    x, ok, res = solver.solve(m, lo + t * (hi - lo), guess)
+                    if not ok and res <= 5e-4:        # reached within half a mm (the report's note)
+                        ok = True
+                    elif not ok:                      # not reached: the validated sweep's pose
+                        x = guess
                 for f in dyn:
                     x = f.advance(m, x, 0.0 if i == 0 else 1.0 / fps)
                 self.x, self.t = x, t
@@ -4629,6 +4676,7 @@ class MotionPanel(QWidget):
             out = writer.close()
         finally:
             self.x, self.t = saved_x, saved_t
+            self._solid_restore()                 # the groups back where they were drawn
             if cam_target is not None:
                 try:
                     cam.target = cam_target

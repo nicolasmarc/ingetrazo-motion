@@ -138,8 +138,11 @@ class Shaded:
     """``polys``: {body name: [ (k, 3) arrays of face corners, reference
     pose ]}; bodies without polygons are drawn from their boxes."""
 
-    def __init__(self, mech, polys=None, max_faces=40000, face_colours=None):
+    def __init__(self, mech, polys=None, max_faces=40000, face_colours=None, alphas=None):
         self.m = mech
+        # see-through parts (a glass housing): {body name: alpha 0-255},
+        # drawn ghosted, never painted over in red on a collision
+        self.alphas = dict(alphas or {})
         self.items = []                           # (body, V, faces, colour)
         polys = polys or {}
         k = 0
@@ -284,7 +287,7 @@ class Shaded:
 
     def faces(self, x, project, fwd, light, hits=(), bodies=None, need_front=False, cull=False):
         """Faces to paint, back to front: [(X, Y, colour (r, g, b), shade,
-        tile)], with ``project(W) -> (px, py[, in_front])``."""
+        tile, alpha or None)], with ``project(W) -> (px, py[, in_front])``."""
         out_d, out = [], []
         for it in self.items:
             body, V, idx, col, fcols = it
@@ -322,12 +325,13 @@ class Shaded:
             dep = (np.maximum.reduceat(dflat, pr["starts"]) if body.fixed
                    else np.add.reduceat(dflat, pr["starts"]) / pr["lens"])
             shade = 0.55 + 0.45 * np.abs((n / np.where(good, nn, 1.0)[:, None]) @ light)
-            hit = body.name in hits
+            see = self.alphas.get(body.name)
+            hit = body.name in hits and see is None
             for i in np.nonzero(good)[0]:
                 f = idx_flat = pr["flat"][pr["starts"][i]: pr["starts"][i] + pr["lens"][i]]
                 base = HIT if hit else (pr["cols"][i] or col)
                 out_d.append(dep[i])
-                out.append((px[f], py[f], base, shade[i], pr["tile"][i]))
+                out.append((px[f], py[f], base, shade[i], pr["tile"][i], see))
         order = np.argsort(-np.asarray(out_d, float), kind="stable")
         return [out[i] for i in order]
 
@@ -431,14 +435,17 @@ def _paint(p, polys, alpha):
     once per colour (the same rounding to whole colour levels as before)."""
     tools = {}
     last = None
-    for X, Yp, base, shade, tile in polys:
+    for X, Yp, base, shade, tile, see in polys:
+        a = alpha if see is None else min(alpha, int(see))
         key = (int(base.red() * shade), int(base.green() * shade),
-               int(base.blue() * shade), bool(tile))
+               int(base.blue() * shade), bool(tile), a)
         if key != last:
             t = tools.get(key)
             if t is None:
-                c = QColor(key[0], key[1], key[2], alpha)
-                t = tools[key] = (QPen(c if tile else c.darker(140), 0.7), QBrush(c))
+                c = QColor(key[0], key[1], key[2], a)
+                pen = (QPen(Qt.NoPen) if see is not None
+                       else QPen(c if tile else c.darker(140), 0.7))
+                t = tools[key] = (pen, QBrush(c))
             p.setPen(t[0])
             p.setBrush(t[1])
             last = key
