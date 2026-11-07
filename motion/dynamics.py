@@ -746,6 +746,11 @@ class Dynamics:
         return rows, target, mu, dt, ids
 
     pgs_sweeps = 60              # Gauss-Seidel sweeps over the contacts
+    # a contact direction counts as the joints' own when they leave less
+    # than this share of what the parts could do alone. 1 % let a light
+    # pin on a driven crank go through a Geneva wheel: the pin alone
+    # moves easily, the wheel it pushes far less (0.10)
+    held_ratio = 1e-5
 
     def _solve_with_contacts(self, Mi, F, Gm, C, gamma, u, t, hard):
         """The joints exactly, the contacts by projected Gauss-Seidel on
@@ -785,7 +790,7 @@ class Dynamics:
         # (against what the part could do alone: a pawl's face rubbing its
         # rocker's face is the pivot's business, however tilted the facets)
         alone = np.einsum("ij,ji->i", J, MiJt)
-        free = (dg > 1e-9 * max(float(dg.max()), 1e-300)) & (dg > 1e-2 * alone)
+        free = (dg > 1e-9 * max(float(dg.max()), 1e-300)) & (dg > self.held_ratio * alone)
         lam[~free] = 0.0
         diag = np.where(free, dg, 1.0)
         w = A @ lam + b

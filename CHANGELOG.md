@@ -56,6 +56,12 @@
   colours, and see-through parts ghosted (never painted red). A position
   reached within half a millimetre (a model slightly off) is no longer
   « non atteinte », and one not reached keeps the validated pose.
+- **Contacts: a light pin on a driven crank went through a Geneva wheel**
+  (the wheel lagged up to 20° behind its slot): a contact direction was
+  left to the joints when they kept under 1 % of what the parts could do
+  alone — the pin alone moves very easily, the wheel it pushes far less,
+  so the pin's pushes were dropped. Now only directions the joints hold
+  whole (under 0.001 %) are. The roller stays in its slot (± 2°).
 - **Video, right half**: drawn by IngeTrazo too (its depth buffer, the
   model's materials), framed on the mechanism, the camera turned as the
   view: the hand-made drawing sorted faces back to front and showed a
