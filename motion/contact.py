@@ -255,7 +255,58 @@ def surface_points(T, h):
     # one point per cell of 0.7 h: the vertices of fine meshes add nothing
     key = np.floor(P / (0.7 * h)).astype(np.int64)
     _, keep = np.unique(key, axis=0, return_index=True)
-    return P[np.sort(keep)]
+    P = P[np.sort(keep)]
+    # the sharp edges closer: a corner (a slot's mouth on a Geneva pin)
+    # went into the other part by up to a step between two points (0.10)
+    E = sharp_edge_points(T, 0.4 * h)
+    if len(E):
+        P = np.concatenate([P, E])
+    return P
+
+
+def sharp_edge_points(T, step, angle=25.0):
+    """Points every ``step`` along the edges of the triangles ``T`` where
+    the surface folds by more than ``angle`` degrees (or ends)."""
+    T = np.asarray(T, float).reshape(-1, 3, 3)
+    if not len(T):
+        return np.zeros((0, 3))
+    n = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+    ln = np.linalg.norm(n, axis=1)
+    good = ln > 1e-30
+    T, n = T[good], n[good] / ln[good][:, None]
+    if not len(T):
+        return np.zeros((0, 3))
+    V = T.reshape(-1, 3)
+    size = float(np.ptp(V, axis=0).max()) or 1.0
+    vk = np.round(V / (size * 1e-7)).astype(np.int64)
+    _, vid = np.unique(vk, axis=0, return_inverse=True)
+    vid = vid.reshape(-1, 3)
+    e = np.concatenate([vid[:, [0, 1]], vid[:, [1, 2]], vid[:, [2, 0]]])
+    face = np.tile(np.arange(len(T)), 3)
+    a, b = e.min(axis=1), e.max(axis=1)
+    ek = a.astype(np.int64) * (int(vid.max()) + 1) + b
+    order = np.argsort(ek, kind="stable")
+    ek, face, a, b = ek[order], face[order], a[order], b[order]
+    start = np.r_[0, np.nonzero(np.diff(ek))[0] + 1]
+    count = np.diff(np.r_[start, len(ek)])
+    cos = math.cos(math.radians(angle))
+    sharp = count != 2                                  # an end, or many faces
+    two = np.nonzero(count == 2)[0]
+    f0, f1 = face[start[two]], face[start[two] + 1]
+    sharp[two] = (n[f0] * n[f1]).sum(axis=1) < cos
+    if not sharp.any():
+        return np.zeros((0, 3))
+    pos = np.zeros((int(vid.max()) + 1, 3))
+    pos[vid.reshape(-1)] = V
+    A, B = pos[a[start[sharp]]], pos[b[start[sharp]]]
+    L = np.linalg.norm(B - A, axis=1)
+    k = np.maximum(1, np.ceil(L / step).astype(int))
+    idx = np.repeat(np.arange(len(A)), k)
+    t = (np.arange(int(k.sum())) - np.repeat(np.cumsum(k) - k, k)) / np.repeat(k, k)
+    Q = A[idx] + t[:, None] * (B - A)[idx]
+    key = np.floor(Q / (0.35 * step / 0.4)).astype(np.int64)
+    _, keep = np.unique(key, axis=0, return_index=True)
+    return Q[np.sort(keep)]
 
 
 def closest_on_triangles(P, A, B, C):

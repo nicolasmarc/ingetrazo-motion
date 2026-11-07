@@ -4593,6 +4593,10 @@ class MotionPanel(QWidget):
         if j is not None and m.multi_turn():
             unit = lambda v: _T("{v} tr", v=f"{v / (2 * math.pi):.2f}")
         name = _T(SAMPLE_NAMES.get(self.source, "Mécanisme"))
+        # the right half: IngeTrazo's own drawing (a depth buffer: no part
+        # shows through another, the model's materials) framed on the
+        # mechanism; the hand-made drawing stays for the examples
+        mbox = self._mech_box() if self.source == "model" else None
         writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
         saved_x, saved_t = self.x, self.t
         x = None
@@ -4665,11 +4669,15 @@ class MotionPanel(QWidget):
                         except Exception:
                             pass
                 left = self._viewport_image(int(pane[0] * 1.5), shaded, x, hits)
-                frame = render.compose(
-                    W, H, left,
-                    lambda p, r: shaded.draw(p, r, x, yaw, pitch, scale, centre + shift,
-                                             hits, traces, floor=floor),
-                    f"{name} — IngeTrazo Motion", info, t)
+                right = (self._framed_image(int(pane[0] * 1.5), int(pane[1] * 1.5), x, mbox, shift)
+                         if mbox is not None else None)
+                if right is not None:
+                    draw_right = (lambda p, r, img=right: p.drawImage(r, img))
+                else:
+                    draw_right = (lambda p, r: shaded.draw(p, r, x, yaw, pitch, scale, centre + shift,
+                                                           hits, traces, floor=floor))
+                frame = render.compose(W, H, left, draw_right,
+                                       f"{name} — IngeTrazo Motion", info, t)
                 writer.add(frame)
             if progress is not None:
                 progress(len(tl), len(tl))
@@ -4684,6 +4692,68 @@ class MotionPanel(QWidget):
                     pass
             self.app.viewport.update()
         return out, writer.label
+
+    def _mech_box(self):
+        """(lo, hi) of the mechanism's groups at the drawn pose, a little
+        larger (the parts sweep round), in IngeTrazo's coordinates; None."""
+        try:
+            from PySide6.QtGui import QVector3D
+            by = groups_by_uid(self._scene())
+            pts = []
+            for b_ in self.data["bodies"]:
+                for u in b_["groups"]:
+                    g = by.get(u)
+                    if g is None or g.hidden:
+                        continue
+                    a = np.array([[v.position.x(), v.position.y(), v.position.z()]
+                                  for v in g.mesh.vertices])
+                    if len(a):
+                        pts.append(a.min(axis=0))
+                        pts.append(a.max(axis=0))
+            if not pts:
+                return None
+            P = np.array(pts)
+            lo, hi = P.min(axis=0), P.max(axis=0)
+            c, h = 0.5 * (lo + hi), 0.5 * (hi - lo) * 1.08
+            return QVector3D(*(c - h)), QVector3D(*(c + h))
+        except Exception:
+            return None
+
+    def _framed_image(self, w, h, x, box, shift=None):
+        """IngeTrazo's picture of the parts at pose ``x``, ``w`` × ``h``,
+        the camera turned as the view's but framed on ``box``; None when
+        the viewport cannot render."""
+        vp = self.app.viewport
+        cam = getattr(vp, "camera", None)
+        render = getattr(vp, "render_image", None)
+        if cam is None or not callable(render):
+            return None
+        saved = (cam.target, cam.distance, cam.aspect)
+        img = None
+        try:
+            self._solid_place(x)
+            cam.aspect = max(w, 1) / max(h, 1)
+            lo, hi = box
+            if shift is not None and np.any(shift):
+                from PySide6.QtGui import QVector3D
+                d = QVector3D(*[float(v) for v in shift])     # same units as the scene
+                lo, hi = lo + d, hi + d
+            cam.fit_box(lo, hi, margin=1.04)
+            img = render(int(w), int(h), overlays=False)
+        except Exception:
+            img = None
+        finally:
+            cam.target, cam.distance, cam.aspect = saved
+        if img is None or img.isNull():
+            return None
+        from PySide6.QtGui import QImage
+        try:
+            img = img.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+            if img.reinterpretAsFormat(QImage.Format_RGB32):
+                img = img.convertToFormat(QImage.Format_RGB32)
+        except Exception:
+            pass
+        return img
 
     def _fixed_segments(self, b_):
         """Edges of a fixed part's groups (for its highlight), cached."""
