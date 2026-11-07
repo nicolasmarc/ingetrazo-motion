@@ -56,6 +56,10 @@
   colours, and see-through parts ghosted (never painted red). A position
   reached within half a millimetre (a model slightly off) is no longer
   « non atteinte », and one not reached keeps the validated pose.
+- **Video, right half**: drawn by IngeTrazo too (its depth buffer, the
+  model's materials), framed on the mechanism, the camera turned as the
+  view: the hand-made drawing sorted faces back to front and showed a
+  Geneva wheel's arms through its driver. The examples keep it.
 - Dynamics: a contact point without a direction (a flat gradient in a
   thin wall) is left out instead of stopping the run with an error.
 - The panel without gaps: closed sections stay together at the top; the
