@@ -352,9 +352,8 @@ def test_video_export_realistic_through_blender():
         assert sorted(g.name for g in panel._scene().groups) == names
         # at the drawn pose, no part moves
         m = panel.mechanism()
-        x0 = panel.x
-        M = blender.part_matrices(m, x0, panel.data["bodies"])
-        assert M
+        M = blender.part_matrices(m, np.zeros(6 * len(m.bodies)), panel.data["bodies"])
+        assert M and all(np.allclose(v, np.eye(4)) for v in M.values())
         # cancelled: nothing written
         out, label = panel.export_video(str(out_dir / "stop.mp4"), 1.0, (320, 180),
                                         progress=lambda i, n: i < 3, rendu="eevee")
