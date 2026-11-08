@@ -2,6 +2,18 @@
 
 ## 0.10.0 — unreleased
 
+### Added (video)
+- **Realistic render through Blender**: *Export video → Render* offers,
+  next to the split-screen preview, *Realistic — Blender EEVEE (fast)* and
+  *Realistic — Blender Cycles (photo)*. The model is exported once with
+  IngeTrazo's own Blender render (materials, the Render panel's ambience,
+  sun and lights, the ground), each moving group a node of its own; Motion
+  sends the pose of every frame and Blender renders them one by one (on
+  the graphics card when there is one), framed on the mechanism from the
+  view's direction. Progress per image with the time left; cancelling
+  stops Blender. The Blender is IngeTrazo's (same setting), or chosen in
+  the export window. Needs IngeTrazo 0.6 and a model (not the examples).
+
 ### Changed
 - **Contacts read from distance grids**: each part's signed distance to its
   own surface is kept on a grid of half the sampling step, worked out

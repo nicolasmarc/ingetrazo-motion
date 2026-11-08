@@ -834,4 +834,30 @@ ES = {
         'cara {i} de {n}',
     'Import STEP annulé.':
         'Importación STEP cancelada.',
+    'Le rendu réaliste demande un modèle IngeTrazo.':
+        'El render realista necesita un modelo de IngeTrazo.',
+    "Blender introuvable : installer Blender ou l'indiquer (Exporter la vidéo → Indiquer Blender…).":
+        'Blender no encontrado: instalar Blender o indicarlo (Exportar el vídeo → Indicar Blender…).',
+    'Image Blender manquante : {f}':
+        'Falta la imagen de Blender: {f}',
+    'Aperçu Motion (écran partagé, mesures)':
+        'Vista previa Motion (pantalla dividida, medidas)',
+    'Indiquer Blender…':
+        'Indicar Blender…',
+    'Réaliste — Blender EEVEE (rapide)':
+        'Realista — Blender EEVEE (rápido)',
+    'Réaliste — Blender Cycles (photo)':
+        'Realista — Blender Cycles (foto)',
+    "Réaliste : les pièces du modèle avec leurs matériaux, l'ambiance et les lumières du panneau Rendu d'IngeTrazo, rendues image par image par Blender (carte graphique si possible).":
+        'Realista: las piezas del modelo con sus materiales, el ambiente y las luces del panel Render de IngeTrazo, renderizadas imagen por imagen por Blender (en la tarjeta gráfica si es posible).',
+    'Rendu':
+        'Render',
+    'Blender : {w}':
+        'Blender: {w}',
+    "Blender introuvable — l'indiquer.":
+        'Blender no encontrado — indicarlo.',
+    'Rendu Blender : image {i} / {n}':
+        'Render Blender: imagen {i} / {n}',
+    'environ {m} min restantes':
+        'unos {m} min restantes',
 }

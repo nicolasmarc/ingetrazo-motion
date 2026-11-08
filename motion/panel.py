@@ -20,6 +20,7 @@ not move, so playing never adds undo steps. The mechanism itself is kept in
 the document (``app.set_document_data``), one undo step per edit.
 """
 import math
+import time
 import numpy as np
 from PySide6.QtCore import QPointF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
@@ -4053,6 +4054,47 @@ class MotionPanel(QWidget):
             form.addRow(_T("Ralenti"), slow)
             back.setVisible(False)
             form.setRowVisible(dur, False)
+        from . import blender
+        rendu = QComboBox()
+        rendu.addItem(_T("Aperçu Motion (écran partagé, mesures)"), "apercu")
+        bl_where = QLabel()
+        bl_where.setWordWrap(True)
+        bl_pick = QToolButton()
+        bl_pick.setText(_T("Indiquer Blender…"))
+        if self.source == "model" and blender.available():
+            rendu.addItem(_T("Réaliste — Blender EEVEE (rapide)"), "eevee")
+            rendu.addItem(_T("Réaliste — Blender Cycles (photo)"), "cycles")
+            try:
+                last = str(self._settings().value("rendu", "apercu") or "apercu")
+            except Exception:
+                last = "apercu"
+            k = rendu.findData(last)
+            rendu.setCurrentIndex(max(k, 0))
+            rendu.setToolTip(_T("Réaliste : les pièces du modèle avec leurs matériaux, "
+                                "l'ambiance et les lumières du panneau Rendu d'IngeTrazo, "
+                                "rendues image par image par Blender (carte graphique si "
+                                "possible)."))
+            form.addRow(_T("Rendu"), rendu)
+            form.addRow(bl_where)
+            form.addRow(bl_pick)
+
+        def bl_refresh():
+            real = rendu.currentData() != "apercu"
+            found = blender.find() if real else None
+            bl_where.setText((_T("Blender : {w}", w=found.where) if found
+                              else _T("Blender introuvable — l'indiquer.")) if real else "")
+            bl_where.setVisible(real)
+            bl_pick.setVisible(real and found is None)
+
+        def bl_choose():
+            f, _ = QFileDialog.getOpenFileName(dlg, "Blender", "", "Blender (blender* Blender*)")
+            if f:
+                blender.remember(f)
+            bl_refresh()
+
+        bl_pick.clicked.connect(bl_choose)
+        rendu.currentIndexChanged.connect(lambda *_: bl_refresh())
+        bl_refresh()
         enc = QLabel()
         form.addRow("Format", enc)
         pick = QToolButton()
@@ -4079,6 +4121,11 @@ class MotionPanel(QWidget):
         form.addRow(bb)
         if dlg.exec() != QDialog.Accepted:
             return
+        mode = rendu.currentData()
+        try:
+            self._settings().setValue("rendu", mode)
+        except Exception:
+            pass
         kind, _ = video.mp4_backend(self._ffmpeg_hint())
         ext, filt = (".mp4", _T("Vidéo MP4 (*.mp4)")) if kind else (".avi", _T("Vidéo AVI (*.avi)"))
         path, _ = QFileDialog.getSaveFileName(self, _T("Exporter la vidéo"), "motion" + ext, filt)
@@ -4088,15 +4135,25 @@ class MotionPanel(QWidget):
         # window alone (two windows at once looked like a freeze)
         box = []
 
+        started = []
+
         def step(i, n):
             if not box:
                 prog = QProgressDialog(_T("Rendu de la vidéo…"), _T("Annuler"), 0, n, self)
                 prog.setWindowModality(Qt.WindowModal)
                 prog.setMinimumDuration(0)
                 box.append(prog)
+                started.append(time.time())
             prog = box[0]
-            prog.setMaximum(n)
-            prog.setValue(i)
+            prog.setMaximum(10 * n)
+            prog.setValue(int(10 * i))
+            if mode != "apercu":
+                el = time.time() - started[0]
+                txt = _T("Rendu Blender : image {i} / {n}", i=min(int(i) + 1, n), n=n)
+                if i >= 1 and i < n:
+                    txt += "\n" + _T("environ {m} min restantes",
+                                      m=max(1, round(el / i * (n - i) / 60)))
+                prog.setLabelText(txt)
             QApplication.processEvents()
             return not prog.wasCanceled()
 
@@ -4107,7 +4164,7 @@ class MotionPanel(QWidget):
         try:
             out, label = self.export_video(path, dur.value(), res.currentData(),
                                            back.isChecked(), progress=step,
-                                           ralenti=slow.value())
+                                           ralenti=slow.value(), rendu=mode)
         except Exception as exc:
             close()
             QMessageBox.warning(self, _T("Exporter la vidéo"), str(exc))
@@ -4509,9 +4566,11 @@ class MotionPanel(QWidget):
         return j.kind == "pivot" and abs(abs(hi - lo) - 2 * math.pi) < 1e-6
 
     def export_video(self, path, seconds=8.0, size=(1920, 1080), aller_retour=True,
-                     fps=30, progress=None, cycles=None, ralenti=1.0):
+                     fps=30, progress=None, cycles=None, ralenti=1.0, rendu="apercu"):
         """Render the motion to ``path`` (split screen). Returns (file, kind
         label), or (None, None) when ``progress(i, n)`` returned False.
+        ``rendu`` 'eevee' or 'cycles': the model's parts alone, rendered by
+        Blender (see blender.py), full frame.
         A crank (full-turn driver) runs at constant speed for ``cycles``
         turns (default: one turn per 2 s); anything else is eased, there
         and back when ``aller_retour``. A dynamic simulation plays in real
@@ -4597,7 +4656,11 @@ class MotionPanel(QWidget):
         # shows through another, the model's materials) framed on the
         # mechanism; the hand-made drawing stays for the examples
         mbox = self._mech_box() if self.source == "model" else None
-        writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
+        real = rendu in ("eevee", "cycles")
+        if real and (self.source != "model" or mbox is None):
+            raise ValueError(_T("Le rendu réaliste demande un modèle IngeTrazo."))
+        real_frames = []
+        writer = None if real else video.open_writer(path, W, H, fps, self._ffmpeg_hint())
         saved_x, saved_t = self.x, self.t
         x = None
         dyn = [f for f in getattr(m, "followers", []) if getattr(f, "dynamic", False)]
@@ -4605,7 +4668,7 @@ class MotionPanel(QWidget):
             f.reset()
         try:
             for i, t in enumerate(tl):
-                if progress is not None and not progress(i, len(tl)):
+                if progress is not None and not real and not progress(i, len(tl)):
                     writer.close()
                     return None, None
                 f = t * (len(sweep_rows) - 1)
@@ -4628,6 +4691,9 @@ class MotionPanel(QWidget):
                     x = f.advance(m, x, 0.0 if i == 0 else 1.0 / fps)
                 self.x, self.t = x, t
                 near = rows[int(round(t * (len(rows) - 1)))]
+                if real:                              # Blender draws it, later
+                    real_frames.append((x, near.get("value") if poses is not None else None))
+                    continue
                 hits = {nm for pair in near.get("hits", []) for nm in pair}
                 cl = [near["clearance"]] if near.get("clearance") else []
                 shown = lo + t * (hi - lo)
@@ -4679,6 +4745,11 @@ class MotionPanel(QWidget):
                 frame = render.compose(W, H, left, draw_right,
                                        f"{name} — IngeTrazo Motion", info, t)
                 writer.add(frame)
+            if real:
+                self.x, self.t = saved_x, saved_t
+                self._solid_restore()             # exported where they are drawn
+                return self._blender_video(path, m, real_frames, W, H, fps, rendu,
+                                           mbox, progress, name)
             if progress is not None:
                 progress(len(tl), len(tl))
             out = writer.close()
@@ -4692,6 +4763,55 @@ class MotionPanel(QWidget):
                     pass
             self.app.viewport.update()
         return out, writer.label
+
+    def _blender_video(self, path, m, frames, W, H, fps, engine, mbox, progress, name):
+        """The realistic video: Blender renders each pose of ``frames``
+        ((x, time or None) per image), the images go to ``path``."""
+        from . import blender, video
+        from PySide6.QtGui import QImage
+        found = blender.find()
+        if found is None:
+            raise ValueError(_T("Blender introuvable : installer Blender ou l'indiquer "
+                                "(Exporter la vidéo → Indiquer Blender…)."))
+        uids = {u for b_ in self.data["bodies"] if not b_["fixed"] for u in b_["groups"]}
+        anim = [{"M": blender.part_matrices(m, x, self.data["bodies"])} for x, _ in frames]
+        cam = self.app.viewport.camera
+        saved = (cam.target, cam.distance, cam.aspect)
+        work = blender.work_dir()
+        try:
+            cam.aspect = W / H
+            lo, hi = mbox
+            cam.fit_box(lo, hi, margin=1.04)
+            job = blender.write_scene(self.app, self._scene(), cam, work, uids, W, H,
+                                      engine, anim)
+        finally:
+            cam.target, cam.distance, cam.aspect = saved
+        n = len(anim)
+        with open(work / "blender.log", "w", encoding="utf-8") as log:
+            ok = blender.run(blender.command(found, job), n, progress, log)
+        if ok is None:
+            return None, None                     # cancelled
+        writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
+        title = f"{name} — IngeTrazo Motion"
+        for i, (_, tv) in enumerate(frames):
+            img = QImage(str(work / "frames" / f"f{i:04d}.png"))
+            if img.isNull():
+                writer.close()
+                raise RuntimeError(_T("Image Blender manquante : {f}", f=f"f{i:04d}.png"))
+            img = img.convertToFormat(QImage.Format_RGB32)
+            if img.width() != W or img.height() != H:
+                img = img.scaled(W, H)
+            writer.add(blender.caption(img, title, _T("temps {t} s", t=f"{tv:.2f}")
+                                       if tv is not None else None))
+        if progress is not None:
+            progress(n, n)
+        out = writer.close()
+        try:
+            import shutil
+            shutil.rmtree(work, ignore_errors=True)
+        except Exception:
+            pass
+        return out, f"{writer.label}, Blender {'Cycles' if engine == 'cycles' else 'EEVEE'}"
 
     def _mech_box(self):
         """(lo, hi) of the mechanism's groups at the drawn pose, a little

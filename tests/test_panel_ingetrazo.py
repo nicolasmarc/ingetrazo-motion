@@ -293,6 +293,83 @@ def test_video_export_split_screen():
     assert out is None
 
 
+_FAKE_BLENDER = r"""
+import json, struct, sys, zlib, os
+a = sys.argv[sys.argv.index("--") + 1:]
+job, anim, out = json.load(open(a[0])), json.load(open(a[1])), a[2]
+os.makedirs(out, exist_ok=True)
+w, h = job["width"], job["height"]
+def png(path, rgb):
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                           + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+glb = open(job["glb"], "rb").read()
+names = sorted(anim["frames"][0]["M"])
+assert names and all(n.encode() in glb for n in names), "moving parts must be nodes of their own"
+n = len(anim["frames"])
+for i in range(n):
+    png(os.path.join(out, "f%04d.png" % i), (40 + i % 200, 90, 160))
+    print("MOTION frame", i + 1, n, "0.0", flush=True)
+"""
+
+
+def test_video_export_realistic_through_blender():
+    """« Rendu réaliste » : the model exported once (a node per moving
+    group), the poses to Blender, its images to the video. Blender is a
+    stand-in here that checks what it is given and draws flat images."""
+    if SKIP:
+        print("skip:", SKIP); return
+    import importlib
+    win = _window()
+    panel = _state["panel"]
+    blender = importlib.import_module(type(panel).__module__.rsplit(".", 1)[0] + ".blender")
+    if not blender.available():
+        print("skip: this IngeTrazo has no Blender render"); return
+    if not panel.app.document_data():
+        test_drop_leaf_built_from_the_model()
+    panel.set_source("model")
+    out_dir = Path(tempfile.mkdtemp())
+    fake = out_dir / "fake_blender.py"
+    fake.write_text(_FAKE_BLENDER, encoding="utf-8")
+    from core import render_blender as rb
+    real_find = blender.find
+    blender.find = lambda: rb.BlenderFound([sys.executable, str(fake)], "test")
+    names = sorted(g.name for g in panel._scene().groups)
+    try:
+        calls = []
+        out, label = panel.export_video(str(out_dir / "real.mp4"), 1.0, (320, 180),
+                                        progress=lambda i, n: calls.append(i) or True,
+                                        rendu="cycles")
+        assert Path(out).is_file() and "Blender Cycles" in label, (out, label)
+        assert calls and calls[-1] == 30
+        from motion_probe import probe
+        info = probe(out)
+        if info:
+            assert info["frames"] == 30 and (info["w"], info["h"]) == (320, 180)
+        # the names of the groups are back, nothing left hidden
+        assert sorted(g.name for g in panel._scene().groups) == names
+        # at the drawn pose, no part moves
+        m = panel.mechanism()
+        x0 = panel.x
+        M = blender.part_matrices(m, x0, panel.data["bodies"])
+        assert M
+        # cancelled: nothing written
+        out, label = panel.export_video(str(out_dir / "stop.mp4"), 1.0, (320, 180),
+                                        progress=lambda i, n: i < 3, rendu="eevee")
+        assert out is None
+        # no Blender: said plainly
+        blender.find = lambda: None
+        try:
+            panel.export_video(str(out_dir / "none.mp4"), 1.0, (320, 180), rendu="eevee")
+            assert False, "no Blender must be said"
+        except ValueError as exc:
+            assert "Blender" in str(exc)
+    finally:
+        blender.find = real_find
+
+
 def test_step_assembly_imported_then_animated():
     """A STEP assembly from another CAD kernel becomes groups, then a
     mechanism: the left lever turns about its hole."""
