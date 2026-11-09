@@ -3067,6 +3067,12 @@ class MotionPanel(QWidget):
                     stiff = any(getattr(jj, f, None) for jj in m.joints
                                 for f in ("limits", "slide_limits", "spring", "damper"))
                     dt = max(dt, 1e-3 if stiff else self.hard_dt)
+                    # no driven point further in a step than a third of the
+                    # sampling step: a crank's pin at 70 mm/s went 0.34 mm a
+                    # step at 5 ms and through the Geneva wheel it drives
+                    v = self._driven_speed(m, imp, float(sim["duree"]))
+                    if v > 0.0 and imp.S is not None:
+                        dt = min(dt, max(1e-3, 0.3 * imp.S.h / v))
                     imp.dt = dt
             every = max(1, int(round(1.0 / (30 * dt))))
             steps = int(round(sim["duree"] / dt))
@@ -3157,6 +3163,21 @@ class MotionPanel(QWidget):
                                born=sum(s.born for s in B.sources),
                                taken=dict(B.taken), lost=B.lost, left=len(B.X))
         return out
+
+    @staticmethod
+    def _driven_speed(m, imp, T):
+        """Fastest point moved by the speed motors (m/s): a pivot's turn
+        rate times the size of the parts it holds, a slider's rate."""
+        v = 0.0
+        for jj, lo, hi in getattr(m, "drivers", ()) or ():
+            rate = abs(hi - lo) / max(T, 1e-9)
+            if jj.kind in ("pivot", "cylindrical", "screw"):
+                size = max((imp.radius(b) for b in (getattr(jj, "a", None), getattr(jj, "b", None))
+                            if b is not None and not getattr(b, "fixed", False)), default=0.0)
+                v = max(v, rate * size)
+            else:
+                v = max(v, rate)
+        return v
 
     def has_simulation(self):
         """A dynamic simulation is set (without running it)."""

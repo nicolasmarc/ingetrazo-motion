@@ -35,6 +35,18 @@ import numpy as np
 _FRICTION, _RESTITUTION = 0.4, 0.4
 
 
+def _coaxial(j, k, tol=2e-4):
+    """Two pivots on one axis (two pawls on a rocker's hub)."""
+    pj, dj = np.asarray(j.point, float), np.asarray(j.axis, float)
+    pk, dk = np.asarray(k.point, float), np.asarray(k.axis, float)
+    dj = dj / max(np.linalg.norm(dj), 1e-12)
+    dk = dk / max(np.linalg.norm(dk), 1e-12)
+    if np.linalg.norm(np.cross(dj, dk)) > 1e-3:
+        return False
+    v = pk - pj
+    return float(np.linalg.norm(v - (v @ dj) * dj)) < tol
+
+
 def _box_samples(half, per_edge=3):
     """Corners and ``per_edge`` points inside every edge, in box axes."""
     s = np.array([[i, j, k] for i in (-1, 1) for j in (-1, 1) for k in (-1, 1)], float)
@@ -171,6 +183,14 @@ class Impacts:
                 ra, rb = find(id(j.a)), find(id(j.b))
                 if ra != rb:
                     root[ra] = rb
+        pivots = [j for j in m.joints if j.kind in ("pivot", "cylindrical", "screw")
+                  and getattr(j, "axis", None) is not None]
+
+        def on(j, body):
+            """j holds this body (or a part locked to it)."""
+            r = find(id(body))
+            return any(p is not None and find(id(p)) == r
+                       for p in (getattr(j, "a", None), getattr(j, "b", None)))
         self.mesh_pairs = []
         for i, a in enumerate(self.mesh_bodies):
             for b in self.mesh_bodies[i + 1:]:
@@ -189,9 +209,13 @@ class Impacts:
                 # the rub of shaft and bore is the joint itself.
                 # the pivots of either part: two parts on one axis through a
                 # third (two pawls on a rocker's hub) rub there too
-                mine = [j for j in m.joints if j.kind in ("pivot", "cylindrical", "screw")
-                        and getattr(j, "axis", None) is not None
-                        and ({id(j.a), id(j.b)} & {id(a), id(b)})]
+                mine = [j for j in pivots
+                        if on(j, a) and on(j, b)
+                        or on(j, a) and any(on(k, b) and _coaxial(j, k) for k in pivots if k is not j)
+                        or on(j, b) and any(on(k, a) and _coaxial(j, k) for k in pivots if k is not j)]
+                # not the pivot of one of them alone: a pin turning on its
+                # crank, drawn against the wheel it drives, would be left
+                # out whole round its own axis — and go through the wheel
                 axes = [(tuple(map(float, j.point)), tuple(map(float, j.axis))) for j in mine]
                 self.mesh_pairs.append((a, b, ("drawn", tuple(axes)) if axes else "drawn"))
 

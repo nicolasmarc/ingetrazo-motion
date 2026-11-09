@@ -14,6 +14,17 @@
   stops Blender. The Blender is IngeTrazo's (same setting), or chosen in
   the export window. Needs IngeTrazo 0.6 and a model (not the examples).
 
+### Fixed (contacts)
+- **A pin went through the wheel it drives** (Geneva Device imported from
+  STEP): the points round a pivot are the joint's rub, not a contact — but
+  every pivot of either part was taken, so the pin turning on its crank,
+  drawn against the wheel, was left out whole round its own axis. Now only
+  a pivot holding both parts, or two pivots on one axis. Pin into the wheel:
+  3 mm → under 0.8 mm (a frame at 1.2 mm as it enters the next slot).
+- The step of a simulation with hard contacts follows the motors: no
+  driven point further in a step than a third of the sampling step (5 ms
+  before, 2 ms for the Geneva Device; never under 1 ms).
+
 ### Changed
 - **Contacts read from distance grids**: each part's signed distance to its
   own surface is kept on a grid of half the sampling step, worked out

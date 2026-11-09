@@ -195,3 +195,16 @@ def test_a_ball_rests_on_a_table():
     rows = dyn.run(0.2, dt=DT, every=1000)
     x = rows[-1]["x"]
     assert abs(x[2]) < 2e-4 and np.linalg.norm(x[:2]) < 1e-5
+
+
+def test_pair_axes_are_shared_pivots_only():
+    """A pair's hub is a pivot holding both parts (or two pivots on one
+    axis): a pin turning on its crank is no hub against the wheel it drives
+    (it was left out whole, and went through the Geneva wheel)."""
+    from types import SimpleNamespace as NS
+    from motion.impacts import _coaxial
+    j = NS(point=(0.0, 0.0, 0.0), axis=(0.0, 1.0, 0.0))
+    k = NS(point=(0.0, 0.03, 0.0), axis=(0.0, -2.0, 0.0))
+    off = NS(point=(0.0064, 0.0, 0.021), axis=(0.0, 1.0, 0.0))
+    assert _coaxial(j, k) and not _coaxial(j, off)
+    assert not _coaxial(j, NS(point=(0.0, 0.0, 0.0), axis=(1.0, 0.0, 0.0)))
