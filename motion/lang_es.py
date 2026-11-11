@@ -864,4 +864,6 @@ ES = {
         'Exportación cancelada: la simulación se interrumpió.',
     'Calcul…':
         'Cálculo…',
+    "{name} : ignorée — « {a} » et « {b} » sont déjà encastrées (supprimer l'une des deux liaisons)":
+        '{name}: ignorada — « {a} » y « {b} » ya están empotradas (borrar una de las dos uniones)',
 }

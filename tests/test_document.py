@@ -112,3 +112,24 @@ def test_merging_two_parts():
     assert [j["name"] for j in d["joints"]] == [p1, p2]            # the lock between them gone
     assert next(j for j in d["joints"] if j["name"] == p2)["a"] == "bras"
     assert [x["joint"] for x in d["drivers"]] == [p1]
+
+
+def test_a_joint_between_parts_locked_together_is_set_aside():
+    """A pin both on a pivot of its crank and locked to it (Geneva Device,
+    essai 15): held twice, the contact solver lost its push and the pin
+    went through the wheel. The lock wins, the pivot is set aside, said."""
+    groups = {"g-base": _corners((0, 0, 0), np.array([0.1, 0.1, 0.01])),
+              "g-crank": _corners((0, 0, 0.03), np.array([0.05, 0.01, 0.005])),
+              "g-pin": _corners((0.04, 0, 0.04), np.array([0.003, 0.003, 0.005]))}
+    d = doc.empty()
+    d, base = doc.add_body(d, ["g-base"], True)
+    d, crank = doc.add_body(d, ["g-crank"], False)
+    d, pin = doc.add_body(d, ["g-pin"], False)
+    d, p1 = doc.add_joint(d, "pivot", base, crank, point=(0, 0, 0.03), axis=(0, 0, 1))
+    d, p2 = doc.add_joint(d, "pivot", crank, pin, point=(0.04, 0, 0.04), axis=(0, 0, 1))
+    d, lk = doc.add_joint(d, "lock", crank, pin, point=(0.04, 0, 0.04))
+    d = doc.set_driver(d, p1, 0, math.pi)
+    m, problems = doc.build(d, groups.get)
+    assert [j.name for j in m.joints if j.kind == "pivot"] == [p1]
+    assert any(p2 in p and "encastrées" in p for p in problems), problems
+    assert solver.dof(m) == 1

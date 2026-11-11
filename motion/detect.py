@@ -396,7 +396,15 @@ def _filled_bore(p, q, size):
                                           dict(radius=h.radius, screw=s_part.key)))
                 continue
             if ov < 0.25 * h.radius:
-                continue                          # only touching at the mouth
+                # only at the bore's mouth: the other's own hole, the same
+                # size, on the same axis — two holes in line, the axle not
+                # drawn (Geneva with helix gear: its gears on the Socle).
+                # Kept unless a third part is on that axis (scan): then the
+                # screw through both holes carries the pivot
+                found.append(Proposal("pivot", p.key, q.key, np.asarray(h.point) + tw.mean() * ax,
+                                      ax, 0.5, f"Ø {2000 * h.radius:.1f} mm, trous alignés "
+                                      f"(axe non dessiné)", dict(radius=h.radius, mouth=True)))
+                continue
             found.append(Proposal("pivot", p.key, q.key, np.asarray(h.point) + 0.5 * (tw.max() + tw.min()) * ax,
                                   ax, 0.6, f"Ø {2000 * h.radius:.1f} mm, alésage de « {b_part.name} » "
                                   f"rempli, portée {1000 * ov:.1f} mm",
@@ -1066,6 +1074,26 @@ def scan(parts, size=None):
             if bl:
                 props.append(bl)
 
+    # two holes in line with a third part on their axis (a screw through
+    # both, already a pivot of one and fixed in the other): no pivot of
+    # their own
+    def _on_axis(x, y):
+        if y.axis is None or y.point is None:
+            return False
+        ax = _unit(x.axis)
+        if abs(abs(_unit(y.axis) @ ax) - 1) > 1e-3:
+            return False
+        r = x.extra.get("radius", 1e-3)
+        ry = y.extra.get("radius")
+        if ry is None or abs(ry - r) > 0.2 * r:     # not in that hole (a clamp's own axle)
+            return False
+        v = np.asarray(y.point, float) - np.asarray(x.point, float)
+        return np.linalg.norm(v - (v @ ax) * ax) < 0.5 * r
+    props = [x for x in props
+             if not x.extra.get("mouth")
+             or not any(y is not x and not y.extra.get("mouth")
+                        and ({y.a, y.b} & {x.a, x.b}) and ({y.a, y.b} - {x.a, x.b})
+                        and _on_axis(x, y) for y in props)]
     pivots = _axles(parts, [x for x in props if x.kind == "pivot"])
     # an arm on a pivot with a bolt through a slot of the other part: the
     # bolt is tightened, the two parts are one (an arm bolted on a wheel,

@@ -626,4 +626,6 @@ EN = {
         'Export cancelled: the simulation was stopped.',
     'Calcul…':
         'Computing…',
+    "{name} : ignorée — « {a} » et « {b} » sont déjà encastrées (supprimer l'une des deux liaisons)":
+        '{name}: ignored — « {a} » and « {b} » are already locked together (delete one of the two joints)',
 }

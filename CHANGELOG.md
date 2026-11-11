@@ -14,6 +14,20 @@
   stops Blender. The Blender is IngeTrazo's (same setting), or chosen in
   the export window. Needs IngeTrazo 0.6 and a model (not the examples).
 
+### Fixed (mechanism)
+- **A pin both on a pivot and locked to its crank went through the wheel**
+  (Geneva Device, 3 mm at the second engagement): held twice, the contact
+  solver lost the push it carries. A joint between parts already locked
+  together (even through a third) is now set aside, and the report says
+  so: « ignorée — … sont déjà encastrées ».
+
+### Fixed (detection)
+- **Pivots lost since the screw rule** (Geneva mechanism with helix gear:
+  4 pivots on the Socle, the 21/7 gears and the Socle as frame, gone): two
+  holes of the same size in line, meeting at a bore's mouth, the axle not
+  drawn, are a pivot again (« trous alignés », lower confidence) — unless a
+  third part fills that hole (a screw through both: it carries the pivot).
+
 ### Fixed (video)
 - **The Blender video did not follow the simulation**: the export renamed
   the groups for a moment, the mechanism was rebuilt and its simulation

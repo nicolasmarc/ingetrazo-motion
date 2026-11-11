@@ -650,6 +650,23 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
     if not fixed:
         problems.append(_T("aucune pièce fixe : ajouter une « pièce fixe »"))
     joints = {}
+    # parts locked together (even through a third) are one solid: another
+    # joint between them would hold them twice — a pin both turning on its
+    # crank and locked to it left the contact solver without its push, and
+    # it went through the Geneva wheel. The lock wins, the other is set aside
+    root = {}
+
+    def find(k):
+        while root.get(k, k) != k:
+            k = root[k]
+        return k
+    for j in d["joints"]:
+        if j["kind"] == "lock":
+            a, b = bodies.get(j["a"]), bodies.get(j["b"])
+            if a is not None and b is not None:
+                ra, rb = find(id(a)), find(id(b))
+                if ra != rb:
+                    root[ra] = rb
     for j in d["joints"]:
         a, b = bodies.get(j["a"]), bodies.get(j["b"])
         if a is None or b is None:
@@ -657,6 +674,10 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
             continue
         if a is b:
             problems.append(_T("{name} : relie une pièce à elle-même", name=j['name']))
+            continue
+        if j["kind"] not in ("lock", "coupling", "contact", "elastic") and find(id(a)) == find(id(b)):
+            problems.append(_T("{name} : ignorée — « {a} » et « {b} » sont déjà encastrées "
+                               "(supprimer l'une des deux liaisons)", name=j['name'], a=j['a'], b=j['b']))
             continue
         lim = tuple(j["limits"]) if j.get("limits") else None
         if j["kind"] in ("coupling", "contact"):
