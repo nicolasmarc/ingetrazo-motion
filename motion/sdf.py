@@ -241,15 +241,21 @@ class DistanceGrid:
         the nearest of the triangles nearest to their cell's corners (the
         interpolation rounds the inside of an edge by a fraction of a
         cell: enough to let a part sink in a little more, Genève)."""
-        tri = self.last_tris[rows]
-        Qr = np.repeat(Q[rows], 8, axis=0)
-        t = tri.ravel()
+        # the eight corners mostly share their nearest triangle: each
+        # triangle once per point (a third of a simulation's time went
+        # into the same closest point worked out up to eight times)
+        tri = np.sort(self.last_tris[rows], axis=1)
+        dup = np.zeros(tri.shape, bool)
+        dup[:, 1:] = tri[:, 1:] == tri[:, :-1]
+        t = np.where(dup, -1, tri).ravel()
         ok = t >= 0
+        Qk = Q[rows][np.repeat(np.arange(len(rows)), 8)[ok]]
         dist = np.full(len(t), np.inf)
         cp = np.zeros((len(t), 3))
         Tk = self.T[t[ok]]
-        cp[ok] = contact.closest_on_triangles(Qr[ok], Tk[:, 0], Tk[:, 1], Tk[:, 2])
-        dist[ok] = np.linalg.norm(Qr[ok] - cp[ok], axis=1)
+        cp[ok] = contact.closest_on_triangles(Qk, Tk[:, 0], Tk[:, 1], Tk[:, 2])
+        dist[ok] = np.linalg.norm(Qk - cp[ok], axis=1)
+        tri = t.reshape(-1, 8)
         dist = dist.reshape(-1, 8)
         j = np.argmin(dist, axis=1)
         r = np.arange(len(rows))

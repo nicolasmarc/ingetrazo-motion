@@ -14,6 +14,20 @@
   stops Blender. The Blender is IngeTrazo's (same setting), or chosen in
   the export window. Needs IngeTrazo 0.6 and a model (not the examples).
 
+### Fixed (video)
+- **The Blender video did not follow the simulation**: the export renamed
+  the groups for a moment, the mechanism was rebuilt and its simulation
+  thrown away; computed again, stopped, the export went on with the
+  kinematic sweep (where nothing turns a wheel driven by contact). A
+  simulation is now kept as long as its data and its parts' shapes are the
+  same (an export, a picture, a name changed and back: computed once), and
+  an export whose simulation is stopped stops too, and says why.
+
+### Faster
+- Contacts: each triangle once per point in the exact distance (the eight
+  corners of a cell mostly share it): Geneva Device, 2 s simulated, 81 s →
+  66 s here (105 → 93 s the first time, the distance grids not yet kept).
+
 ### Fixed (contacts)
 - **A pin went through the wheel it drives** (Geneva Device imported from
   STEP): the points round a pivot are the joint's rub, not a contact — but

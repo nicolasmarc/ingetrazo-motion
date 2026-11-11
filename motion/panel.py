@@ -2437,7 +2437,7 @@ class MotionPanel(QWidget):
         """(rows, dynamic) already computed — nothing is computed here."""
         if self.has_simulation():
             sc = getattr(self, "_sim_cache", (None, None))
-            if sc[0] is self.mech and sc[1]:
+            if sc[0] == self._sim_key() and sc[1]:
                 return sc[1], True
             return None, True
         rows = self.report["steps"] if self.report else self.frames
@@ -3049,7 +3049,7 @@ class MotionPanel(QWidget):
             return None
         if getattr(self, "_sim_running", False):
             return None                        # asked again while it runs
-        if getattr(self, "_sim_cache", (None,))[0] is not self.mech:
+        if getattr(self, "_sim_cache", (None,))[0] != self._sim_key():
             from . import dynamics
             m = self.mechanism()
             dyn = dynamics.Dynamics(m, **sim.get("params", {}))
@@ -3087,7 +3087,7 @@ class MotionPanel(QWidget):
                 if imp is not None and imp.S is not None and hasattr(imp.S, "save_grids"):
                     imp.S.save_grids()         # the next simulation of these parts: sooner
             if rows is None:                   # cancelled: not again until asked
-                self._sim_cache = (self.mech, None)
+                self._sim_cache = (self._sim_key(), None)
                 self.say(_T("Simulation interrompue : ▶ ou « Valider » la relance."))
                 return None
             n = len(rows)
@@ -3114,7 +3114,7 @@ class MotionPanel(QWidget):
             if beads is not None:
                 for p_, b_ in zip(poses, beads):
                     p_["billes"] = b_
-            self._sim_cache = (self.mech, poses)
+            self._sim_cache = (self._sim_key(), poses)
             self._sim_assumed = list(dyn.assumed)
             self._sim_impacts = (dyn.impacts.deepest if dyn.impacts is not None else None)
             self._fill_curve_choices()
@@ -3186,6 +3186,38 @@ class MotionPanel(QWidget):
         if self.source != "model":
             return False
         return bool((getattr(self.mechanism(), "simulation", {}) or {}).get("active"))
+
+    def _sim_key(self):
+        """What a simulation depends on: the example, or the model's Motion
+        data and its parts' shapes — not the mechanism object, rebuilt for
+        nothing when the document only looks changed (a name changed and
+        back for the Blender export, a figure hidden for a picture)."""
+        if self.source != "model":
+            return (self.source,)
+        import json
+        try:
+            data = json.dumps(self.data, sort_keys=True, default=str)
+        except Exception:
+            data = repr(self.data)
+        sc = self._scene()
+        cv = getattr(sc, "content_version", getattr(sc, "version", None))
+        cached = getattr(self, "_geo_sig", None)
+        placed = bool(getattr(self, "_solid_orig", None))   # parts moved for a playback
+        if cached is None or (cached[0] != cv and not placed):
+            by = groups_by_uid(sc)
+            sig = []
+            for b in self.data.get("bodies", []):
+                for u in b["groups"]:
+                    g = by.get(u)
+                    if g is None:
+                        sig.append((u, None))
+                        continue
+                    P = group_points(g)
+                    sig.append((u, len(P), *(np.round(P.sum(0), 9).tolist() if len(P) else ()),
+                                *(np.round(np.abs(P).sum(0), 9).tolist() if len(P) else ())))
+            cached = (cv, tuple(sig))
+            self._geo_sig = cached
+        return (data, cached[1])
 
     def rerun_simulation(self):
         """Forget a cancelled run, so the next request computes again."""
@@ -4192,7 +4224,8 @@ class MotionPanel(QWidget):
             return
         close()
         self.say(_T("Vidéo enregistrée : {out} — {label}.", out=out, label=label) if out
-                 else _T("Export annulé."))
+                 else (getattr(self, "_export_note", None) or _T("Export annulé.")))
+        self._export_note = None
 
     def _moving_groups(self):
         """IngeTrazo groups of the moving bodies (model source)."""
@@ -4601,7 +4634,13 @@ class MotionPanel(QWidget):
             self.play_btn.setChecked(False)
         self.timer.stop()
         m = self.mechanism()
+        self.rerun_simulation()                   # stopped before: the video needs it
         poses = self.simulation()
+        if poses is None and self.has_simulation():
+            # the simulation was stopped: no video of something else (the
+            # kinematic sweep, where nothing drives a wheel turned by contact)
+            self._export_note = _T("Export annulé : la simulation a été interrompue.")
+            return None, None
         if m.driver is None and poses is None:
             raise ValueError(_T("pas de moteur"))
         # checked once, at the validation steps: the readings of a frame

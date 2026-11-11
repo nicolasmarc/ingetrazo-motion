@@ -860,4 +860,6 @@ ES = {
         'Render Blender: imagen {i} / {n}',
     'environ {m} min restantes':
         'unos {m} min restantes',
+    'Export annulé : la simulation a été interrompue.':
+        'Exportación cancelada: la simulación se interrumpió.',
 }

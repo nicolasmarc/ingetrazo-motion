@@ -1521,3 +1521,53 @@ def test_play_in_dynamics_with_a_motor_plays_the_simulation():
         panel.timer.stop()
         panel.has_simulation, panel.simulation, panel._free_parts_need_dynamics = old
         panel.frames = None
+
+
+def test_a_stopped_simulation_stops_the_export():
+    """Blender video of the Geneva Device: the simulation stopped, the
+    export went on with the kinematic sweep (the wheel still). Now it stops."""
+    win = _window()
+    panel = _state["panel"]
+    import tempfile
+    old = (panel.has_simulation, panel.simulation)
+    try:
+        panel.has_simulation = lambda: True
+        panel.simulation = lambda: None
+        out = panel.export_video(str(Path(tempfile.mkdtemp()) / "x.mp4"), 1.0, (320, 180))
+        assert out == (None, None)
+        assert "interrompue" in panel._export_note
+    finally:
+        panel.has_simulation, panel.simulation = old
+        panel._export_note = None
+
+
+def test_the_simulation_is_kept_while_the_model_is_the_same():
+    """Its key is the Motion data and the parts' shapes: a name changed and
+    back (the Blender export) keeps it, a part changed does not."""
+    if SKIP:
+        print("skip:", SKIP); return
+    win = _window()
+    panel = _state["panel"]
+    if not panel.app.document_data():
+        test_drop_leaf_built_from_the_model()
+    panel.set_source("model")
+    k0 = panel._sim_key()
+    sc = panel._scene()
+    by = {g.uid: g for g in sc.groups}
+    u = next(u for b in panel.data["bodies"] for u in b["groups"] if u in by)
+    g = by[u]
+    name = g.name
+    g.name = "MOT_x"
+    win.viewport.notify_scene_changed()
+    g.name = name
+    win.viewport.notify_scene_changed()
+    assert panel._sim_key() == k0
+    import json
+    saved = panel.data
+    data = json.loads(json.dumps(panel.data))
+    data["bodies"][0]["name"] = data["bodies"][0]["name"] + " bis"
+    try:
+        panel.data = data
+        assert panel._sim_key() != k0
+    finally:
+        panel.data = saved

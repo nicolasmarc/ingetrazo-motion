@@ -622,4 +622,6 @@ EN = {
         'Blender render: frame {i} / {n}',
     'environ {m} min restantes':
         'about {m} min left',
+    'Export annulé : la simulation a été interrompue.':
+        'Export cancelled: the simulation was stopped.',
 }
