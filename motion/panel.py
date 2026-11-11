@@ -4645,12 +4645,34 @@ class MotionPanel(QWidget):
             raise ValueError(_T("pas de moteur"))
         # checked once, at the validation steps: the readings of a frame
         # (smallest gap, collisions) are those of its nearest step
+        real = rendu in ("eevee", "cycles")
         rows = self.report["steps"] if self.report else None
-        if rows is None or len(rows) < 3:
+        if real:
+            # Blender shows no readings: the simulation's poses as they are,
+            # or the sweep alone (the clearances of every pose took 5 min
+            # for the Geneva Device imported from STEP)
+            if poses is not None:
+                rows = poses
+            elif rows is None or len(rows) < 3 or "x" not in rows[0]:
+                prog = self._busy(_T("Calcul…"))
+                try:
+                    rows = solver.sweep(m, max(self.pas.value(), 21), progress=prog)
+                finally:
+                    if prog is not None:
+                        prog.close()
+                if rows is None:
+                    return None, None             # cancelled
+        elif rows is None or len(rows) < 3:
+            # a simulation: its readings (smallest gap, collisions) at some
+            # 25 of its poses, the nearest one for each frame
+            some = poses
+            if poses is not None and len(poses) > 25:
+                keep = np.unique(np.round(np.linspace(0, len(poses) - 1, 25)).astype(int))
+                some = [poses[k] for k in keep]
             prog = self._busy(_T("Validation…"))
             try:
                 rep = collide.validate(m, max(self.pas.value(), 21),
-                                       self.jeu.value() / 1000, poses=poses,
+                                       self.jeu.value() / 1000, poses=some,
                                        contacts=poses is not None and self._chocs(),
                                        progress=prog)
             finally:
@@ -4659,7 +4681,7 @@ class MotionPanel(QWidget):
             if rep is None:
                 return None, None                 # cancelled
             rows = rep["steps"]
-        sweep_rows = rows
+        sweep_rows = poses if poses is not None else rows
         slow = max(float(ralenti or 1.0), 1.0)
         if poses is not None:                     # a simulation plays in real time
             seconds = (poses[-1]["value"] - poses[0]["value"]) * slow
@@ -4716,7 +4738,6 @@ class MotionPanel(QWidget):
         # shows through another, the model's materials) framed on the
         # mechanism; the hand-made drawing stays for the examples
         mbox = self._mech_box() if self.source == "model" else None
-        real = rendu in ("eevee", "cycles")
         if real and (self.source != "model" or mbox is None):
             raise ValueError(_T("Le rendu réaliste demande un modèle IngeTrazo."))
         real_frames = []

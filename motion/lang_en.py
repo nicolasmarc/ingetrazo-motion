@@ -624,4 +624,6 @@ EN = {
         'about {m} min left',
     'Export annulé : la simulation a été interrompue.':
         'Export cancelled: the simulation was stopped.',
+    'Calcul…':
+        'Computing…',
 }

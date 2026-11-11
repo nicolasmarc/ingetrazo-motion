@@ -24,6 +24,11 @@
   an export whose simulation is stopped stops too, and says why.
 
 ### Faster
+- **Video export after a simulation**: Blender shows no readings, so it
+  takes the simulated poses as they are (5 min of « Validation… » before
+  Blender on the Geneva Device imported from STEP: gone). The split-screen
+  preview reads its gaps and collisions at some 25 poses (every pose
+  before), and still plays every pose: 142 s → 58 s here.
 - Contacts: each triangle once per point in the exact distance (the eight
   corners of a cell mostly share it): Geneva Device, 2 s simulated, 81 s →
   66 s here (105 → 93 s the first time, the distance grids not yet kept).
