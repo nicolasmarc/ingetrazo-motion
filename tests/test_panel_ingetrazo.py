@@ -1564,6 +1564,12 @@ def test_the_simulation_is_kept_while_the_model_is_the_same():
     assert panel._sim_key() == k0
     import json
     saved = panel.data
+    # what does not move anything: the step count, the motor the list shows
+    try:
+        panel.data = dict(saved, pas=int(saved.get("pas", 51)) + 10, driver=None)
+        assert panel._sim_key() == k0
+    finally:
+        panel.data = saved
     data = json.loads(json.dumps(panel.data))
     data["bodies"][0]["name"] = data["bodies"][0]["name"] + " bis"
     try:

@@ -15,6 +15,12 @@
   the export window. Needs IngeTrazo 0.6 and a model (not the examples).
 
 ### Fixed (playback)
+- **A finished simulation said « pas encore simulé »**: it was kept under
+  a key worked out after the run, from all of Motion's data — a click in
+  the list while it computed (the motor shown) made it someone else's. The
+  key now holds only what moves the parts (parts, joints, motors,
+  materials, simulation, beads) and is taken when the run starts: a change
+  made meanwhile makes the result stale, never misfiled.
 - **In Dynamics, the slider showed the kinematic sweep** when the
   simulation was stopped or not computed yet (moving it after an edit
   started a whole simulation; stopped, the Geneva wheel stayed still and

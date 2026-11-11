@@ -3049,7 +3049,10 @@ class MotionPanel(QWidget):
             return None
         if getattr(self, "_sim_running", False):
             return None                        # asked again while it runs
-        if getattr(self, "_sim_cache", (None,))[0] != self._sim_key():
+        key = self._sim_key()
+        if getattr(self, "_sim_cache", (None,))[0] != key:
+            # the key of the model as it is now: a change made while it
+            # computes makes this result stale, it does not take its place
             from . import dynamics
             m = self.mechanism()
             dyn = dynamics.Dynamics(m, **sim.get("params", {}))
@@ -3087,7 +3090,7 @@ class MotionPanel(QWidget):
                 if imp is not None and imp.S is not None and hasattr(imp.S, "save_grids"):
                     imp.S.save_grids()         # the next simulation of these parts: sooner
             if rows is None:                   # cancelled: not again until asked
-                self._sim_cache = (self._sim_key(), None)
+                self._sim_cache = (key, None)
                 self.say(_T("Simulation interrompue : ▶ ou « Valider » la relance."))
                 return None
             n = len(rows)
@@ -3114,7 +3117,7 @@ class MotionPanel(QWidget):
             if beads is not None:
                 for p_, b_ in zip(poses, beads):
                     p_["billes"] = b_
-            self._sim_cache = (self._sim_key(), poses)
+            self._sim_cache = (key, poses)
             self._sim_assumed = list(dyn.assumed)
             self._sim_impacts = (dyn.impacts.deepest if dyn.impacts is not None else None)
             self._fill_curve_choices()
@@ -3195,10 +3198,16 @@ class MotionPanel(QWidget):
         if self.source != "model":
             return (self.source,)
         import json
+        # only what the motion depends on: not the step count, the gap
+        # threshold, which motor the list shows (a click in the list while
+        # it computed left a finished simulation « not simulated yet »)
+        d = doc.normalized(self.data)
+        rel = {k: d.get(k) for k in ("bodies", "joints", "drivers", "materiau", "matieres",
+                                     "couples", "simulation", "billes")}
         try:
-            data = json.dumps(self.data, sort_keys=True, default=str)
+            data = json.dumps(rel, sort_keys=True, default=str)
         except Exception:
-            data = repr(self.data)
+            data = repr(rel)
         sc = self._scene()
         cv = getattr(sc, "content_version", getattr(sc, "version", None))
         cached = getattr(self, "_geo_sig", None)
