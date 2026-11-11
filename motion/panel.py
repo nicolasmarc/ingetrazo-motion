@@ -3845,8 +3845,33 @@ class MotionPanel(QWidget):
         for f in dyn:
             self.x = f.advance(m, self.x, self.timer.interval() / 1000.0 if going else 0.0)
 
+    def _cached_simulation(self):
+        """The simulation already computed for the model as it is, or None
+        (nothing is computed here)."""
+        sc = getattr(self, "_sim_cache", (None, None))
+        if sc[1] and sc[0] == self._sim_key():
+            return sc[1]
+        return None
+
     def _pose_at(self, t):
         m = self.mechanism()
+        if self.has_simulation():
+            # Dynamics: the simulated poses or nothing — moving the slider
+            # never starts a simulation (1 min 30 for the Geneva Device,
+            # stopped it left the kinematic sweep on screen: the wheel
+            # still, the pin through it)
+            sim = self._cached_simulation()
+            if sim is None:
+                self.x = np.zeros(m.n)
+                if not getattr(self, "_sim_said", False):
+                    self.say(_T("Dynamique : pas encore simulé — ▶ ou « Valider » lance la simulation."))
+                    self._sim_said = True
+                return
+            self._sim_said = False
+            self.frames = sim
+            k = int(round(t * (len(sim) - 1)))
+            self.x = sim[k]["x"]
+            return
         if self.frames is None and self.simulation() is not None:
             self.frames = self.simulation()
         if m.driver is None and self.frames:

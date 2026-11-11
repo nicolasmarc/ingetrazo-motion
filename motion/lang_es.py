@@ -866,4 +866,6 @@ ES = {
         'Cálculo…',
     "{name} : ignorée — « {a} » et « {b} » sont déjà encastrées (supprimer l'une des deux liaisons)":
         '{name}: ignorada — « {a} » y « {b} » ya están empotradas (borrar una de las dos uniones)',
+    'Dynamique : pas encore simulé — ▶ ou « Valider » lance la simulation.':
+        'Dinámica: aún no simulado — ▶ o « Validar » lanza la simulación.',
 }

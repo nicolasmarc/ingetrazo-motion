@@ -1571,3 +1571,31 @@ def test_the_simulation_is_kept_while_the_model_is_the_same():
         assert panel._sim_key() != k0
     finally:
         panel.data = saved
+
+
+def test_the_slider_never_starts_nor_bypasses_the_simulation():
+    """Dynamics, the simulation stopped (or not computed): moving the
+    slider showed the kinematic sweep — the Geneva wheel still, the pin
+    through it. Now it shows the drawn pose, and computes nothing."""
+    win = _window()
+    panel = _state["panel"]
+    if not panel.app.document_data():
+        test_drop_leaf_built_from_the_model()
+    panel.set_source("model")
+    old = (panel.has_simulation, panel.simulation)
+    calls = []
+    try:
+        panel.has_simulation = lambda: True
+        panel.simulation = lambda: calls.append(1)
+        panel._sim_cache = (None, None)
+        m = panel.mechanism()
+        panel._pose_at(0.9)
+        assert not calls and np.allclose(panel.x, 0.0)
+        sim = [dict(t=k / 4, value=k / 4, x=np.full(m.n, 0.01 * k), ok=True, res=0.0) for k in range(5)]
+        panel._sim_cache = (panel._sim_key(), sim)
+        panel._pose_at(1.0)
+        assert not calls and np.allclose(panel.x, 0.04)
+    finally:
+        panel.has_simulation, panel.simulation = old
+        panel._sim_cache = (None, None)
+        panel.x = None

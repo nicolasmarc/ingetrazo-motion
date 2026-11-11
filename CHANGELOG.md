@@ -14,6 +14,14 @@
   stops Blender. The Blender is IngeTrazo's (same setting), or chosen in
   the export window. Needs IngeTrazo 0.6 and a model (not the examples).
 
+### Fixed (playback)
+- **In Dynamics, the slider showed the kinematic sweep** when the
+  simulation was stopped or not computed yet (moving it after an edit
+  started a whole simulation; stopped, the Geneva wheel stayed still and
+  the pin went through it). The slider now never computes: the simulated
+  poses, or the drawn pose with « Dynamique : pas encore simulé — ▶ ou
+  « Valider » lance la simulation ».
+
 ### Fixed (mechanism)
 - **A pin both on a pivot and locked to its crank went through the wheel**
   (Geneva Device, 3 mm at the second engagement): held twice, the contact
