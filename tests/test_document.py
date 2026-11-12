@@ -114,7 +114,7 @@ def test_merging_two_parts():
     assert [x["joint"] for x in d["drivers"]] == [p1]
 
 
-def test_a_joint_between_parts_locked_together_is_set_aside():
+def test_a_lock_beside_another_joint_is_set_aside():
     """A pin both on a pivot of its crank and locked to it (Geneva Device,
     essai 15): held twice, the contact solver lost its push and the pin
     went through the wheel. The lock wins, the pivot is set aside, said."""
@@ -130,6 +130,7 @@ def test_a_joint_between_parts_locked_together_is_set_aside():
     d, lk = doc.add_joint(d, "lock", crank, pin, point=(0.04, 0, 0.04))
     d = doc.set_driver(d, p1, 0, math.pi)
     m, problems = doc.build(d, groups.get)
-    assert [j.name for j in m.joints if j.kind == "pivot"] == [p1]
-    assert any(p2 in p and "encastrées" in p for p in problems), problems
-    assert solver.dof(m) == 1
+    # the lock beside the pin's pivot is the one set aside
+    assert sorted(j.name for j in m.joints) == sorted([p1, p2])
+    assert any(lk in p and "déjà une liaison" in p for p in problems), problems
+    assert solver.dof(m) == 2                      # the motor's turn, the pin's spin

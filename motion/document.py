@@ -660,14 +660,28 @@ def build(data, points_of_group=lambda uid: None, names_of_group=None,
         while root.get(k, k) != k:
             k = root[k]
         return k
+    # a lock beside another joint of the same two parts (a pin on its
+    # crank's pivot, locked to it as well) is the one set aside: the pin
+    # held by the lock alone pushed the Geneva wheel unevenly and went
+    # through it at the third engagement, on its pivot it does not
+    paired = {frozenset((j["a"], j["b"])) for j in d["joints"]
+              if j["kind"] not in ("lock", "coupling", "contact", "elastic")}
+    spare = set()
     for j in d["joints"]:
-        if j["kind"] == "lock":
+        if j["kind"] == "lock" and frozenset((j["a"], j["b"])) in paired:
+            spare.add(j["name"])
+            problems.append(_T("{name} : ignorée — « {a} » et « {b} » ont déjà une liaison "
+                               "(supprimer l'une des deux)", name=j['name'], a=j['a'], b=j['b']))
+    for j in d["joints"]:
+        if j["kind"] == "lock" and j["name"] not in spare:
             a, b = bodies.get(j["a"]), bodies.get(j["b"])
             if a is not None and b is not None:
                 ra, rb = find(id(a)), find(id(b))
                 if ra != rb:
                     root[ra] = rb
     for j in d["joints"]:
+        if j["name"] in spare:
+            continue
         a, b = bodies.get(j["a"]), bodies.get(j["b"])
         if a is None or b is None:
             problems.append(_T("{name} : pièce inconnue", name=j['name']))

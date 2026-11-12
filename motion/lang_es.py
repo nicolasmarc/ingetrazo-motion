@@ -868,4 +868,6 @@ ES = {
         '{name}: ignorada — « {a} » y « {b} » ya están empotradas (borrar una de las dos uniones)',
     'Dynamique : pas encore simulé — ▶ ou « Valider » lance la simulation.':
         'Dinámica: aún no simulado — ▶ o « Validar » lanza la simulación.',
+    "{name} : ignorée — « {a} » et « {b} » ont déjà une liaison (supprimer l'une des deux)":
+        '{name}: ignorada — « {a} » y « {b} » ya tienen una unión (borrar una de las dos)',
 }

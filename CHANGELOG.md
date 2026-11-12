@@ -30,10 +30,12 @@
 
 ### Fixed (mechanism)
 - **A pin both on a pivot and locked to its crank went through the wheel**
-  (Geneva Device, 3 mm at the second engagement): held twice, the contact
-  solver lost the push it carries. A joint between parts already locked
-  together (even through a third) is now set aside, and the report says
-  so: « ignorée — … sont déjà encastrées ».
+  (Geneva Device, 3 mm): held by the lock alone it pushed the wheel
+  unevenly and went through it at the third engagement; on its pivot it
+  does not. A lock beside another joint of the same two parts is now set
+  aside (« ignorée — … ont déjà une liaison »), and any other joint between
+  parts already locked together (through a third) too (« … déjà
+  encastrées »). His model as it was, steel: 3 mm → 1.1 mm, two steps.
 
 ### Fixed (detection)
 - **Pivots lost since the screw rule** (Geneva mechanism with helix gear:

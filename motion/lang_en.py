@@ -630,4 +630,6 @@ EN = {
         '{name}: ignored — « {a} » and « {b} » are already locked together (delete one of the two joints)',
     'Dynamique : pas encore simulé — ▶ ou « Valider » lance la simulation.':
         'Dynamics: not simulated yet — ▶ or « Validate » runs the simulation.',
+    "{name} : ignorée — « {a} » et « {b} » ont déjà une liaison (supprimer l'une des deux)":
+        '{name}: ignored — « {a} » and « {b} » already have a joint (delete one of the two)',
 }
