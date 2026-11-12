@@ -23,9 +23,11 @@ tab appears in the side tray, and Extensions ▸ Motion has the examples.
 
 ## Language
 
-Motion follows IngeTrazo's language (Window ▸ Language): French when
-IngeTrazo is in French, English otherwise. `MOTION_LANG=fr` or `en` forces
-one.
+Motion follows IngeTrazo's language (Window ▸ Language): Spanish, French or
+English (English for any other language). `MOTION_LANG=es`, `fr` or `en`
+forces one.
+
+*Motion suit la langue d'IngeTrazo : espagnol, français ou anglais.*
 
 ## Use
 
@@ -91,6 +93,16 @@ video: the IngeTrazo view on the left, a shaded animation with the readings
 on the right. MP4 needs an encoder: Qt Multimedia if your IngeTrazo has it,
 else `ffmpeg` (found on the PATH, or point to `ffmpeg.exe` once in the
 dialog); without either, the video is saved as AVI (Motion-JPEG).
+
+**Render ▸ Realistic (Blender EEVEE / Cycles)** in the same dialog (IngeTrazo
+0.6 or later, Blender installed): the same motion rendered frame by frame by
+Blender with the model's materials and the ambience, sun and lights of
+IngeTrazo's Render panel, on the graphics card when there is one. The
+Blender is IngeTrazo's own setting, or chosen once in the dialog.
+
+*Rendu ▸ Réaliste (Blender EEVEE / Cycles) : le même mouvement rendu image par
+image par Blender, avec les matériaux du modèle et l'ambiance, le soleil et
+les lumières du panneau Rendu d'IngeTrazo.*
 
 The animation is drawn over the model: the groups themselves do not move,
 so playing adds no undo steps. The mechanism is saved in the `.igz`; every

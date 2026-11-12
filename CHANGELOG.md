@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 — unreleased
+## 0.10.0 — 2026-11-12
 
 ### Added (video)
 - **Realistic render through Blender**: *Export video → Render* offers,
@@ -166,7 +166,7 @@
   over the model during playback and in the video; the report counts them
   (poured, in each bin, still in play, fallen out).
 
-## 0.9.0 — unreleased
+## 0.9.0 — not released on its own (in 0.10.0)
 
 ### Changed
 - **Four commands instead of sixteen buttons**: « Pièces » (the first
