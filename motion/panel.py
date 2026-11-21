@@ -3992,7 +3992,7 @@ class MotionPanel(QWidget):
         hl = set(getattr(self, "_hl_bodies", ()) or ())
         solid = False
         if wire and self.source == "model" and self.solid_view and not getattr(self, "_force_paint", False):
-            if np.max(np.abs(x)) > 1e-6:
+            if x.size and np.max(np.abs(x)) > 1e-6:      # no moving part yet: nothing to place
                 try:
                     self._solid_place(x)
                     solid = bool(getattr(self, "_solid_groups", None))

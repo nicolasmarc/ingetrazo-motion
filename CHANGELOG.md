@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1 — unreleased
+
+### Fixed
+- The Motion panel's overlay raised « zero-size array to reduction
+  operation maximum » on a model with no moving part yet (issue #1,
+  reported by tuxiasumari with IngeTrazo 0.6.3).
+
 ## 0.10.0 — 2026-11-12
 
 ### Added (video)

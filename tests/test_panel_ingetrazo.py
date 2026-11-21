@@ -1605,3 +1605,29 @@ def test_the_slider_never_starts_nor_bypasses_the_simulation():
         panel.has_simulation, panel.simulation = old
         panel._sim_cache = (None, None)
         panel.x = None
+
+
+def test_overlay_on_a_model_with_no_moving_part():
+    """Issue #1 (tuxiasumari, IngeTrazo 0.6.3): the Motion panel opened on a
+    model with no simulation and no moving part yet — the overlay took the
+    max of an empty pose and raised « zero-size array »."""
+    from PySide6.QtGui import QImage, QPainter
+    win = _window()
+    panel = _state["panel"]
+    saved = panel.app.document_data()
+    try:
+        panel.app.set_document_data({})
+        panel.set_source("model")
+        panel.solid_view = True
+        m = panel.mechanism()
+        assert m.n == 0
+        panel.x = np.zeros(0)
+        img = QImage(320, 200, QImage.Format_ARGB32)
+        p = QPainter(img)
+        try:
+            panel.paint(win.viewport, p)
+        finally:
+            p.end()
+    finally:
+        panel.app.set_document_data(saved or {})
+        panel.set_source("model")
