@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.1 — unreleased
+## 0.10.1 — 2026-11-22
 
 ### Fixed
 - The Motion panel's overlay raised « zero-size array to reduction
