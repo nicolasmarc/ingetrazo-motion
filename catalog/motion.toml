@@ -3,13 +3,13 @@
 # (python tools/build_zip.py prints it).
 
 id = "motion"
-version = "0.10.1"
+version = "0.10.2"
 author = "Nicolas Marc"
 author_url = "https://github.com/nicolasmarc"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/nicolasmarc/ingetrazo-motion"
-download = "https://raw.githubusercontent.com/nicolasmarc/ingetrazo-motion/cdd6a98a95eda2ef54c28cfda1be455d3fe93bb7/dist/motion-0.10.1.zip"
-sha256 = "a3305794928d8a2939ec8643203411459680c1bca07b209d99bad11e2f1ade79"
+download = "https://raw.githubusercontent.com/nicolasmarc/ingetrazo-motion/ab749a992e2e63af712bab14bee82e36afde5821/dist/motion-0.10.2.zip"
+sha256 = "10194e9ca9ffb3a799d4fdedc0fb51f9edc1831cc05593746c301b46d3942c34"
 ingetrazo = "0.6.0"
 tags = ["fabrication", "analysis", "import-export"]
 screenshot = "motion.png"
