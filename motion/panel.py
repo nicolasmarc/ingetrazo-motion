@@ -5142,7 +5142,11 @@ def setup(app):
     # room for the scroll bar: the panel never gets narrower than its rows
     scroll.setMinimumWidth(panel.minimumSizeHint().width()
                            + scroll.verticalScrollBar().sizeHint().width() + 2)
-    dock = app.add_panel("Motion", scroll, start_hidden=False)
+    try:                                          # IngeTrazo 0.6.2: the tab shows an icon
+        dock = app.add_panel("Motion", scroll, start_hidden=False,
+                             icon=icons.icon("logo", scroll))
+    except TypeError:                             # older: no icon
+        dock = app.add_panel("Motion", scroll, start_hidden=False)
     app.add_overlay(panel.paint)
     app.on_document_changed(panel.reload)
     _restore_before_save(panel)

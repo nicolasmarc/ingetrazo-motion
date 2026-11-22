@@ -492,7 +492,38 @@ def _conveyor(p, ink, acc):
     _arrow_head(p, QPointF(17.0, 6.0), math.radians(0), acc, 3.0)
 
 
-_DRAW = dict(source=_source, sink=_sink, conveyor=_conveyor, contact=_contact, axis=_axis, annular=_annular, pointplane=_pointplane, planar=_planar, screw=_screw,
+def _logo(p, ink, acc):
+    """Motion's own mark (its tab in IngeTrazo's tray): a crank on its fixed
+    pivot, the pose it left dashed, the turn — light, like the tray's tabs."""
+    c = QPointF(8, 16)
+    end = QPointF(c.x() + 11 * math.cos(math.radians(-48)), c.y() + 11 * math.sin(math.radians(-48)))
+    was = QPointF(c.x() + 11 * math.cos(math.radians(8)), c.y() + 11 * math.sin(math.radians(8)))
+    ghost = _pen(_soft(ink, 150), 1.4)
+    ghost.setDashPattern([1.6, 1.6])
+    p.setPen(ghost)                               # the pose it left
+    p.drawLine(c, was)
+    p.setPen(_pen(ink, 1.3))                      # the turn
+    r = 13.5
+    p.drawArc(QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r), -4 * 16, 40 * 16)
+    a = math.radians(-40)
+    _arrow_head(p, QPointF(c.x() + r * math.cos(a), c.y() + r * math.sin(a)),
+                math.radians(-130), ink, 3.4)
+    p.setPen(_pen(acc, 2.8))                      # the crank
+    p.drawLine(c, end)
+    p.setPen(_pen(acc, 1.3))
+    p.setBrush(_soft(acc, 90))
+    p.drawEllipse(end, 2.2, 2.2)
+    p.setPen(_pen(ink, 1.3))                      # the fixed pivot on its ground
+    p.setBrush(Qt.NoBrush)
+    p.drawLine(QPointF(4, 21), QPointF(12, 21))
+    p.drawLine(c, QPointF(5.8, 21))
+    p.drawLine(c, QPointF(10.2, 21))
+    p.setBrush(_soft(acc, 255))
+    p.drawEllipse(c, 2.6, 2.6)
+    p.setBrush(Qt.NoBrush)
+
+
+_DRAW = dict(logo=_logo, source=_source, sink=_sink, conveyor=_conveyor, contact=_contact, axis=_axis, annular=_annular, pointplane=_pointplane, planar=_planar, screw=_screw,
              cylindrical=_cylindrical, ball=_ball, lock=_lock, elastic=_elastic,
              spring=_spring, scan=_scan, coupling=_coupling, fixed=_fixed, moving=_moving, pivot=_pivot, slider=_slider,
              guide=_guide, driver=_driver, validate=_validate,

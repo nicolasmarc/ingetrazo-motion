@@ -7,6 +7,11 @@
   operation maximum » on a model with no moving part yet (issue #1,
   reported by tuxiasumari with IngeTrazo 0.6.3).
 
+### Added
+- Motion's own logo on its tab: IngeTrazo 0.6.2 shows the panels as icons
+  (a crank on its pivot, drawn like Motion's other icons; older IngeTrazo
+  keeps its text tab).
+
 ## 0.10.0 — 2026-11-12
 
 ### Added (video)
