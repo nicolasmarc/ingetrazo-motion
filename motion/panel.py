@@ -4099,6 +4099,13 @@ class MotionPanel(QWidget):
         from PySide6.QtCore import QSettings
         return QSettings("IngeTrazo", "motion")
 
+    def _avoid_qt(self):
+        """Qt's MP4 encoder stalled here once: ffmpeg or AVI from then on."""
+        try:
+            return str(self._settings().value("qt_mp4_stalls", "")) in ("true", "1", "True")
+        except Exception:
+            return False
+
     def _ffmpeg_hint(self):
         try:
             v = self._settings().value("ffmpeg", "")
@@ -4189,13 +4196,14 @@ class MotionPanel(QWidget):
         form.addRow(pick)
 
         def refresh():
-            kind, exe = video.mp4_backend(self._ffmpeg_hint())
+            kind, exe = video.mp4_backend(self._ffmpeg_hint(), self._avoid_qt())
             enc.setText({"qt": "MP4 (Qt Multimedia)", "ffmpeg": f"MP4 (ffmpeg : {exe})"}.get(
                 kind, _T("AVI Motion-JPEG — pour du MP4, indiquer ffmpeg.exe")))
-            pick.setVisible(kind != "qt")
+            # always offered: Qt's encoder can be there and stall (Windows)
 
         def choose():
-            f, _ = QFileDialog.getOpenFileName(dlg, "ffmpeg", "", "ffmpeg (ffmpeg*)")
+            f, _ = QFileDialog.getOpenFileName(dlg, "ffmpeg", "",
+                                               "ffmpeg (ffmpeg ffmpeg.exe);;" + _T("Tous les fichiers") + " (*)")
             if f:
                 self._settings().setValue("ffmpeg", f)
             refresh()
@@ -4213,7 +4221,7 @@ class MotionPanel(QWidget):
             self._settings().setValue("rendu", mode)
         except Exception:
             pass
-        kind, _ = video.mp4_backend(self._ffmpeg_hint())
+        kind, _ = video.mp4_backend(self._ffmpeg_hint(), self._avoid_qt())
         ext, filt = (".mp4", _T("Vidéo MP4 (*.mp4)")) if kind else (".avi", _T("Vidéo AVI (*.avi)"))
         path, _ = QFileDialog.getSaveFileName(self, _T("Exporter la vidéo"), "motion" + ext, filt)
         if not path:
@@ -4249,9 +4257,22 @@ class MotionPanel(QWidget):
                 box[0].close()
 
         try:
-            out, label = self.export_video(path, dur.value(), res.currentData(),
-                                           back.isChecked(), progress=step,
-                                           ralenti=slow.value(), rendu=mode)
+            try:
+                out, label = self.export_video(path, dur.value(), res.currentData(),
+                                               back.isChecked(), progress=step,
+                                               ralenti=slow.value(), rendu=mode)
+            except video.QtStalled:
+                # Qt's MP4 encoder froze: left aside from now on, the video
+                # made again at once with ffmpeg (or as AVI)
+                self._settings().setValue("qt_mp4_stalls", "true")
+                close()
+                box.clear()
+                started.clear()
+                self.say(_T("L'encodeur MP4 de Qt ne répond plus : nouvel essai avec ffmpeg "
+                            "(ou en AVI)."))
+                out, label = self.export_video(path, dur.value(), res.currentData(),
+                                               back.isChecked(), progress=step,
+                                               ralenti=slow.value(), rendu=mode)
         except Exception as exc:
             close()
             QMessageBox.warning(self, _T("Exporter la vidéo"), str(exc))
@@ -4775,7 +4796,8 @@ class MotionPanel(QWidget):
         if real and (self.source != "model" or mbox is None):
             raise ValueError(_T("Le rendu réaliste demande un modèle IngeTrazo."))
         real_frames = []
-        writer = None if real else video.open_writer(path, W, H, fps, self._ffmpeg_hint())
+        writer = None if real else video.open_writer(path, W, H, fps, self._ffmpeg_hint(),
+                                                     avoid_qt=self._avoid_qt())
         saved_x, saved_t = self.x, self.t
         x = None
         dyn = [f for f in getattr(m, "followers", []) if getattr(f, "dynamic", False)]
@@ -4906,21 +4928,30 @@ class MotionPanel(QWidget):
             ok = blender.run(blender.command(found, job), n, progress, log)
         if ok is None:
             return None, None                     # cancelled
-        writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint())
         title = f"{name} — IngeTrazo Motion"
-        for i, (_, tv) in enumerate(frames):
-            img = QImage(str(work / "frames" / f"f{i:04d}.png"))
-            if img.isNull():
-                writer.close()
-                raise RuntimeError(_T("Image Blender manquante : {f}", f=f"f{i:04d}.png"))
-            img = img.convertToFormat(QImage.Format_RGB32)
-            if img.width() != W or img.height() != H:
-                img = img.scaled(W, H)
-            writer.add(blender.caption(img, title, _T("temps {t} s", t=f"{tv:.2f}")
-                                       if tv is not None else None))
+
+        def encode(avoid_qt):
+            writer = video.open_writer(path, W, H, fps, self._ffmpeg_hint(), avoid_qt=avoid_qt)
+            for i, (_, tv) in enumerate(frames):
+                img = QImage(str(work / "frames" / f"f{i:04d}.png"))
+                if img.isNull():
+                    writer.close()
+                    raise RuntimeError(_T("Image Blender manquante : {f}", f=f"f{i:04d}.png"))
+                img = img.convertToFormat(QImage.Format_RGB32)
+                if img.width() != W or img.height() != H:
+                    img = img.scaled(W, H)
+                writer.add(blender.caption(img, title, _T("temps {t} s", t=f"{tv:.2f}")
+                                           if tv is not None else None))
+            return writer, writer.close()
+        try:
+            writer, out = encode(self._avoid_qt())
+        except video.QtStalled:
+            # Qt's encoder froze: Blender's images are still there, the
+            # video is made again with ffmpeg (or as AVI)
+            self._settings().setValue("qt_mp4_stalls", "true")
+            writer, out = encode(True)
         if progress is not None:
             progress(n, n)
-        out = writer.close()
         try:
             import shutil
             shutil.rmtree(work, ignore_errors=True)

@@ -111,3 +111,16 @@ def test_a_stuck_qt_encoder_stops_with_a_message():
         assert "ffmpeg" in str(exc) and stopped
     else:
         raise AssertionError("no error")
+
+
+def test_the_chosen_ffmpeg_wins_and_a_stalled_qt_is_left_aside(tmp_path):
+    """Windows: Qt's H.264 encoder there but stalling, and no way to point
+    to ffmpeg.exe (the button was hidden). The ffmpeg chosen now comes first;
+    after a stall Qt is left aside (ffmpeg on the PATH, else AVI)."""
+    from motion import video
+    exe = tmp_path / "ffmpeg.exe"
+    exe.write_bytes(b"")
+    assert video.mp4_backend(str(exe)) == ("ffmpeg", str(exe))
+    kind, _ = video.mp4_backend(None, avoid_qt=True)
+    assert kind != "qt"
+    assert issubclass(video.QtStalled, RuntimeError)

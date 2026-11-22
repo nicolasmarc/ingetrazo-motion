@@ -870,4 +870,8 @@ ES = {
         'Dinámica: aún no simulado — ▶ o « Validar » lanza la simulación.',
     "{name} : ignorée — « {a} » et « {b} » ont déjà une liaison (supprimer l'une des deux)":
         '{name}: ignorada — « {a} » y « {b} » ya tienen una unión (borrar una de las dos)',
+    'Tous les fichiers':
+        'Todos los archivos',
+    "L'encodeur MP4 de Qt ne répond plus : nouvel essai avec ffmpeg (ou en AVI).":
+        'El codificador MP4 de Qt ya no responde: nuevo intento con ffmpeg (o en AVI).',
 }

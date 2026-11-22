@@ -632,4 +632,8 @@ EN = {
         'Dynamics: not simulated yet — ▶ or « Validate » runs the simulation.',
     "{name} : ignorée — « {a} » et « {b} » ont déjà une liaison (supprimer l'une des deux)":
         '{name}: ignored — « {a} » and « {b} » already have a joint (delete one of the two)',
+    'Tous les fichiers':
+        'All files',
+    "L'encodeur MP4 de Qt ne répond plus : nouvel essai avec ffmpeg (ou en AVI).":
+        "Qt's MP4 encoder no longer answers: trying again with ffmpeg (or as AVI).",
 }

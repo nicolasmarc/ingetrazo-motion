@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.2 — 2026-11-22
+
+### Fixed
+- Video export on a PC where Qt offers an MP4 encoder that stalls
+  (seen on Windows): the « Indiquer ffmpeg.exe… » button was hidden as soon
+  as Qt announced an encoder, so there was no way to choose ffmpeg. The
+  button is now always there, the ffmpeg chosen comes before Qt, and a
+  stalled Qt encoder is left aside: the video is made again at once with
+  ffmpeg (or as AVI), also after a Blender render. Bug present since 0.3.0.
+
+  *FR : export vidéo sur un PC où l'encodeur MP4 de Qt se bloque : le bouton
+  « Indiquer ffmpeg.exe… » était caché ; il est toujours affiché, l'ffmpeg
+  choisi passe avant Qt, et un blocage de Qt relance la vidéo avec ffmpeg
+  (ou en AVI).*
+
 ## 0.10.1 — 2026-11-22
 
 ### Fixed

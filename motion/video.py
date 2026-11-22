@@ -117,6 +117,11 @@ class FfmpegWriter:
         return self.path
 
 
+class QtStalled(RuntimeError):
+    """Qt's MP4 encoder stopped taking frames (seen on Windows): the export
+    is made again with ffmpeg or as AVI, and Qt is left aside from then on."""
+
+
 class QtWriter:
     kind = "mp4"
     label = "MP4 (H.264, Qt Multimedia)"
@@ -177,7 +182,7 @@ class QtWriter:
             if waited > 20000:                           # it never takes it: a stuck
                 self.rec.stop()                          # encoder froze the window
                 from .lang import T as _T
-                raise RuntimeError(_T("L'encodeur MP4 de Qt ne répond plus. Indiquer "
+                raise QtStalled(_T("L'encodeur MP4 de Qt ne répond plus. Indiquer "
                                       "ffmpeg.exe dans la fenêtre d'export, ou réessayer."))
         self.n += 1
 
@@ -221,10 +226,13 @@ def find_ffmpeg(hint=None):
     return None
 
 
-def mp4_backend(ffmpeg_hint=None):
-    """('qt' | 'ffmpeg' | None, ffmpeg path): H.264 first (Qt, then
-    ffmpeg), then Qt's MPEG-4, then nothing (AVI)."""
-    codec = _qt_codec()
+def mp4_backend(ffmpeg_hint=None, avoid_qt=False):
+    """('qt' | 'ffmpeg' | None, ffmpeg path): the ffmpeg the user chose
+    first, then H.264 (Qt, then an ffmpeg on the PATH), then Qt's MPEG-4,
+    then nothing (AVI). ``avoid_qt``: Qt's encoder stalled here once."""
+    if ffmpeg_hint and os.path.isfile(ffmpeg_hint):
+        return "ffmpeg", ffmpeg_hint
+    codec = None if avoid_qt else _qt_codec()
     try:
         from PySide6.QtMultimedia import QMediaFormat
         h264 = codec == QMediaFormat.VideoCodec.H264
@@ -238,12 +246,12 @@ def mp4_backend(ffmpeg_hint=None):
     return ("qt", None) if codec is not None else (None, None)
 
 
-def open_writer(path, width, height, fps, ffmpeg_hint=None, prefer=None):
+def open_writer(path, width, height, fps, ffmpeg_hint=None, prefer=None, avoid_qt=False):
     """The best writer for ``path``: MP4 when an MP4 encoder exists, else
     AVI next to it (``path`` changed to .avi). ``prefer`` forces one of
     'qt', 'ffmpeg', 'avi' (tests)."""
     width, height = width - width % 2, height - height % 2
-    backend, exe = mp4_backend(ffmpeg_hint)
+    backend, exe = mp4_backend(ffmpeg_hint, avoid_qt)
     if prefer:
         backend = prefer
         exe = exe or find_ffmpeg(ffmpeg_hint)

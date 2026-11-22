@@ -11,7 +11,7 @@ hand-pumped rail car),
 Python) and ``motion.stepimport``. The IngeTrazo panel is loaded lazily
 by ``setup``.
 """
-__version__ = "0.10.1"
+__version__ = "0.10.2"
 
 
 def setup(app):          # pragma: no cover - UI, needs IngeTrazo
